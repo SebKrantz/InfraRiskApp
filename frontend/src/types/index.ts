@@ -36,7 +36,7 @@ export interface AnalysisResult {
   infrastructure_features?: any // Full GeoJSON with affected status
 }
 
-export type ColorPalette = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'rocket' | 'turbo'
+export type ColorPalette = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'cividis' | 'turbo'
 
 export type Basemap = 'positron' | 'dark-matter' | 'osm' | 'topo' | 'esri-topo'
 

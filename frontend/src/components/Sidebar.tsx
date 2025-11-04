@@ -28,7 +28,7 @@ interface SidebarProps {
   error?: string | null
 }
 
-const colorPalettes: ColorPalette[] = ['viridis', 'magma', 'inferno', 'plasma', 'rocket', 'turbo']
+const colorPalettes: ColorPalette[] = ['viridis', 'magma', 'inferno', 'plasma', 'cividis', 'turbo']
 
 export default function Sidebar({
   isOpen,
@@ -449,7 +449,7 @@ export default function Sidebar({
                 <li><strong>Magma:</strong> Black to purple to pink to yellow</li>
                 <li><strong>Inferno:</strong> Black to red to yellow</li>
                 <li><strong>Plasma:</strong> Purple to pink to yellow</li>
-                <li><strong>Rocket:</strong> Dark to bright, with good contrast</li>
+                <li><strong>Cividis:</strong> Dark to bright, with good contrast</li>
                 <li><strong>Turbo:</strong> Rainbow-like spectrum (blue to yellow via red)</li>
               </ul>
               {/* <p className="text-sm text-gray-600 mt-2">
