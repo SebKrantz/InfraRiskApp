@@ -120,7 +120,7 @@ The application will be available at `http://localhost:5173`
 
 ```
 backend/
-├── main.py                 # FastAPI application entry point
+├── main.py                # FastAPI application entry point
 ├── app/
 │   ├── config.py          # Configuration & paths
 │   ├── api/
@@ -131,7 +131,7 @@ backend/
 │   └── utils/
 │       └── geospatial.py  # Geospatial utilities
 ├── requirements.txt       # Dependencies
-└── README.md             # Backend setup instructions
+└── README.md              # Backend setup instructions
 ```
 
 ### Frontend
