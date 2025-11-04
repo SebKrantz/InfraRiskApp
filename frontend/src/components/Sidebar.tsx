@@ -72,7 +72,7 @@ export default function Sidebar({
   return (
     <>
       <div
-        className={`bg-gray-900 border-r border-gray-700 transition-all duration-300 flex flex-col ${
+        className={`bg-gray-900 transition-all duration-300 flex flex-col ${
           isOpen ? 'w-80' : 'w-0 overflow-hidden'
         }`}
       >
@@ -197,7 +197,7 @@ export default function Sidebar({
                         className="opacity-input w-16 border-0 bg-transparent px-2 py-0 h-auto text-gray-300 text-sm text-right"
                       />
                       <span className="text-xs text-gray-400">%</span>
-                      <div className="flex flex-col ml-1">
+                      <div className="flex flex-col ml-1 gap-0">
                         <button
                           type="button"
                           onClick={() => {
@@ -206,7 +206,7 @@ export default function Sidebar({
                             }
                           }}
                           disabled={hazardOpacity >= 100 || loading}
-                          className="p-0.5 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                          className="p-0 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <ChevronUp className="h-3 w-3" />
                         </button>
@@ -218,7 +218,7 @@ export default function Sidebar({
                             }
                           }}
                           disabled={hazardOpacity <= 0 || loading}
-                          className="p-0.5 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
+                          className="p-0 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <ChevronDown className="h-3 w-3" />
                         </button>
@@ -295,7 +295,7 @@ export default function Sidebar({
       {!isOpen && (
         <button
           onClick={onToggle}
-          className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-gray-900 border border-gray-700 rounded-r-lg p-2 shadow-lg hover:bg-gray-800 text-white"
+          className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-gray-900 rounded-r-lg p-2 shadow-lg hover:bg-gray-800 text-white"
         >
           <ChevronRight className="h-4 w-4" />
         </button>
