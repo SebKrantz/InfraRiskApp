@@ -38,5 +38,5 @@ export interface AnalysisResult {
 
 export type ColorPalette = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'rocket' | 'turbo'
 
-export type Basemap = 'positron' | 'osm' | 'topo' | 'esri-topo'
+export type Basemap = 'positron' | 'dark-matter' | 'osm' | 'topo' | 'esri-topo'
 

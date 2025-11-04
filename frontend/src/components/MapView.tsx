@@ -40,6 +40,30 @@ const basemapStyles: Record<Basemap, any> = {
       }
     ]
   },
+  'dark-matter': {
+    version: 8,
+    sources: {
+      'carto-dark-matter': {
+        type: 'raster',
+        tiles: [
+          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap © CARTO'
+      }
+    },
+    layers: [
+      {
+        id: 'carto-dark-matter-layer',
+        type: 'raster',
+        source: 'carto-dark-matter',
+        minzoom: 0,
+        maxzoom: 22
+      }
+    ]
+  },
   osm: {
     version: 8,
     sources: {
@@ -1217,6 +1241,7 @@ export default function MapView({
           className="w-40 border-0 bg-transparent"
         >
           <option value="positron">CartoDB Positron</option>
+          <option value="dark-matter">CartoDB Dark Matter</option>
           <option value="osm">OpenStreetMap</option>
           <option value="topo">OpenTopoMap</option>
           <option value="esri-topo">Esri World Topo</option>
