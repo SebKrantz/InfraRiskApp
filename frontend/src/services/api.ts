@@ -95,7 +95,7 @@ export async function getUploadInfo(fileId: string): Promise<UploadedFile> {
 /**
  * Get hazard raster statistics (min, max)
  */
-export async function getHazardStats(hazardId: string): Promise<{ min: number; max: number; mean: number }> {
+export async function getHazardStats(hazardId: string): Promise<{ min: number; max: number }> {
   const response = await fetch(`${API_BASE_URL}/hazards/${hazardId}/stats`)
 
   if (!response.ok) {

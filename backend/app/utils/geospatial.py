@@ -4,9 +4,7 @@ Geospatial utility functions
 
 import geopandas as gpd
 import pandas as pd
-import xarray as xr
 import rasterio
-from rasterio.warp import transform_bounds
 import numpy as np
 from shapely.geometry import Point
 from typing import Tuple, Optional
@@ -164,31 +162,6 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
         return "LineString"
 
 
-def load_hazard_raster(hazard_url: str, bounds: Optional[Tuple[float, float, float, float]] = None):
-    """
-    Load hazard raster using xarray (supports COG - Cloud Optimized GeoTIFF)
-    
-    Args:
-        hazard_url: URL or path to raster file
-        bounds: Optional (minx, miny, maxx, maxy) to crop raster
-        
-    Returns:
-        xarray Dataset
-    """
-    try:
-        # Open with xarray (works with COG)
-        ds = xr.open_dataset(hazard_url, engine="rasterio")
-        
-        if bounds:
-            # Crop to bounds if provided
-            minx, miny, maxx, maxy = bounds
-            ds = ds.sel(x=slice(minx, maxx), y=slice(miny, maxy))
-        
-        return ds
-    except Exception as e:
-        raise ValueError(f"Error loading hazard raster: {str(e)}")
-
-
 def analyze_intersection(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
@@ -197,9 +170,11 @@ def analyze_intersection(
     """
     Analyze intersection between infrastructure and hazard raster
     
+    All hazard rasters use EPSG:4326 (WGS84) as their CRS.
+    
     Args:
         infrastructure_gdf: GeoDataFrame with infrastructure assets
-        hazard_raster_path: Path or URL to hazard raster
+        hazard_raster_path: Path or URL to hazard raster (assumed EPSG:4326)
         intensity_threshold: Optional threshold for filtering hazard intensity
         
     Returns:
@@ -208,13 +183,11 @@ def analyze_intersection(
         - affected_meters/unaffected_meters (for lines)
         - affected_gdf: GeoDataFrame of affected features
     """
-    # Ensure same CRS
+    # All hazard rasters use EPSG:4326
+    # Transform infrastructure to EPSG:4326 if needed
     with rasterio.open(hazard_raster_path) as src:
-        raster_crs = src.crs
-        
-        # Transform infrastructure to raster CRS if needed
-        if infrastructure_gdf.crs != raster_crs:
-            infrastructure_gdf = infrastructure_gdf.to_crs(raster_crs)
+        if infrastructure_gdf.crs != "EPSG:4326":
+            infrastructure_gdf = infrastructure_gdf.to_crs("EPSG:4326")
                 
         if len(infrastructure_gdf) == 0:
             return {
