@@ -215,14 +215,7 @@ def analyze_intersection(
         # Transform infrastructure to raster CRS if needed
         if infrastructure_gdf.crs != raster_crs:
             infrastructure_gdf = infrastructure_gdf.to_crs(raster_crs)
-        
-        # Get raster bounds in raster CRS
-        raster_bounds = src.bounds
-        minx, miny, maxx, maxy = raster_bounds
-        
-        # Crop infrastructure to raster bounds
-        infrastructure_gdf = infrastructure_gdf.cx[minx:maxx, miny:maxy]
-        
+                
         if len(infrastructure_gdf) == 0:
             return {
                 "affected_count": 0,
@@ -249,10 +242,9 @@ def analyze_intersection(
             affected_count = sum(affected_mask)
             unaffected_count = len(infrastructure_gdf) - affected_count
             
-            # Mark affected status in original GeoDataFrame
-            infrastructure_gdf = infrastructure_gdf.copy()
+            # Mark affected status in GeoDataFrame
             infrastructure_gdf['affected'] = affected_mask
-            affected_gdf = infrastructure_gdf[affected_mask].copy()
+            affected_gdf = infrastructure_gdf[affected_mask]
             
             # Clean NaN values from GeoDataFrame before returning
             # Replace NaN/Inf with None for JSON serialization

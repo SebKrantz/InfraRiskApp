@@ -101,23 +101,12 @@ async def analyze_intersections(request: AnalyzeRequest):
                 else:
                     display_gdf['affected'] = False
             
-            # Clean NaN values in GeoDataFrame before conversion - more thorough
-            import numpy as np
-            import pandas as pd
-            
-            # Replace NaN/Inf in all numeric columns (except geometry)
-            for col in display_gdf.columns:
-                if col != 'geometry':
-                    if display_gdf[col].dtype in ['float64', 'float32']:
-                        display_gdf[col] = display_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                    elif pd.api.types.is_numeric_dtype(display_gdf[col]):
-                        display_gdf[col] = display_gdf[col].replace([np.nan], [None])
-            
             # Transform to WGS84 for web display
+            # Note: NaN/Inf values are already cleaned in geospatial.py before returning
             if display_gdf.crs and display_gdf.crs != "EPSG:4326":
                 display_gdf = display_gdf.to_crs("EPSG:4326")
             
-            # Convert to GeoJSON (should be clean now since we cleaned the DataFrame)
+            # Convert to GeoJSON (dataframes are already cleaned in geospatial.py)
             geo_interface = display_gdf.__geo_interface__
             result["infrastructure_features"] = geo_interface
             
@@ -125,18 +114,12 @@ async def analyze_intersections(request: AnalyzeRequest):
             if "affected_gdf" in analysis_result and analysis_result["affected_gdf"] is not None:
                 affected_gdf = analysis_result["affected_gdf"].copy()
                 
-                # Clean NaN values
-                for col in affected_gdf.columns:
-                    if col != 'geometry':
-                        if affected_gdf[col].dtype in ['float64', 'float32']:
-                            affected_gdf[col] = affected_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                        elif pd.api.types.is_numeric_dtype(affected_gdf[col]):
-                            affected_gdf[col] = affected_gdf[col].replace([np.nan], [None])
-                
+                # Transform to WGS84 for web display
+                # Note: NaN/Inf values are already cleaned in geospatial.py before returning
                 if affected_gdf.crs and affected_gdf.crs != "EPSG:4326":
                     affected_gdf = affected_gdf.to_crs("EPSG:4326")
                 
-                # Convert to GeoJSON
+                # Convert to GeoJSON (dataframes are already cleaned in geospatial.py)
                 affected_geo = affected_gdf.__geo_interface__
                 result["affected_features"] = affected_geo
         except Exception as e:
