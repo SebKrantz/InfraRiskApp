@@ -13,7 +13,7 @@ import matplotlib.cm as cm
 router = APIRouter()
 
 
-def apply_colormap(data: np.ndarray, palette: str = 'viridis', vmin: float = None, vmax: float = None) -> np.ndarray:
+def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None, vmax: float = None) -> np.ndarray:
     """Apply a colormap to raster data"""
     # Get colormap
     cmap = cm.get_cmap(palette)
@@ -47,7 +47,7 @@ async def get_tile(
     z: int,
     x: int,
     y: int,
-    palette: str = Query('viridis', description="Color palette"),
+    palette: str = Query('turbo', description="Color palette"),
 ):
     """
     Get a tile from a COG hazard layer

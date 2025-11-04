@@ -9,7 +9,7 @@ function App() {
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null)
   const [selectedHazard, setSelectedHazard] = useState<Hazard | null>(null)
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
-  const [colorPalette, setColorPalette] = useState<ColorPalette>('viridis')
+  const [colorPalette, setColorPalette] = useState<ColorPalette>('turbo')
   const [intensityThreshold, setIntensityThreshold] = useState<number>(0)
   const [hazardOpacity, setHazardOpacity] = useState<number>(70)
   const [hazardStats, setHazardStats] = useState<{ min: number; max: number } | null>(null)
