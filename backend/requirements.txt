@@ -1,0 +1,23 @@
+# FastAPI and server
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Geospatial libraries
+geopandas>=0.14.0
+pyogrio>=0.5.0
+rasterio>=1.3.9
+xarray>=2023.10.0
+rioxarray>=0.16.0
+
+# Data processing
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Image processing for tiles
+pillow>=10.1.0
+matplotlib>=3.8.0
+
+# Optional: For vector tiling/optimization (mentioned in requirements)
+# lonboard>=0.1.0  # Uncomment if needed for large dataset rendering
+
