@@ -312,18 +312,35 @@ export default function Sidebar({
               <p className="text-sm text-gray-700">{selectedHazard.description}</p>
             )}
             {selectedHazard?.metadata && (
-              <div className="mt-4">
-                <div className="mt-4">
-                  <p className="text-sm font-bold text-gray-600 mb-1">Background Paper</p>
-                </div>
-                <a
-                  href={selectedHazard.metadata}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-blue-600 hover:underline"
-                >
-                  {selectedHazard.metadata}
-                </a>
+              <div style={{ paddingTop: '0.7rem' }}>
+                <p className="text-sm font-bold text-gray-600 mb-1">Background Paper</p>
+                <p className="text-sm text-gray-700">
+                  {(() => {
+                    const text = selectedHazard.metadata
+                    // URL regex pattern
+                    const urlRegex = /(https?:\/\/[^\s]+)/g
+                    const parts = text.split(urlRegex)
+                    
+                    return parts.map((part, index) => {
+                      // Check if part matches URL pattern
+                      const isUrl = /^https?:\/\/[^\s]+$/.test(part)
+                      if (isUrl) {
+                        return (
+                          <a
+                            key={index}
+                            href={part}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:underline"
+                          >
+                            {part}
+                          </a>
+                        )
+                      }
+                      return <span key={index}>{part}</span>
+                    })
+                  })()}
+                </p>
               </div>
             )}
           </div>
@@ -435,20 +452,20 @@ export default function Sidebar({
                 <li><strong>Rocket:</strong> Dark to bright, with good contrast</li>
                 <li><strong>Turbo:</strong> Rainbow-like spectrum (blue to yellow via red)</li>
               </ul>
-              <p className="text-sm text-gray-600 mt-2">
+              {/* <p className="text-sm text-gray-600 mt-2">
                 Colors are automatically scaled from the minimum to maximum hazard values in your dataset. Lower values map to the left side of the palette, higher values to the right.
-              </p>
+              </p> */}
             </div>
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">Opacity:</p>
               <p className="text-sm text-gray-600">
-                The opacity percentage controls the transparency of the hazard layer overlay. This allows you to:
+                The opacity percentage controls the transparency of the hazard layer. 
               </p>
-              <ul className="text-sm text-gray-600 space-y-1 mt-2 ml-4 list-disc">
+              {/* <ul className="text-sm text-gray-600 space-y-1 mt-2 ml-4 list-disc">
                 <li>View the underlying basemap through the hazard layer</li>
                 <li>Compare hazard intensity with infrastructure features</li>
                 <li>Adjust visibility for better visual clarity</li>
-              </ul>
+              </ul> */}
               <p className="text-sm text-gray-600 mt-2">
                 <strong>0%</strong> = fully transparent (hazard layer invisible)<br />
                 <strong>100%</strong> = fully opaque (hazard layer completely covers basemap)
