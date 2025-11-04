@@ -5,7 +5,6 @@ import io
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 import rasterio
-from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds
 import numpy as np
 from PIL import Image
@@ -19,19 +18,19 @@ def apply_colormap(data: np.ndarray, palette: str = 'viridis', vmin: float = Non
     # Get colormap
     cmap = cm.get_cmap(palette)
     
-    # Normalize data
-    if vmin is None:
-        vmin = np.nanmin(data)
-    if vmax is None:
-        vmax = np.nanmax(data) + 1
-    
     # Handle NaN and invalid values
-    valid_mask = ~np.isnan(data) & (data >= vmin) & (data < vmax)
-    
-    # Normalize to [0, 1]
-    normalized = np.zeros_like(data, dtype=np.float32)
-    if vmax > vmin:
-        normalized[valid_mask] = (data[valid_mask] - vmin) / (vmax - vmin)
+    valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
+    all_valid = np.all(valid_mask)
+
+    if all_valid:
+        if vmax > vmin:
+            normalized = (data - vmin) / (vmax - vmin)
+        else:
+            normalized = np.zeros_like(data, dtype=np.float32)
+    else:
+        normalized = np.zeros_like(data, dtype=np.float32)
+        if vmax > vmin:
+            normalized[valid_mask] = (data[valid_mask] - vmin) / (vmax - vmin)
     
     # Apply colormap
     colored = cmap(normalized)
@@ -58,7 +57,7 @@ async def get_tile(
     - z, x, y: Tile coordinates
     - palette: Color palette name
     """
-    from app.api.hazards import load_hazards_dict
+    from app.api.hazards import load_hazards_dict, get_hazard_stats_cached
     
     try:
         # Get hazard info from cached dict
@@ -73,9 +72,17 @@ async def get_tile(
         if not cog_url:
             raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
         
+        # Get cached min/max values for consistent colormap scaling
+        stats = get_hazard_stats_cached(hazard_id)
+        if stats:
+            vmin, vmax = stats
+        else:
+            vmin, vmax = 0.0, 1e6
+        
         # Open COG
         with rasterio.open(cog_url) as src:
-            # Calculate tile bounds in Web Mercator (EPSG:3857)
+            # Calculate tile bounds in EPSG:4326 (geographic degrees)
+            # All hazard rasters use EPSG:4326, so no CRS transformation needed
             import math
             n = 2.0 ** z
             lon_deg = (x / n) * 360.0 - 180.0
@@ -91,17 +98,15 @@ async def get_tile(
             miny = lat_deg - pixel_size * tile_size
             maxy = lat_deg
             
-            # Transform bounds to raster CRS
-            bounds_3857 = (minx, miny, maxx, maxy)
-            bounds_raster = transform_bounds('EPSG:3857', src.crs, *bounds_3857)
+            # Bounds are already in EPSG:4326 (geographic degrees)
+            bounds_4326 = (minx, miny, maxx, maxy)
             
             # Read data from COG
             try:
-                window = from_bounds(*bounds_raster, src.transform)
+                window = from_bounds(*bounds_4326, src.transform)
                 data = src.read(1, window=window, out_shape=(tile_size, tile_size))
                 
-                # Apply colormap
-                colored = apply_colormap(data, palette=palette, vmin=0, vmax=np.inf)
+                colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
                 
                 # Create PNG image
                 img = Image.fromarray(colored, 'RGB')
@@ -111,6 +116,7 @@ async def get_tile(
                 
                 return Response(content=img_buffer.read(), media_type="image/png")
             except Exception as e:
+                print(f"Tile generation error: {e}")
                 # Return transparent tile if read fails
                 transparent = np.zeros((tile_size, tile_size, 4), dtype=np.uint8)
                 img = Image.fromarray(transparent, 'RGBA')

@@ -5,7 +5,7 @@ Hazard layers endpoints
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 import pandas as pd
 import hashlib
 import re
@@ -17,6 +17,9 @@ router = APIRouter()
 
 # Module-level cache for parsed hazard data
 _hazards_cache: Optional[Dict[str, Dict]] = None
+
+# Module-level cache for hazard statistics (min, max) as tuples
+_hazard_stats_cache: Dict[str, Tuple[float, float]] = {}
 
 
 def generate_id_from_name(name: str) -> str:
@@ -125,6 +128,14 @@ def clear_hazards_cache():
     """Clear the hazards cache (useful for testing or when CSV is updated)"""
     global _hazards_cache
     _hazards_cache = None
+
+
+def get_hazard_stats_cached(hazard_id: str) -> Optional[Tuple[float, float]]:
+    """
+    Get cached hazard statistics (min, max) for a hazard layer.
+    Returns None if stats are not cached yet, otherwise returns (min, max) tuple.
+    """
+    return _hazard_stats_cache.get(hazard_id)
 
 
 @router.get("/hazards")
@@ -242,22 +253,23 @@ async def get_hazard_stats(hazard_id: str):
                 data = src.read(1, out_shape=(1000, 1000)) if src.width > 1000 or src.height > 1000 else src.read(1)
                 
                 # Calculate statistics, ignoring NaN/NoData values
-                valid_data = data[~np.isnan(data)]
+                valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
+                valid_data = data if np.all(valid_mask) else data[valid_mask]
                 if len(valid_data) == 0:
                     return JSONResponse(content={
                         "min": 0,
-                        "max": 0,
-                        "mean": 0
+                        "max": 0
                     })
                 
                 min_val = float(np.min(valid_data))
                 max_val = float(np.max(valid_data))
-                mean_val = float(np.mean(valid_data))
+                
+                # Cache the statistics as a tuple (min, max) for use in tile generation
+                _hazard_stats_cache[hazard_id] = (min_val, max_val)
                 
                 return JSONResponse(content={
                     "min": min_val,
-                    "max": max_val,
-                    "mean": mean_val
+                    "max": max_val
                 })
         except Exception as e:
             raise HTTPException(
