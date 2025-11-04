@@ -35,6 +35,28 @@ body {
   height: 100%;
 }
 
+/* MapLibre popup styling */
+.maplibregl-popup {
+  padding: 0;
+}
+
+.maplibregl-popup-content {
+  padding: 8px 12px !important;
+  margin: 0 !important;
+}
+
+.maplibregl-popup-close-button {
+  width: 24px !important;
+  height: 24px !important;
+  font-size: 18px !important;
+  line-height: 24px !important;
+  padding: 0 !important;
+  margin: 4px 4px 0 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
 /* Opacity input spinner styling */
 /* Hide spinners for Firefox */
 .opacity-input {

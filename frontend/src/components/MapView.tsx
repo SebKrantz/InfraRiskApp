@@ -125,6 +125,7 @@ export default function MapView({
   const map = useRef<maplibregl.Map | null>(null)
   const [mapLoaded, setMapLoaded] = useState(false)
   const isRestoringLayers = useRef(false)
+  const popup = useRef<maplibregl.Popup | null>(null)
   
   // Layer visibility state (basemap always on)
   const [infrastructureVisible, setInfrastructureVisible] = useState(true)
@@ -177,12 +178,91 @@ export default function MapView({
     }
 
     return () => {
+      // Clean up popup
+      if (popup.current) {
+        popup.current.remove()
+        popup.current = null
+      }
+      
       if (map.current) {
         map.current.remove()
         map.current = null
       }
     }
   }, [])
+
+  // Format feature properties for popup display
+  const formatFeatureProperties = (properties: Record<string, any>): string => {
+    if (!properties || Object.keys(properties).length === 0) {
+      return '<div class="p-2 text-sm text-gray-500">No properties available</div>'
+    }
+
+    const formatValue = (value: any): string => {
+      if (value === null || value === undefined) {
+        return '<span class="text-gray-400 italic">null</span>'
+      }
+      if (typeof value === 'number') {
+        // Format numbers with appropriate precision
+        if (Number.isInteger(value)) {
+          return value.toLocaleString()
+        }
+        // For decimals, show up to 6 decimal places but remove trailing zeros
+        const formatted = value.toFixed(6).replace(/\.?0+$/, '')
+        return parseFloat(formatted).toLocaleString()
+      }
+      if (typeof value === 'boolean') {
+        return value ? 'Yes' : 'No'
+      }
+      if (typeof value === 'string') {
+        // Escape HTML and truncate very long strings
+        const escaped = value
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;')
+        if (escaped.length > 100) {
+          return escaped.substring(0, 100) + '...'
+        }
+        return escaped
+      }
+      return String(value)
+    }
+
+    const formatPropertyName = (key: string): string => {
+      // Convert snake_case and camelCase to Title Case
+      return key
+        .replace(/_/g, ' ')
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, (str) => str.toUpperCase())
+        .trim()
+    }
+
+    let html = '<div style="max-width: 300px; font-family: system-ui, -apple-system, sans-serif;">'
+    html += '<div class="text-sm font-semibold text-gray-800 mb-1.5 pb-1.5 border-b border-gray-200">Feature Properties</div>'
+    html += '<div class="space-y-0.5">'
+
+    // Sort properties: show 'affected' first if present, then alphabetically
+    const sortedKeys = Object.keys(properties).sort((a, b) => {
+      if (a === 'affected') return -1
+      if (b === 'affected') return 1
+      return a.localeCompare(b)
+    })
+
+    for (const key of sortedKeys) {
+      const value = properties[key]
+      const formattedKey = formatPropertyName(key)
+      const formattedValue = formatValue(value)
+      
+      html += `<div class="flex justify-between text-xs py-0.5">`
+      html += `<span class="font-medium text-gray-700 mr-2">${formattedKey}:</span>`
+      html += `<span class="text-gray-900 text-right flex-1">${formattedValue}</span>`
+      html += `</div>`
+    }
+
+    html += '</div></div>'
+    return html
+  }
 
   // Deterministic layer helpers for toggling
   const ensureStyleLoaded = (cb: () => void) => {
@@ -218,11 +298,74 @@ export default function MapView({
     } catch (e) { console.error('addHazard error:', e) }
   }
 
+  // Add popup click handlers to infrastructure layers
+  const addPopupHandlers = (layerId: string) => {
+    if (!map.current) return
+    
+    const handleClick = (e: maplibregl.MapLayerMouseEvent) => {
+      if (!map.current || !e.features || e.features.length === 0) return
+      
+      const feature = e.features[0]
+      const properties = feature.properties || {}
+      const coordinates = (e.lngLat as any).toArray()
+      
+      // Close existing popup if any
+      if (popup.current) {
+        popup.current.remove()
+      }
+      
+      // Create new popup
+      popup.current = new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: true,
+        maxWidth: '300px',
+      })
+        .setLngLat(coordinates)
+        .setHTML(formatFeatureProperties(properties))
+        .addTo(map.current)
+    }
+    
+    // Use type assertion for layer-specific event handlers
+    ;(map.current.on as any)('click', layerId, handleClick)
+    
+    // Change cursor on hover
+    ;(map.current.on as any)('mouseenter', layerId, () => {
+      if (map.current) {
+        map.current.getCanvas().style.cursor = 'pointer'
+      }
+    })
+    
+    ;(map.current.on as any)('mouseleave', layerId, () => {
+      if (map.current) {
+        map.current.getCanvas().style.cursor = ''
+      }
+    })
+  }
+
+  // Remove popup click handlers from infrastructure layers
+  const removePopupHandlers = (layerId: string) => {
+    if (!map.current) return
+    ;(map.current.off as any)('click', layerId)
+    ;(map.current.off as any)('mouseenter', layerId)
+    ;(map.current.off as any)('mouseleave', layerId)
+  }
+
   const removeInfrastructure = () => {
     if (!map.current) return
     const sourceId = 'infrastructure-source'
     const layerId = 'infrastructure-layer'
     const affectedLayerId = 'infrastructure-affected'
+    
+    // Remove popup handlers before removing layers
+    removePopupHandlers(layerId)
+    removePopupHandlers(affectedLayerId)
+    
+    // Close popup if open
+    if (popup.current) {
+      popup.current.remove()
+      popup.current = null
+    }
+    
     if (map.current.getLayer(affectedLayerId)) map.current.removeLayer(affectedLayerId)
     if (map.current.getLayer(layerId)) map.current.removeLayer(layerId)
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId)
@@ -263,6 +406,12 @@ export default function MapView({
       }
       map.current.setLayoutProperty(layerId, 'visibility', infrastructureVisible ? 'visible' : 'none')
       if (map.current.getLayer(affectedLayerId)) map.current.setLayoutProperty(affectedLayerId, 'visibility', infrastructureVisible ? 'visible' : 'none')
+      
+      // Add popup handlers to both layers
+      addPopupHandlers(layerId)
+      if (map.current.getLayer(affectedLayerId)) {
+        addPopupHandlers(affectedLayerId)
+      }
     } catch (e) { console.error('addInfrastructure error:', e) }
   }
 
@@ -446,6 +595,12 @@ export default function MapView({
                   map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                 }
               }
+              
+              // Add popup handlers
+              addPopupHandlers(layerId)
+              if (map.current.getLayer(affectedLayerId)) {
+                addPopupHandlers(affectedLayerId)
+              }
             }
           } else {
             // No analysis yet - show all features in dark grey
@@ -481,6 +636,12 @@ export default function MapView({
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
+            }
+            
+            // Add popup handlers
+            addPopupHandlers(layerId)
+            if (map.current.getLayer(affectedLayerId)) {
+              addPopupHandlers(affectedLayerId)
             }
           }
         } catch (e) {
@@ -659,6 +820,16 @@ export default function MapView({
         const layerId = 'infrastructure-layer'
         const affectedLayerId = 'infrastructure-affected'
         
+        // Remove popup handlers
+        removePopupHandlers(layerId)
+        removePopupHandlers(affectedLayerId)
+        
+        // Close popup if open
+        if (popup.current) {
+          popup.current.remove()
+          popup.current = null
+        }
+        
         if (map.current.getLayer(affectedLayerId)) {
           map.current.removeLayer(affectedLayerId)
         }
@@ -731,6 +902,16 @@ export default function MapView({
 
       // Remove existing layers only if we're updating
       if (needsUpdate && geoJson) {
+        // Remove popup handlers before removing layers
+        removePopupHandlers(layerId)
+        removePopupHandlers(affectedLayerId)
+        
+        // Close popup if open
+        if (popup.current) {
+          popup.current.remove()
+          popup.current = null
+        }
+        
         if (map.current.getLayer(affectedLayerId)) {
           map.current.removeLayer(affectedLayerId)
         }
@@ -833,6 +1014,12 @@ export default function MapView({
                   map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                 }
               }
+              
+              // Add popup handlers
+              addPopupHandlers(layerId)
+              if (map.current.getLayer(affectedLayerId)) {
+                addPopupHandlers(affectedLayerId)
+              }
             }
           } else {
             // No analysis yet - show all features in dark grey
@@ -870,6 +1057,9 @@ export default function MapView({
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
             }
+            
+            // Add popup handlers
+            addPopupHandlers(layerId)
           }
 
           // Fit map to data bounds
