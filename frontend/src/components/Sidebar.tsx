@@ -103,7 +103,7 @@ export default function Sidebar({
                     <Info className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                <div className="bg-gray-800 rounded-md px-3 py-2 shadow-sm">
                   <Input
                     type="file"
                     accept=".shp,.gpkg,.csv,.zip"
@@ -142,7 +142,7 @@ export default function Sidebar({
                     </Button>
                   )}
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                <div className="bg-gray-800 rounded-md px-3 py-2 shadow-sm">
                   <Select value={selectedHazard?.id || ''} onChange={handleHazardSelect} className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300">
                     <option value="" className="bg-gray-800 text-gray-300">Select a hazard...</option>
                     {hazards.map(hazard => (
@@ -169,7 +169,7 @@ export default function Sidebar({
                     <Info className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm flex items-center gap-3">
+                <div className="bg-gray-800 rounded-md px-3 py-2 shadow-sm flex items-center gap-3">
                   <Select
                     value={colorPalette}
                     onChange={(e) => onColorPaletteChange(e.target.value as ColorPalette)}
