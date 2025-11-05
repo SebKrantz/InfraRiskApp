@@ -265,7 +265,7 @@ async def get_hazard_stats(hazard_id: str):
                 max_val = float(np.max(valid_data))
                 
                 # Cache the statistics as a tuple (min, max) for use in tile generation
-                _hazard_stats_cache[hazard_id] = (min_val, max_val)
+                _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
                 
                 return JSONResponse(content={
                     "min": min_val,

@@ -24,13 +24,13 @@ def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None,
 
     if all_valid:
         if vmax > vmin:
-            normalized = (data - vmin) / (vmax - vmin)
+            normalized = (np.sqrt(data) - vmin) / (vmax - vmin)
         else:
             normalized = np.zeros_like(data, dtype=np.float32)
     else:
         normalized = np.zeros_like(data, dtype=np.float32)
         if vmax > vmin:
-            normalized[valid_mask] = (data[valid_mask] - vmin) / (vmax - vmin)
+            normalized[valid_mask] = (np.sqrt(data[valid_mask]) - vmin) / (vmax - vmin)
     
     # Apply colormap
     colored = cmap(normalized)
