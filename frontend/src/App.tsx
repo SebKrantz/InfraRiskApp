@@ -11,7 +11,7 @@ function App() {
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null)
   const [colorPalette, setColorPalette] = useState<ColorPalette>('turbo')
   const [intensityThreshold, setIntensityThreshold] = useState<number>(0)
-  const [hazardOpacity, setHazardOpacity] = useState<number>(70)
+  const [hazardOpacity, setHazardOpacity] = useState<number>(60)
   const [hazardStats, setHazardStats] = useState<{ min: number; max: number } | null>(null)
   const [basemap, setBasemap] = useState<Basemap>('positron')
   const [hazards, setHazards] = useState<Hazard[]>([])
