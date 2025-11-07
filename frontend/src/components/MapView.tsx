@@ -158,6 +158,12 @@ export default function MapView({
   // Store current prop values for restoration
   const currentProps = useRef({ uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette })
   
+  // Track zoom level and bounds to prevent unnecessary reloads
+  const lastZoomLevel = useRef<number | null>(null)
+  const lastBounds = useRef<string | null>(null)
+  const boundsSetForFile = useRef<string | null>(null)
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
+  
   // Update refs when props change
   useEffect(() => {
     currentProps.current = { uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette }
@@ -183,6 +189,10 @@ export default function MapView({
       map.current.on('load', () => {
         console.log('Map loaded successfully')
         setMapLoaded(true)
+        // Track initial zoom level
+        if (map.current) {
+          lastZoomLevel.current = map.current.getZoom()
+        }
       })
 
       map.current.on('error', (e: any) => {
@@ -192,10 +202,25 @@ export default function MapView({
       map.current.on('style.load', () => {
         console.log('Map style loaded')
         setMapLoaded(true)
+        // Track zoom level after style load
+        if (map.current) {
+          lastZoomLevel.current = map.current.getZoom()
+        }
       })
 
       map.current.on('style.error', (e: any) => {
         console.error('Map style error:', e)
+      })
+      
+      // Track zoom changes to detect when tiles should reload
+      map.current.on('zoom', () => {
+        if (map.current) {
+          const currentZoom = Math.floor(map.current.getZoom())
+          if (lastZoomLevel.current !== null && Math.floor(lastZoomLevel.current) !== currentZoom) {
+            // Zoom level changed - tiles will reload naturally, just track it
+            lastZoomLevel.current = currentZoom
+          }
+        }
       })
     } catch (error) {
       console.error('Error initializing map:', error)
@@ -206,6 +231,12 @@ export default function MapView({
       if (popup.current) {
         popup.current.remove()
         popup.current = null
+      }
+      
+      // Clean up debounce timer
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
+        debounceTimer.current = null
       }
       
       if (map.current) {
@@ -709,6 +740,21 @@ export default function MapView({
     })
   }, [basemap, mapLoaded])
 
+  // Reset bounds tracking when file changes
+  useEffect(() => {
+    if (uploadedFile) {
+      // Reset bounds tracking when a new file is uploaded
+      const fileId = uploadedFile.file_id
+      if (boundsSetForFile.current !== fileId) {
+        lastBounds.current = null
+      }
+    } else {
+      // Clear tracking when file is removed
+      boundsSetForFile.current = null
+      lastBounds.current = null
+    }
+  }, [uploadedFile?.file_id])
+
   // Add/update hazard raster layer
   useEffect(() => {
     // Skip if we're restoring layers after basemap change
@@ -732,104 +778,118 @@ export default function MapView({
     const hazardSourceId = 'hazard-raster-source'
     const hazardLayerId = 'hazard-raster-layer'
 
-    const waitForStyleAndAddHazard = () => {
-      if (!map.current?.isStyleLoaded()) {
-        setTimeout(waitForStyleAndAddHazard, 100)
-        return
-      }
-
-      // Check if layer already exists - if so, just update it
-      const existingLayer = map.current.getLayer(hazardLayerId)
-      const existingSource = map.current.getSource(hazardSourceId)
-      
-      if (existingLayer && existingSource) {
-        // Update existing layer properties (opacity and tile URL if palette changed)
-        try {
-          map.current.setPaintProperty(hazardLayerId, 'raster-opacity', hazardOpacity / 100)
-          
-          // Update source if palette changed (remove and re-add source)
-          const currentTiles = (existingSource as any).tiles
-          const newTileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
-          if (currentTiles && currentTiles[0] !== newTileUrl) {
-            map.current.removeLayer(hazardLayerId)
-            map.current.removeSource(hazardSourceId)
-            
-            map.current.addSource(hazardSourceId, {
-              type: 'raster',
-              tiles: [newTileUrl],
-              tileSize: 256,
-            })
-            
-            const beforeLayer = map.current.getLayer('infrastructure-layer') ? 'infrastructure-layer' : undefined
-            map.current.addLayer({
-              id: hazardLayerId,
-              type: 'raster',
-              source: hazardSourceId,
-              paint: {
-                'raster-opacity': hazardOpacity / 100,
-              },
-            }, beforeLayer)
-            
-            // Apply visibility state
-            if (!hazardVisible) {
-              map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
-            }
-          } else {
-            // Just update visibility if layer exists
-            if (!hazardVisible) {
-              map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
-            } else {
-              map.current.setLayoutProperty(hazardLayerId, 'visibility', 'visible')
-            }
-          }
+    // Debounce hazard layer updates to prevent rapid successive reloads
+    if (debounceTimer.current) {
+      clearTimeout(debounceTimer.current)
+    }
+    
+    debounceTimer.current = setTimeout(() => {
+      const waitForStyleAndAddHazard = () => {
+        if (!map.current?.isStyleLoaded()) {
+          setTimeout(waitForStyleAndAddHazard, 100)
           return
+        }
+
+        // Check if layer already exists - if so, just update it
+        const existingLayer = map.current.getLayer(hazardLayerId)
+        const existingSource = map.current.getSource(hazardSourceId)
+        
+        if (existingLayer && existingSource) {
+          // Update existing layer properties (opacity and tile URL if palette changed)
+          try {
+            map.current.setPaintProperty(hazardLayerId, 'raster-opacity', hazardOpacity / 100)
+            
+            // Update source if palette changed (remove and re-add source)
+            const currentTiles = (existingSource as any).tiles
+            const newTileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
+            if (currentTiles && currentTiles[0] !== newTileUrl) {
+              map.current.removeLayer(hazardLayerId)
+              map.current.removeSource(hazardSourceId)
+              
+              map.current.addSource(hazardSourceId, {
+                type: 'raster',
+                tiles: [newTileUrl],
+                tileSize: 256,
+              })
+              
+              const beforeLayer = map.current.getLayer('infrastructure-layer') ? 'infrastructure-layer' : undefined
+              map.current.addLayer({
+                id: hazardLayerId,
+                type: 'raster',
+                source: hazardSourceId,
+                paint: {
+                  'raster-opacity': hazardOpacity / 100,
+                },
+              }, beforeLayer)
+              
+              // Apply visibility state
+              if (!hazardVisible) {
+                map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
+              }
+            } else {
+              // Just update visibility if layer exists
+              if (!hazardVisible) {
+                map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
+              } else {
+                map.current.setLayoutProperty(hazardLayerId, 'visibility', 'visible')
+              }
+            }
+            return
+          } catch (error) {
+            console.error('Error updating hazard layer:', error)
+            // Fall through to add new layer
+          }
+        }
+
+        // Remove existing hazard layer if updating
+        if (map.current.getLayer(hazardLayerId)) {
+          map.current.removeLayer(hazardLayerId)
+        }
+        if (map.current.getSource(hazardSourceId)) {
+          map.current.removeSource(hazardSourceId)
+        }
+
+        // Add hazard raster layer using backend tile service
+        try {
+          // Use backend tile endpoint
+          const tileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
+          
+          map.current.addSource(hazardSourceId, {
+            type: 'raster',
+            tiles: [tileUrl],
+            tileSize: 256,
+          })
+
+          // Find the infrastructure layer to insert before it
+          const beforeLayer = map.current.getLayer('infrastructure-layer') ? 'infrastructure-layer' : undefined
+          
+          map.current.addLayer({
+            id: hazardLayerId,
+            type: 'raster',
+            source: hazardSourceId,
+            paint: {
+              'raster-opacity': hazardOpacity / 100,
+            },
+          }, beforeLayer) // Insert before infrastructure layer (or at top if no infrastructure)
+          
+          // Apply visibility state
+          if (!hazardVisible) {
+            map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
+          }
         } catch (error) {
-          console.error('Error updating hazard layer:', error)
-          // Fall through to add new layer
+          console.error('Error adding hazard layer:', error)
         }
       }
 
-      // Remove existing hazard layer if updating
-      if (map.current.getLayer(hazardLayerId)) {
-        map.current.removeLayer(hazardLayerId)
-      }
-      if (map.current.getSource(hazardSourceId)) {
-        map.current.removeSource(hazardSourceId)
-      }
-
-      // Add hazard raster layer using backend tile service
-      try {
-        // Use backend tile endpoint
-        const tileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
-        
-        map.current.addSource(hazardSourceId, {
-          type: 'raster',
-          tiles: [tileUrl],
-          tileSize: 256,
-        })
-
-        // Find the infrastructure layer to insert before it
-        const beforeLayer = map.current.getLayer('infrastructure-layer') ? 'infrastructure-layer' : undefined
-        
-        map.current.addLayer({
-          id: hazardLayerId,
-          type: 'raster',
-          source: hazardSourceId,
-          paint: {
-            'raster-opacity': hazardOpacity / 100,
-          },
-        }, beforeLayer) // Insert before infrastructure layer (or at top if no infrastructure)
-        
-        // Apply visibility state
-        if (!hazardVisible) {
-          map.current.setLayoutProperty(hazardLayerId, 'visibility', 'none')
-        }
-      } catch (error) {
-        console.error('Error adding hazard layer:', error)
+      waitForStyleAndAddHazard()
+    }, 100) // Debounce delay
+    
+    // Cleanup function
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
       }
     }
-
-    waitForStyleAndAddHazard()
   }, [selectedHazard, hazardOpacity, colorPalette, mapLoaded, hazardVisible])
 
   // Add/update infrastructure layer with affected/unaffected styling
@@ -1086,41 +1146,94 @@ export default function MapView({
             addPopupHandlers(layerId)
           }
 
-          // Fit map to data bounds
+          // Only fit bounds if we haven't set them for this file yet, or if bounds changed
           const bounds = uploadedFile.bounds
-          const bbox: [number, number, number, number] = [
-            bounds.minx,
-            bounds.miny,
-            bounds.maxx,
-            bounds.maxy
-          ]
-          map.current.fitBounds(bbox, { padding: 50 })
+          const boundsKey = `${bounds.minx},${bounds.miny},${bounds.maxx},${bounds.maxy}`
+          const fileId = uploadedFile.file_id
+          
+          // Only call fitBounds if:
+          // 1. We haven't set bounds for this file yet, OR
+          // 2. The bounds have changed
+          if (boundsSetForFile.current !== fileId || lastBounds.current !== boundsKey) {
+            const bbox: [number, number, number, number] = [
+              bounds.minx,
+              bounds.miny,
+              bounds.maxx,
+              bounds.maxy
+            ]
+            // Debounce fitBounds to avoid rapid successive calls
+            if (debounceTimer.current) {
+              clearTimeout(debounceTimer.current)
+            }
+            debounceTimer.current = setTimeout(() => {
+              if (map.current) {
+                map.current.fitBounds(bbox, { padding: 50, duration: 0 }) // duration: 0 prevents animation that can trigger tile reloads
+                boundsSetForFile.current = fileId
+                lastBounds.current = boundsKey
+              }
+            }, 75)
+          }
         } catch (error) {
           console.error('Error adding infrastructure layer:', error)
-          // Fallback to just fitting bounds
+          // Only fit bounds if not already set for this file
           const bounds = uploadedFile.bounds
+          const boundsKey = `${bounds.minx},${bounds.miny},${bounds.maxx},${bounds.maxy}`
+          const fileId = uploadedFile.file_id
+          
+          if (boundsSetForFile.current !== fileId || lastBounds.current !== boundsKey) {
+            const bbox: [number, number, number, number] = [
+              bounds.minx,
+              bounds.miny,
+              bounds.maxx,
+              bounds.maxy
+            ]
+            if (debounceTimer.current) {
+              clearTimeout(debounceTimer.current)
+            }
+            debounceTimer.current = setTimeout(() => {
+              if (map.current) {
+                map.current.fitBounds(bbox, { padding: 50, duration: 0 })
+                boundsSetForFile.current = fileId
+                lastBounds.current = boundsKey
+              }
+            }, 100)
+          }
+        }
+      } else {
+        // Only fit bounds if no GeoJSON available yet and bounds not set
+        const bounds = uploadedFile.bounds
+        const boundsKey = `${bounds.minx},${bounds.miny},${bounds.maxx},${bounds.maxy}`
+        const fileId = uploadedFile.file_id
+        
+        if (boundsSetForFile.current !== fileId || lastBounds.current !== boundsKey) {
           const bbox: [number, number, number, number] = [
             bounds.minx,
             bounds.miny,
             bounds.maxx,
             bounds.maxy
           ]
-          map.current.fitBounds(bbox, { padding: 50 })
+          if (debounceTimer.current) {
+            clearTimeout(debounceTimer.current)
+          }
+          debounceTimer.current = setTimeout(() => {
+            if (map.current) {
+              map.current.fitBounds(bbox, { padding: 50, duration: 0 })
+              boundsSetForFile.current = fileId
+              lastBounds.current = boundsKey
+            }
+          }, 100)
         }
-      } else {
-        // Just fit bounds if no GeoJSON available yet
-        const bounds = uploadedFile.bounds
-        const bbox: [number, number, number, number] = [
-          bounds.minx,
-          bounds.miny,
-          bounds.maxx,
-          bounds.maxy
-        ]
-        map.current.fitBounds(bbox, { padding: 50 })
       }
     }
 
     waitForStyle()
+    
+    // Cleanup function
+    return () => {
+      if (debounceTimer.current) {
+        clearTimeout(debounceTimer.current)
+      }
+    }
   }, [uploadedFile, analysisResult, mapLoaded, infrastructureVisible])
 
   // Basemap style switcher (always on)
