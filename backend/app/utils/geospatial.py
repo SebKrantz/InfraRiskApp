@@ -26,21 +26,32 @@ def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     Returns:
         GeoDataFrame with Point geometries
     """
-    # Read CSV - auto-detect delimiter
-    # Try to detect delimiter automatically by reading first line
+    # Read CSV - auto-detect delimiter and encoding
+    # Try multiple encodings to handle different file formats
     import csv
-    with open(file_path, 'r', encoding='utf-8-sig') as f:
-        first_line = f.readline()
-        # Try to detect delimiter
-        sniffer = csv.Sniffer()
-        try:
-            delimiter = sniffer.sniff(first_line, delimiters=',;').delimiter
-        except:
-            # Fallback: check if semicolon is present, otherwise use comma
-            delimiter = ';' if ';' in first_line else ','
+    encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
     
-    # Read with detected delimiter
-    df = pd.read_csv(file_path, sep=delimiter)
+    delimiter = ','
+    encoding = 'utf-8'
+    
+    for enc in encodings:
+        try:
+            with open(file_path, 'r', encoding=enc) as f:
+                first_line = f.readline()
+                # Try to detect delimiter
+                sniffer = csv.Sniffer()
+                try:
+                    delimiter = sniffer.sniff(first_line, delimiters=',;').delimiter
+                except:
+                    # Fallback: check if semicolon is present, otherwise use comma
+                    delimiter = ';' if ';' in first_line else ','
+                encoding = enc
+                break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # Read with detected delimiter and encoding
+    df = pd.read_csv(file_path, sep=delimiter, encoding=encoding)
     
     # Normalize column names to lowercase and strip whitespace
     original_columns = list(df.columns)
