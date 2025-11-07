@@ -284,6 +284,22 @@ export default function MapView({
       return String(value)
     }
 
+    const formatExposureLevel = (value: any): string => {
+      if (value === null || value === undefined) {
+        return '<span class="text-gray-400 italic">N/A</span>'
+      }
+      if (typeof value === 'number') {
+        // Format exposure levels with 2-4 decimal places
+        // Show 4 decimal places, but remove trailing zeros
+        const formatted = value.toFixed(4).replace(/\.?0+$/, '')
+        return parseFloat(formatted).toLocaleString(undefined, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 4
+        })
+      }
+      return String(value)
+    }
+
     const formatPropertyName = (key: string): string => {
       // Convert snake_case and camelCase to Title Case
       return key
@@ -297,12 +313,43 @@ export default function MapView({
     html += '<div class="text-sm font-semibold text-gray-800 mb-1.5 pb-1.5 border-b border-gray-200">Feature Properties</div>'
     html += '<div class="space-y-0.5">'
 
+    // Extract exposure level properties to display prominently at the top
+    const exposureLevel = properties['exposure_level']
+    const exposureLevelMax = properties['exposure_level_max']
+    const exposureLevelAvg = properties['exposure_level_avg']
+    
+    // Display exposure levels prominently at the top
+    if (exposureLevel !== undefined && exposureLevel !== null) {
+      // Point feature - show single exposure level
+      html += `<div class="flex justify-between text-xs py-1 mb-1 bg-blue-50 px-2 rounded">`
+      html += `<span class="font-semibold text-gray-800 mr-2">Exposure Level:</span>`
+      html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevel)}</span>`
+      html += `</div>`
+    } else if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
+      // LineString feature - show max and avg exposure levels
+      if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
+        html += `<div class="flex justify-between text-xs py-1 mb-0.5 bg-blue-50 px-2 rounded-t">`
+        html += `<span class="font-semibold text-gray-800 mr-2">Max Exposure Level:</span>`
+        html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevelMax)}</span>`
+        html += `</div>`
+      }
+      if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
+        html += `<div class="flex justify-between text-xs py-1 mb-1 bg-blue-50 px-2 rounded-b">`
+        html += `<span class="font-semibold text-gray-800 mr-2">Avg Exposure Level:</span>`
+        html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevelAvg)}</span>`
+        html += `</div>`
+      }
+    }
+
     // Sort properties: show 'affected' first if present, then alphabetically
-    const sortedKeys = Object.keys(properties).sort((a, b) => {
-      if (a === 'affected') return -1
-      if (b === 'affected') return 1
-      return a.localeCompare(b)
-    })
+    // Exclude exposure level properties from the main list since they're shown at the top
+    const sortedKeys = Object.keys(properties)
+      .filter(key => !['exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
+      .sort((a, b) => {
+        if (a === 'affected') return -1
+        if (b === 'affected') return 1
+        return a.localeCompare(b)
+      })
 
     for (const key of sortedKeys) {
       const value = properties[key]
