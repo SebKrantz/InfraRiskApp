@@ -13,6 +13,17 @@ interface MapViewProps {
   basemap: Basemap
   onBasemapChange: (basemap: Basemap) => void
   loading?: boolean
+  hazardStats?: { min: number; max: number } | null
+}
+
+// Color palette gradient definitions (approximations of matplotlib colormaps)
+const paletteGradients: Record<ColorPalette, string> = {
+  viridis: 'linear-gradient(to top, #440154, #482777, #3f4a8a, #31678e, #26838f, #1f9d8a, #2db27d, #6cce5a, #b6de2b, #fee825)',
+  magma: 'linear-gradient(to top, #000004, #1b0c42, #4a148c, #7b238e, #a52c7e, #cd4071, #ed6925, #fb9b06, #f7d13d, #fcffa4)',
+  inferno: 'linear-gradient(to top, #000004, #1f0c48, #550f64, #8b0a5b, #b51f3b, #dd4128, #f26b1d, #fc9b0a, #f7d13d, #fcffa4)',
+  plasma: 'linear-gradient(to top, #0d0887, #46039f, #7201a8, #9c179e, #bd3786, #d8576b, #ed7953, #fb9f3a, #fdca26, #f0f921)',
+  cividis: 'linear-gradient(to top, #00204d, #003d7c, #1d5c8f, #3d7ba3, #5d9ab8, #7eb8cc, #a0d5e0, #c4f1f4, #e8f8f5, #ffea00)',
+  turbo: 'linear-gradient(to top, #30123b, #4145ab, #4675ed, #39a2fc, #1bcfd4, #1bcfd4, #39fbb0, #8ef9a2, #d1fda0, #fefb9e)',
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -144,6 +155,7 @@ export default function MapView({
   basemap,
   onBasemapChange,
   loading = false,
+  hazardStats = null,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
@@ -1389,6 +1401,38 @@ export default function MapView({
               <span className="text-sm text-gray-700">Hazard Layer</span>
             </label>
           )}
+        </div>
+      )}
+
+      {/* Color Legend - Lower Left Corner */}
+      {selectedHazard && hazardStats && hazardVisible && (
+        <div className="absolute bottom-4 left-4 z-10 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 shadow-lg border border-gray-200">
+          <div className="text-xs font-semibold text-gray-700 mb-1.5">
+            {selectedHazard.name}
+          </div>
+          <div className="flex items-end gap-2">
+            {/* Color gradient bar */}
+            <div className="flex flex-col items-center">
+              <div
+                className="w-6 h-32 rounded border border-gray-300"
+                style={{
+                  background: paletteGradients[colorPalette],
+                }}
+              />
+              <div className="mt-1 text-xs text-gray-600 font-medium">
+                {hazardStats.max.toFixed(2)}
+              </div>
+              <div className="text-xs text-gray-600 font-medium">
+                {hazardStats.min.toFixed(2)}
+              </div>
+            </div>
+            {/* Labels */}
+            <div className="text-xs text-gray-600 mb-1">
+              <div className="font-medium mb-0.5">Intensity</div>
+              <div className="text-gray-500">Max</div>
+              <div className="text-gray-500 mt-8">Min</div>
+            </div>
+          </div>
         </div>
       )}
 

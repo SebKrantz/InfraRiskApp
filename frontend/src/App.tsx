@@ -144,6 +144,7 @@ function App() {
         basemap={basemap}
         onBasemapChange={setBasemap}
         loading={loading}
+        hazardStats={hazardStats}
       />
     </div>
   )
