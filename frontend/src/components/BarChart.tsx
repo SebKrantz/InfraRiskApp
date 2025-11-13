@@ -56,9 +56,19 @@ export default function BarChart({ data }: BarChartProps) {
     <div className="w-full h-64">
       <ResponsiveContainer width="100%" height="100%">
         <RechartsBarChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" />
-          <YAxis />
+          <CartesianGrid strokeDasharray="3 3" stroke="#9ca3af" vertical={false} />
+          <XAxis 
+            dataKey="name" 
+            stroke="#9ca3af"
+            tick={{ fill: '#9ca3af' }}
+            label={{ fill: '#9ca3af' }}
+            tickLine={false}
+          />
+          <YAxis 
+            stroke="#9ca3af"
+            tick={{ fill: '#9ca3af' }}
+            label={{ fill: '#9ca3af' }}
+          />
           <Tooltip content={<CustomTooltip />} />
           <Bar dataKey="value" />
         </RechartsBarChart>
