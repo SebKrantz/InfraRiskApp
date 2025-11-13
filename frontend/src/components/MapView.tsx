@@ -441,23 +441,31 @@ export default function MapView({
     removeInfrastructure()
     try {
       map.current.addSource(sourceId, { type: 'geojson', data: geoJson })
-      const hasHazardLayer = map.current.getLayer('hazard-raster-layer')
-      const beforeId = hasHazardLayer ? 'hazard-raster-layer' : undefined
       if (hasAffected) {
         if (isPoint) {
-          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'circle-radius': 5, 'circle-color': '#10b981', 'circle-opacity': 0.8 } }, beforeId)
+          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'circle-radius': 5, 'circle-color': '#10b981', 'circle-opacity': 0.8 } })
           if ((props.analysisResult?.summary?.affected_count || 0) > 0) {
             map.current.addLayer({ id: affectedLayerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'circle-radius': 5, 'circle-color': '#ef4444', 'circle-opacity': 0.8 } })
+            // Move affected layer to top
+            map.current.moveLayer(affectedLayerId)
           }
+          // Move infrastructure layer to top to ensure it's above hazard
+          map.current.moveLayer(layerId)
         } else {
-          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'line-color': '#10b981', 'line-width': 3, 'line-opacity': 0.8 } }, beforeId)
+          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'line-color': '#10b981', 'line-width': 3, 'line-opacity': 0.8 } })
           if ((props.analysisResult?.summary?.affected_meters || 0) > 0) {
             map.current.addLayer({ id: affectedLayerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'line-color': '#ef4444', 'line-width': 3, 'line-opacity': 0.8 } })
+            // Move affected layer to top
+            map.current.moveLayer(affectedLayerId)
           }
+          // Move infrastructure layer to top to ensure it's above hazard
+          map.current.moveLayer(layerId)
         }
       } else {
-        if (isPoint) map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, paint: { 'circle-radius': 5, 'circle-color': '#6b7280', 'circle-opacity': 0.8 } }, beforeId)
-        else map.current.addLayer({ id: layerId, type: 'line', source: sourceId, paint: { 'line-color': '#6b7280', 'line-width': 3, 'line-opacity': 0.8 } }, beforeId)
+        if (isPoint) map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, paint: { 'circle-radius': 5, 'circle-color': '#6b7280', 'circle-opacity': 0.8 } })
+        else map.current.addLayer({ id: layerId, type: 'line', source: sourceId, paint: { 'line-color': '#6b7280', 'line-width': 3, 'line-opacity': 0.8 } })
+        // Move infrastructure layer to top to ensure it's above hazard
+        map.current.moveLayer(layerId)
       }
       map.current.setLayoutProperty(layerId, 'visibility', infrastructureVisible ? 'visible' : 'none')
       if (map.current.getLayer(affectedLayerId)) map.current.setLayoutProperty(affectedLayerId, 'visibility', infrastructureVisible ? 'visible' : 'none')
@@ -860,9 +868,8 @@ export default function MapView({
             tileSize: 256,
           })
 
-          // Find the infrastructure layer to insert before it
-          const beforeLayer = map.current.getLayer('infrastructure-layer') ? 'infrastructure-layer' : undefined
-          
+          // Add hazard layer - it should be below infrastructure
+          // We'll ensure infrastructure is moved above it after adding
           map.current.addLayer({
             id: hazardLayerId,
             type: 'raster',
@@ -870,7 +877,20 @@ export default function MapView({
             paint: {
               'raster-opacity': hazardOpacity / 100,
             },
-          }, beforeLayer) // Insert before infrastructure layer (or at top if no infrastructure)
+          })
+          
+          // If infrastructure layers exist, ensure they're above the hazard layer
+          // Move them in the correct order: infrastructure (green) first, then affected (red) on top
+          const infrastructureLayer = map.current.getLayer('infrastructure-layer')
+          const affectedLayer = map.current.getLayer('infrastructure-affected')
+          if (infrastructureLayer) {
+            // Move infrastructure layer (green/unaffected) to top first
+            map.current.moveLayer('infrastructure-layer')
+          }
+          if (affectedLayer) {
+            // Move affected layer (red) to top last, so it renders above infrastructure
+            map.current.moveLayer('infrastructure-affected')
+          }
           
           // Apply visibility state
           if (!hazardVisible) {
@@ -1044,9 +1064,9 @@ export default function MapView({
 
           // If we have analysis results, show affected/unaffected coloring
           if (analysisResult?.infrastructure_features) {
-            // Add unaffected features layer (green) - after hazard layer
-            const hasHazardLayer = map.current.getLayer('hazard-raster-layer')
+            // Add unaffected features layer (green) - always above hazard layer
             if (isPoint) {
+              // Add layer without beforeId so it goes on top, then move it after hazard if hazard exists
               map.current.addLayer({
                 id: layerId,
                 type: 'circle',
@@ -1057,8 +1077,7 @@ export default function MapView({
                   'circle-color': '#10b981', // green for unaffected
                   'circle-opacity': 0.8,
                 },
-              }, hasHazardLayer ? 'hazard-raster-layer' : undefined)
-              
+              })
               // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
@@ -1074,8 +1093,7 @@ export default function MapView({
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
-              }, hasHazardLayer ? 'hazard-raster-layer' : undefined)
-              
+              })
               // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
@@ -1130,10 +1148,19 @@ export default function MapView({
                 addPopupHandlers(affectedLayerId)
               }
             }
+            
+            // Ensure correct layer order after all layers are added:
+            // hazard < infrastructure (green/unaffected) < affected (red)
+            // Move infrastructure (green) above hazard first
+            map.current.moveLayer(layerId)
+            // If affected layer exists, move it to top (above infrastructure)
+            if (map.current.getLayer(affectedLayerId)) {
+              map.current.moveLayer(affectedLayerId)
+            }
           } else {
             // No analysis yet - show all features in dark grey
-            const hasHazardLayer = map.current.getLayer('hazard-raster-layer')
             if (isPoint) {
+              // Add layer without beforeId so it goes on top, then move it after hazard if hazard exists
               map.current.addLayer({
                 id: layerId,
                 type: 'circle',
@@ -1143,8 +1170,7 @@ export default function MapView({
                   'circle-color': '#6b7280', // dark grey
                   'circle-opacity': 0.8,
                 },
-              }, hasHazardLayer ? 'hazard-raster-layer' : undefined)
-              
+              })
               // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
@@ -1159,13 +1185,15 @@ export default function MapView({
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
-              }, hasHazardLayer ? 'hazard-raster-layer' : undefined)
-              
+              })
               // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
             }
+            
+            // Ensure infrastructure is above hazard
+            map.current.moveLayer(layerId)
             
             // Add popup handlers
             addPopupHandlers(layerId)
