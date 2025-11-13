@@ -13,6 +13,7 @@ interface SidebarProps {
   onToggle: () => void
   uploadedFile: UploadedFile | null
   onFileUpload: (file: File) => Promise<void>
+  onClearData: () => void
   hazards: Hazard[]
   selectedHazard: Hazard | null
   onSelectHazard: (hazard: Hazard | null) => void
@@ -35,6 +36,7 @@ export default function Sidebar({
   onToggle,
   uploadedFile,
   onFileUpload,
+  onClearData,
   hazards,
   selectedHazard,
   onSelectHazard,
@@ -103,25 +105,46 @@ export default function Sidebar({
                     <Info className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
-                  <Input
-                    type="file"
-                    accept=".shp,.gpkg,.csv,.zip"
-                    onChange={handleFileChange}
-                    disabled={loading}
-                    className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                </div>
-                {loading && !uploadedFile && (
-                  <p className="text-xs text-blue-400 mt-1">Uploading...</p>
-                )}
-                {uploadedFile && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    ✓ {uploadedFile.filename} ({uploadedFile.feature_count} features)
-                  </p>
-                )}
-                {error && !uploadedFile && (
-                  <p className="text-xs text-red-400 mt-1">{error}</p>
+                {uploadedFile ? (
+                  <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-gray-300 truncate">
+                          ✓ {uploadedFile.filename}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {uploadedFile.feature_count} features
+                        </p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={onClearData}
+                        disabled={loading}
+                        className="ml-2 text-xs text-gray-400 hover:text-red-400 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Clear Data
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                      <Input
+                        type="file"
+                        accept=".shp,.gpkg,.csv,.zip"
+                        onChange={handleFileChange}
+                        disabled={loading}
+                        className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed [&::file-selector-button]:mr-4"
+                      />
+                    </div>
+                    {loading && (
+                      <p className="text-xs text-blue-400 mt-1">Uploading...</p>
+                    )}
+                    {error && (
+                      <p className="text-xs text-red-400 mt-1">{error}</p>
+                    )}
+                  </>
                 )}
               </div>
 
