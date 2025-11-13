@@ -940,6 +940,7 @@ export default function MapView({
       // Check if we need to update or just add
       const existingSource = map.current.getSource(sourceId)
       const existingLayer = map.current.getLayer(layerId)
+      const existingAffectedLayer = map.current.getLayer(affectedLayerId)
       
       // Determine which GeoJSON to use
       let geoJson = null
@@ -951,18 +952,27 @@ export default function MapView({
         geoJson = analysisResult.infrastructure_features
         isPoint = analysisResult.geometry_type === 'Point'
         
-        // Check if source data needs updating
-        if (existingSource && (existingSource as any)._data) {
-          const currentData = JSON.stringify((existingSource as any)._data)
-          const newData = JSON.stringify(geoJson)
-          needsUpdate = currentData !== newData
-        } else {
-          needsUpdate = true
-        }
-        
-        // If we have analysis results, we need to update layer styling (affected/unaffected)
-        if (!needsUpdate && existingLayer) {
+        // Always update if we don't have the affected layer (switching from plain to affected/unaffected styling)
+        // This is critical - we need to show affected/unaffected coloring, not plain styling
+        if (existingLayer && !existingAffectedLayer) {
           needsUpdate = true // Force update to show affected/unaffected coloring
+        } else if (!existingLayer) {
+          // No layer exists yet, need to create it
+          needsUpdate = true
+        } else {
+          // Even if layers exist, check if source data needs updating
+          if (existingSource && (existingSource as any)._data) {
+            const currentData = JSON.stringify((existingSource as any)._data)
+            const newData = JSON.stringify(geoJson)
+            needsUpdate = currentData !== newData
+            // If data is the same but we have analysis results, we still need to update
+            // because the layer styling might need to change
+            if (!needsUpdate && !existingAffectedLayer) {
+              needsUpdate = true
+            }
+          } else {
+            needsUpdate = true
+          }
         }
       } else if (uploadedFile.geojson) {
         // Use uploaded file GeoJSON for initial display
@@ -977,11 +987,25 @@ export default function MapView({
         } else {
           needsUpdate = true
         }
+        
+        // Always update if we're switching from analysis results to plain styling
+        if (!needsUpdate && existingAffectedLayer) {
+          needsUpdate = true // Switching from affected/unaffected to plain styling
+        }
       }
 
-      // If source exists and data hasn't changed and no analysis results, no update needed
+      // If source exists and data hasn't changed and we're not switching between analysis/plain modes, no update needed
+      // BUT: always update if we have analysis results and don't have the affected layer yet
       if (existingSource && existingLayer && !needsUpdate) {
-        return // No update needed
+        // Double-check: if we have analysis results but no affected layer, we need to update
+        if (analysisResult?.infrastructure_features && !existingAffectedLayer) {
+          needsUpdate = true
+        } else if (!analysisResult?.infrastructure_features && existingAffectedLayer) {
+          // Switching from analysis results back to plain - need to update
+          needsUpdate = true
+        } else {
+          return // No update needed
+        }
       }
 
       // Remove existing layers only if we're updating
@@ -1012,6 +1036,7 @@ export default function MapView({
 
       if (geoJson && needsUpdate) {
         try {
+          // Add source (we already removed it above if it existed)
           map.current.addSource(sourceId, {
             type: 'geojson',
             data: geoJson,
@@ -1296,13 +1321,19 @@ export default function MapView({
   useEffect(() => {
     if (!map.current || !mapLoaded) return
     ensureStyleLoaded(() => {
+      if (!map.current) return
       if (!infrastructureVisible) {
         removeInfrastructure()
       } else {
-        if (uploadedFile) addInfrastructure()
+        // Only call addInfrastructure if we don't have layers yet
+        // The main infrastructure useEffect handles updates when analysisResult changes
+        const layerId = 'infrastructure-layer'
+        if (uploadedFile && !map.current.getLayer(layerId)) {
+          addInfrastructure()
+        }
       }
     })
-  }, [infrastructureVisible, mapLoaded, uploadedFile, analysisResult])
+  }, [infrastructureVisible, mapLoaded, uploadedFile])
 
   // Helper function to apply hazard visibility
   const applyHazardVisibility = (visible: boolean) => {
