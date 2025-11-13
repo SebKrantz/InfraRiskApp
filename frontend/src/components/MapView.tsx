@@ -313,43 +313,52 @@ export default function MapView({
     html += '<div class="text-sm font-semibold text-gray-800 mb-1.5 pb-1.5 border-b border-gray-200">Feature Properties</div>'
     html += '<div class="space-y-0.5">'
 
-    // Extract exposure level properties to display prominently at the top
+    // Extract affected status and exposure level properties to display prominently at the top
+    const affected = properties['affected']
     const exposureLevel = properties['exposure_level']
     const exposureLevelMax = properties['exposure_level_max']
     const exposureLevelAvg = properties['exposure_level_avg']
     
-    // Display exposure levels prominently at the top
+    // Build list of computed features to display in a single shaded box
+    const computedFeatures: Array<{label: string, value: string}> = []
+    
+    if (affected !== undefined) {
+      const affectedValue = typeof affected === 'boolean' ? (affected ? 'Yes' : 'No') : formatValue(affected)
+      computedFeatures.push({ label: 'Affected:', value: affectedValue })
+    }
+    
     if (exposureLevel !== undefined && exposureLevel !== null) {
       // Point feature - show single exposure level
-      html += `<div class="flex justify-between text-xs py-1 mb-1 bg-blue-50 px-2 rounded">`
-      html += `<span class="font-semibold text-gray-800 mr-2">Exposure Level:</span>`
-      html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevel)}</span>`
-      html += `</div>`
+      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
     } else if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
       // LineString feature - show max and avg exposure levels
       if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
-        html += `<div class="flex justify-between text-xs py-1 mb-0.5 bg-blue-50 px-2 rounded-t">`
-        html += `<span class="font-semibold text-gray-800 mr-2">Max Exposure Level:</span>`
-        html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevelMax)}</span>`
-        html += `</div>`
+        computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax) })
       }
       if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
-        html += `<div class="flex justify-between text-xs py-1 mb-1 bg-blue-50 px-2 rounded-b">`
-        html += `<span class="font-semibold text-gray-800 mr-2">Avg Exposure Level:</span>`
-        html += `<span class="text-gray-900 text-right flex-1 font-medium">${formatExposureLevel(exposureLevelAvg)}</span>`
-        html += `</div>`
+        computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg) })
       }
     }
+    
+    // Display all computed features at the top (bold font distinguishes them)
+    if (computedFeatures.length > 0) {
+      for (let i = 0; i < computedFeatures.length; i++) {
+        const feature = computedFeatures[i]
+        html += `<div class="flex justify-between text-xs py-0.5">`
+        html += `<span class="font-semibold text-gray-800 mr-2">${feature.label}</span>`
+        html += `<span class="text-gray-900 text-right flex-1 font-medium">${feature.value}</span>`
+        html += `</div>`
+      }
+      // Add horizontal rule between computed features and other properties
+      // Match spacing of title: pb-1.5 (space before border) + mb-1.5 (space after border)
+      html += `<div class="pt-1.5 mb-1.5 border-b border-gray-200"></div>`
+    }
 
-    // Sort properties: show 'affected' first if present, then alphabetically
-    // Exclude exposure level properties from the main list since they're shown at the top
+    // Sort properties alphabetically
+    // Exclude affected and exposure level properties from the main list since they're shown at the top
     const sortedKeys = Object.keys(properties)
-      .filter(key => !['exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
-      .sort((a, b) => {
-        if (a === 'affected') return -1
-        if (b === 'affected') return 1
-        return a.localeCompare(b)
-      })
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
+      .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {
       const value = properties[key]
