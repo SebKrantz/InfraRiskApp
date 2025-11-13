@@ -121,7 +121,7 @@ export default function Sidebar({
                         size="sm"
                         onClick={onClearData}
                         disabled={loading}
-                        className="ml-2 text-xs text-gray-400 hover:text-red-400 hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="ml-2 text-xs text-gray-300 bg-gray-700 hover:text-red-500 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Clear Data
                       </Button>
