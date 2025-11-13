@@ -77,6 +77,13 @@ function App() {
     }
   }
 
+  // Handle clear data
+  const handleClearData = () => {
+    setUploadedFile(null)
+    setAnalysisResult(null)
+    setError(null)
+  }
+
   // Perform analysis when hazard or threshold changes
   useEffect(() => {
     if (!uploadedFile || !selectedHazard) {
@@ -120,6 +127,7 @@ function App() {
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         uploadedFile={uploadedFile}
         onFileUpload={handleFileUpload}
+        onClearData={handleClearData}
         hazards={hazards}
         selectedHazard={selectedHazard}
         onSelectHazard={setSelectedHazard}
