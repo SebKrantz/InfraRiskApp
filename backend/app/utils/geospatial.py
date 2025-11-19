@@ -176,6 +176,7 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
 def analyze_intersection(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
+    geometry_type: str,
     intensity_threshold: Optional[float] = None
 ) -> dict:
     """
@@ -186,6 +187,7 @@ def analyze_intersection(
     Args:
         infrastructure_gdf: GeoDataFrame with infrastructure assets
         hazard_raster_path: Path or URL to hazard raster (assumed EPSG:4326)
+        geometry_type: Geometry type ("Point" or "LineString") from stored metadata
         intensity_threshold: Optional threshold for filtering hazard intensity
         
     Returns:
@@ -209,8 +211,6 @@ def analyze_intersection(
             }
         
         # Sample raster values at infrastructure locations
-        geometry_type = validate_geometry_type(infrastructure_gdf)
-        
         if geometry_type == "Point":
             # Sample points
             coords = [(geom.x, geom.y) for geom in infrastructure_gdf.geometry]

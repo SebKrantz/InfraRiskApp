@@ -52,6 +52,7 @@ async def analyze_intersections(request: AnalyzeRequest):
         analysis_result = analyze_intersection(
             infrastructure_gdf=infrastructure_gdf,
             hazard_raster_path=request.hazard_url,
+            geometry_type=geometry_type,
             intensity_threshold=request.intensity_threshold
         )
         
@@ -90,7 +91,7 @@ async def analyze_intersections(request: AnalyzeRequest):
         try:
             # Get the full GeoDataFrame with affected status from analysis result
             if "full_gdf" in analysis_result:
-                display_gdf = analysis_result["full_gdf"].copy()
+                display_gdf = analysis_result["full_gdf"]
             else:
                 # Fallback: create from original with affected status
                 display_gdf = infrastructure_gdf.copy()
@@ -101,7 +102,7 @@ async def analyze_intersections(request: AnalyzeRequest):
                 else:
                     display_gdf['affected'] = False
             
-            # Transform to WGS84 for web display
+            # Transform to WGS84 for web display (to_crs returns a new GeoDataFrame)
             # Note: NaN/Inf values are already cleaned in geospatial.py before returning
             if display_gdf.crs and display_gdf.crs != "EPSG:4326":
                 display_gdf = display_gdf.to_crs("EPSG:4326")
@@ -112,9 +113,9 @@ async def analyze_intersections(request: AnalyzeRequest):
             
             # Also include affected features separately if available
             if "affected_gdf" in analysis_result and analysis_result["affected_gdf"] is not None:
-                affected_gdf = analysis_result["affected_gdf"].copy()
+                affected_gdf = analysis_result["affected_gdf"]
                 
-                # Transform to WGS84 for web display
+                # Transform to WGS84 for web display (to_crs returns a new GeoDataFrame)
                 # Note: NaN/Inf values are already cleaned in geospatial.py before returning
                 if affected_gdf.crs and affected_gdf.crs != "EPSG:4326":
                     affected_gdf = affected_gdf.to_crs("EPSG:4326")
