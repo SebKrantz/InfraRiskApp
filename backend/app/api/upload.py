@@ -100,6 +100,16 @@ async def upload_file(
         # Validate geometry type (points or lines)
         geometry_type = validate_geometry_type(gdf)
         
+        # Clean NaN values from GeoDataFrame before storing (clean once, not during analysis)
+        import numpy as np
+        import pandas as pd
+        for col in gdf.columns:
+            if col != 'geometry':
+                if gdf[col].dtype in ['float64', 'float32']:
+                    gdf[col] = gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
+                elif pd.api.types.is_numeric_dtype(gdf[col]):
+                    gdf[col] = gdf[col].replace([np.nan], [None])
+        
         # Store metadata and GeoDataFrame
         uploaded_files[file_id] = {
             "filename": file.filename,
@@ -112,7 +122,7 @@ async def upload_file(
                 "maxx": float(gdf.bounds.maxx.max()),
                 "maxy": float(gdf.bounds.maxy.max())
             },
-            "gdf": gdf  # Store GeoDataFrame for analysis
+            "gdf": gdf  # Store GeoDataFrame for analysis (already cleaned)
         }
         
         # Convert to GeoJSON for display (if requested, can be done here or in separate endpoint)

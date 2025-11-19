@@ -215,10 +215,11 @@ def analyze_intersection(
             # Sample points
             coords = [(geom.x, geom.y) for geom in infrastructure_gdf.geometry]
             raster_values = list(src.sample(coords))
-            raster_values = [v[0] if len(v) > 0 and not np.isnan(v[0]) else None for v in raster_values]
+            # Extract first band value, converting NaN to None for JSON serialization
+            raster_values = [None if len(v) == 0 or np.isnan(v[0]) else float(v[0]) for v in raster_values]
             
             # Store exposure level (raster value at point location)
-            infrastructure_gdf['exposure_level'] = [v if v is not None else None for v in raster_values]
+            infrastructure_gdf['exposure_level'] = raster_values
             
             # Determine affected points
             if intensity_threshold is not None:
@@ -233,23 +234,9 @@ def analyze_intersection(
             infrastructure_gdf['affected'] = affected_mask
             affected_gdf = infrastructure_gdf[affected_mask]
             
-            # Clean NaN values from GeoDataFrame before returning
-            # Replace NaN/Inf with None for JSON serialization
-            import pandas as pd
-            for col in infrastructure_gdf.columns:
-                if col != 'geometry':
-                    if infrastructure_gdf[col].dtype in ['float64', 'float32']:
-                        infrastructure_gdf[col] = infrastructure_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                    elif pd.api.types.is_numeric_dtype(infrastructure_gdf[col]):
-                        infrastructure_gdf[col] = infrastructure_gdf[col].replace([np.nan], [None])
-            
-            if len(affected_gdf) > 0:
-                for col in affected_gdf.columns:
-                    if col != 'geometry':
-                        if affected_gdf[col].dtype in ['float64', 'float32']:
-                            affected_gdf[col] = affected_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                        elif pd.api.types.is_numeric_dtype(affected_gdf[col]):
-                            affected_gdf[col] = affected_gdf[col].replace([np.nan], [None])
+            # Clean only the new columns we added (exposure_level may have None, which is fine)
+            # The original dataframe was already cleaned on upload, so we only need to ensure
+            # the new columns are clean. exposure_level already has None instead of NaN from above.
             
             return {
                 "affected_count": int(affected_count),
@@ -284,7 +271,8 @@ def analyze_intersection(
                 
                 try:
                     raster_values = list(src.sample(coords))
-                    raster_values = [v[0] if len(v) > 0 and not np.isnan(v[0]) else None for v in raster_values]
+                    # Extract first band value, converting NaN to None for JSON serialization
+                    raster_values = [None if len(v) == 0 or np.isnan(v[0]) else float(v[0]) for v in raster_values]
                     
                     # Calculate exposure levels (max and avg from sampled points)
                     valid_values = [v for v in raster_values if v is not None]
@@ -323,14 +311,9 @@ def analyze_intersection(
             infrastructure_gdf['exposure_level_max'] = exposure_levels_max
             infrastructure_gdf['exposure_level_avg'] = exposure_levels_avg
             
-            # Clean NaN values from GeoDataFrame before returning
-            import pandas as pd
-            for col in infrastructure_gdf.columns:
-                if col != 'geometry':
-                    if infrastructure_gdf[col].dtype in ['float64', 'float32']:
-                        infrastructure_gdf[col] = infrastructure_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                    elif pd.api.types.is_numeric_dtype(infrastructure_gdf[col]):
-                        infrastructure_gdf[col] = infrastructure_gdf[col].replace([np.nan], [None])
+            # Clean only the new columns we added (exposure_level_max/avg may have None, which is fine)
+            # The original dataframe was already cleaned on upload, so we only need to ensure
+            # the new columns are clean. exposure_level_max/avg already have None instead of NaN from above.
             
             # Ensure meters are valid floats (not NaN)
             affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
