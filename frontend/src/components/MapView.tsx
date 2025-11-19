@@ -153,6 +153,106 @@ const basemapStyles: Record<Basemap, any> = {
         maxzoom: 19
       }
     ]
+  },
+  'google-maps': {
+    version: 8,
+    sources: {
+      'google-maps': {
+        type: 'raster',
+        tiles: [
+          'https://mt0.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+          'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+          'https://mt2.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+          'https://mt3.google.com/vt/lyrs=m&x={x}&y={y}&z={z}'
+        ],
+        tileSize: 256,
+        attribution: '© Google'
+      }
+    },
+    layers: [
+      {
+        id: 'google-maps-layer',
+        type: 'raster',
+        source: 'google-maps',
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
+  },
+  'google-terrain': {
+    version: 8,
+    sources: {
+      'google-terrain': {
+        type: 'raster',
+        tiles: [
+          'https://mt0.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+          'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+          'https://mt2.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+          'https://mt3.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'
+        ],
+        tileSize: 256,
+        attribution: '© Google'
+      }
+    },
+    layers: [
+      {
+        id: 'google-terrain-layer',
+        type: 'raster',
+        source: 'google-terrain',
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
+  },
+  'google-hybrid': {
+    version: 8,
+    sources: {
+      'google-hybrid': {
+        type: 'raster',
+        tiles: [
+          'https://mt0.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+          'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+          'https://mt2.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+          'https://mt3.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
+        ],
+        tileSize: 256,
+        attribution: '© Google'
+      }
+    },
+    layers: [
+      {
+        id: 'google-hybrid-layer',
+        type: 'raster',
+        source: 'google-hybrid',
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
+  },
+  'google-satellite': {
+    version: 8,
+    sources: {
+      'google-satellite': {
+        type: 'raster',
+        tiles: [
+          'https://mt0.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+          'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+          'https://mt2.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+          'https://mt3.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'
+        ],
+        tileSize: 256,
+        attribution: '© Google'
+      }
+    },
+    layers: [
+      {
+        id: 'google-satellite-layer',
+        type: 'raster',
+        source: 'google-satellite',
+        minzoom: 0,
+        maxzoom: 20
+      }
+    ]
   }
 }
 
@@ -1496,6 +1596,10 @@ export default function MapView({
           <option value="topo">OpenTopoMap</option>
           <option value="esri-topo">Esri World Topo</option>
           <option value="esri-imagery">Esri World Imagery</option>
+          <option value="google-maps">Google Maps</option>
+          <option value="google-terrain">Google Terrain</option>
+          <option value="google-hybrid">Google Hybrid</option>
+          <option value="google-satellite">Google Satellite</option>
         </Select>
       </div>
 
