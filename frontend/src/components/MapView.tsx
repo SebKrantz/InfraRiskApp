@@ -1661,7 +1661,7 @@ export default function MapView({
           <option value="osm">OpenStreetMap</option>
           <option value="topo">OpenTopoMap</option>
           <option value="esri-street">Esri World Street Map</option>
-          <option value="esri-topo">Esri World Topo</option>
+          <option value="esri-topo">Esri World Topo Map</option>
           <option value="esri-terrain">Esri World Terrain</option>
           <option value="esri-ocean">Esri Ocean Basemap</option>
           <option value="esri-imagery">Esri World Imagery</option>
