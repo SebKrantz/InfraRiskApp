@@ -110,6 +110,28 @@ const basemapStyles: Record<Basemap, any> = {
       }
     ]
   },
+  'esri-street': {
+    version: 8,
+    sources: {
+      'esri-street': {
+        type: 'raster',
+        tiles: [
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}'
+        ],
+        tileSize: 256,
+        attribution: '© Esri'
+      }
+    },
+    layers: [
+      {
+        id: 'esri-street-layer',
+        type: 'raster',
+        source: 'esri-street',
+        minzoom: 0,
+        maxzoom: 16
+      }
+    ]
+  },
   'esri-topo': {
     version: 8,
     sources: {
@@ -1638,6 +1660,7 @@ export default function MapView({
           <option value="dark-matter">CartoDB Dark Matter</option>
           <option value="osm">OpenStreetMap</option>
           <option value="topo">OpenTopoMap</option>
+          <option value="esri-street">Esri World Street Map</option>
           <option value="esri-topo">Esri World Topo</option>
           <option value="esri-terrain">Esri World Terrain</option>
           <option value="esri-ocean">Esri Ocean Basemap</option>
