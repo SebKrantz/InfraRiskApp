@@ -194,7 +194,7 @@ def analyze_intersection(
         Dictionary with analysis results:
         - affected_count/unaffected_count (for points)
         - affected_meters/unaffected_meters (for lines)
-        - affected_gdf: GeoDataFrame of affected features
+        - full_gdf: GeoDataFrame with all features and affected status
     """
     # All hazard rasters use EPSG:4326
     # Transform infrastructure to EPSG:4326 if needed
@@ -232,18 +232,12 @@ def analyze_intersection(
             
             # Mark affected status in GeoDataFrame
             infrastructure_gdf['affected'] = affected_mask
-            affected_gdf = infrastructure_gdf[affected_mask]
-            
-            # Clean only the new columns we added (exposure_level may have None, which is fine)
-            # The original dataframe was already cleaned on upload, so we only need to ensure
-            # the new columns are clean. exposure_level already has None instead of NaN from above.
             
             return {
                 "affected_count": int(affected_count),
                 "unaffected_count": int(unaffected_count),
                 "affected_meters": 0.0,
                 "unaffected_meters": 0.0,
-                "affected_gdf": affected_gdf,
                 "full_gdf": infrastructure_gdf  # Return full GDF with affected status
             }
         

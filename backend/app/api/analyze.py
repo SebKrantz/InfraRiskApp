@@ -93,36 +93,18 @@ async def analyze_intersections(request: AnalyzeRequest):
             if "full_gdf" in analysis_result:
                 display_gdf = analysis_result["full_gdf"]
             else:
-                # Fallback: create from original with affected status
+                # Fallback: create from original with affected status set to False
                 display_gdf = infrastructure_gdf.copy()
-                if "affected_gdf" in analysis_result and analysis_result["affected_gdf"] is not None:
-                    affected_gdf = analysis_result["affected_gdf"]
-                    affected_indices = set(affected_gdf.index)
-                    display_gdf['affected'] = display_gdf.index.isin(affected_indices)
-                else:
-                    display_gdf['affected'] = False
+                display_gdf['affected'] = False
             
             # Transform to WGS84 for web display (to_crs returns a new GeoDataFrame)
-            # Note: NaN/Inf values are already cleaned in geospatial.py before returning
+            # Note: NaN/Inf values are already cleaned on upload, so no need to clean again
             if display_gdf.crs and display_gdf.crs != "EPSG:4326":
                 display_gdf = display_gdf.to_crs("EPSG:4326")
             
-            # Convert to GeoJSON (dataframes are already cleaned in geospatial.py)
+            # Convert to GeoJSON (dataframes are already cleaned on upload)
             geo_interface = display_gdf.__geo_interface__
             result["infrastructure_features"] = geo_interface
-            
-            # Also include affected features separately if available
-            if "affected_gdf" in analysis_result and analysis_result["affected_gdf"] is not None:
-                affected_gdf = analysis_result["affected_gdf"]
-                
-                # Transform to WGS84 for web display (to_crs returns a new GeoDataFrame)
-                # Note: NaN/Inf values are already cleaned in geospatial.py before returning
-                if affected_gdf.crs and affected_gdf.crs != "EPSG:4326":
-                    affected_gdf = affected_gdf.to_crs("EPSG:4326")
-                
-                # Convert to GeoJSON (dataframes are already cleaned in geospatial.py)
-                affected_geo = affected_gdf.__geo_interface__
-                result["affected_features"] = affected_geo
         except Exception as e:
             # If GeoJSON conversion fails, skip it
             print(f"Warning: Could not convert to GeoJSON: {e}")
@@ -147,8 +129,6 @@ async def analyze_intersections(request: AnalyzeRequest):
             print(f"Warning: JSON serialization issue, removing features: {e}")
             if "infrastructure_features" in result:
                 del result["infrastructure_features"]
-            if "affected_features" in result:
-                del result["affected_features"]
             result = json.loads(json.dumps(result, default=json_encoder, allow_nan=False))
         
         return JSONResponse(content=result)
