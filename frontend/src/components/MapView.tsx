@@ -131,6 +131,28 @@ const basemapStyles: Record<Basemap, any> = {
         maxzoom: 16
       }
     ]
+  },
+  'esri-imagery': {
+    version: 8,
+    sources: {
+      'esri-imagery': {
+        type: 'raster',
+        tiles: [
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+        ],
+        tileSize: 256,
+        attribution: '© Esri'
+      }
+    },
+    layers: [
+      {
+        id: 'esri-imagery-layer',
+        type: 'raster',
+        source: 'esri-imagery',
+        minzoom: 0,
+        maxzoom: 19
+      }
+    ]
   }
 }
 
@@ -1473,6 +1495,7 @@ export default function MapView({
           <option value="osm">OpenStreetMap</option>
           <option value="topo">OpenTopoMap</option>
           <option value="esri-topo">Esri World Topo</option>
+          <option value="esri-imagery">Esri World Imagery</option>
         </Select>
       </div>
 
