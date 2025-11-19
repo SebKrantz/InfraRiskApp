@@ -132,6 +132,50 @@ const basemapStyles: Record<Basemap, any> = {
       }
     ]
   },
+  'esri-terrain': {
+    version: 8,
+    sources: {
+      'esri-terrain': {
+        type: 'raster',
+        tiles: [
+          'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}'
+        ],
+        tileSize: 256,
+        attribution: '© Esri'
+      }
+    },
+    layers: [
+      {
+        id: 'esri-terrain-layer',
+        type: 'raster',
+        source: 'esri-terrain',
+        minzoom: 0,
+        maxzoom: 13
+      }
+    ]
+  },
+  'esri-ocean': {
+    version: 8,
+    sources: {
+      'esri-ocean': {
+        type: 'raster',
+        tiles: [
+          'https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}'
+        ],
+        tileSize: 256,
+        attribution: '© Esri'
+      }
+    },
+    layers: [
+      {
+        id: 'esri-ocean-layer',
+        type: 'raster',
+        source: 'esri-ocean',
+        minzoom: 0,
+        maxzoom: 16
+      }
+    ]
+  },
   'esri-imagery': {
     version: 8,
     sources: {
@@ -1595,6 +1639,8 @@ export default function MapView({
           <option value="osm">OpenStreetMap</option>
           <option value="topo">OpenTopoMap</option>
           <option value="esri-topo">Esri World Topo</option>
+          <option value="esri-terrain">Esri World Terrain</option>
+          <option value="esri-ocean">Esri Ocean Basemap</option>
           <option value="esri-imagery">Esri World Imagery</option>
           <option value="google-maps">Google Maps</option>
           <option value="google-terrain">Google Terrain</option>

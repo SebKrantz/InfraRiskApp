@@ -38,5 +38,5 @@ export interface AnalysisResult {
 
 export type ColorPalette = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'cividis' | 'turbo'
 
-export type Basemap = 'positron' | 'dark-matter' | 'osm' | 'topo' | 'esri-topo' | 'esri-imagery' | 'google-maps' | 'google-terrain' | 'google-hybrid' | 'google-satellite'
+export type Basemap = 'positron' | 'dark-matter' | 'osm' | 'topo' | 'esri-topo' | 'esri-terrain' | 'esri-ocean' | 'esri-imagery' | 'google-maps' | 'google-terrain' | 'google-hybrid' | 'google-satellite'
 
