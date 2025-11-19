@@ -110,6 +110,10 @@ async def upload_file(
                 elif pd.api.types.is_numeric_dtype(gdf[col]):
                     gdf[col] = gdf[col].replace([np.nan], [None])
         
+        # Transform to WGS84 in place (all hazard rasters use EPSG:4326, so store in WGS84)
+        if gdf.crs and gdf.crs != "EPSG:4326":
+            gdf = gdf.to_crs("EPSG:4326")
+        
         # Store metadata and GeoDataFrame
         uploaded_files[file_id] = {
             "filename": file.filename,
@@ -122,28 +126,12 @@ async def upload_file(
                 "maxx": float(gdf.bounds.maxx.max()),
                 "maxy": float(gdf.bounds.maxy.max())
             },
-            "gdf": gdf  # Store GeoDataFrame for analysis (already cleaned)
+            "gdf": gdf  # Store GeoDataFrame for analysis (already cleaned and in WGS84)
         }
         
-        # Convert to GeoJSON for display (if requested, can be done here or in separate endpoint)
-        # For now, we'll include it in the response
+        # Convert to GeoJSON for display (gdf is already in WGS84 and cleaned)
         try:
-            # Transform to WGS84 for web display
-            display_gdf = gdf.copy()
-            if display_gdf.crs and display_gdf.crs != "EPSG:4326":
-                display_gdf = display_gdf.to_crs("EPSG:4326")
-            
-            # Clean NaN values
-            import numpy as np
-            import pandas as pd
-            for col in display_gdf.columns:
-                if col != 'geometry':
-                    if display_gdf[col].dtype in ['float64', 'float32']:
-                        display_gdf[col] = display_gdf[col].replace([np.nan, np.inf, -np.inf], [None, None, None])
-                    elif pd.api.types.is_numeric_dtype(display_gdf[col]):
-                        display_gdf[col] = display_gdf[col].replace([np.nan], [None])
-            
-            geo_json = display_gdf.__geo_interface__
+            geo_json = gdf.__geo_interface__
         except Exception as e:
             print(f"Warning: Could not convert to GeoJSON for upload response: {e}")
             geo_json = None

@@ -97,12 +97,8 @@ async def analyze_intersections(request: AnalyzeRequest):
                 display_gdf = infrastructure_gdf.copy()
                 display_gdf['affected'] = False
             
-            # Transform to WGS84 for web display (to_crs returns a new GeoDataFrame)
-            # Note: NaN/Inf values are already cleaned on upload, so no need to clean again
-            if display_gdf.crs and display_gdf.crs != "EPSG:4326":
-                display_gdf = display_gdf.to_crs("EPSG:4326")
-            
-            # Convert to GeoJSON (dataframes are already cleaned on upload)
+            # GeoDataFrame is already in WGS84 (EPSG:4326) and cleaned from upload
+            # Convert to GeoJSON
             geo_interface = display_gdf.__geo_interface__
             result["infrastructure_features"] = geo_interface
         except Exception as e:

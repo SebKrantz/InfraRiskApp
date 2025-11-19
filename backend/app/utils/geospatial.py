@@ -104,8 +104,7 @@ def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
         print(f"Warning: {missing_count}/{total_count} rows have missing coordinates and will be dropped")
         lat = lat[~missing]
         lon = lon[~missing]
-        df = df[~missing].copy()
-    
+        df = df[~missing]
     # Validate coordinate ranges
     if lat.min() < -90 or lat.max() > 90:
         raise ValueError(f"Latitude values out of range [-90, 90]. Found range: [{lat.min()}, {lat.max()}]")
@@ -197,10 +196,8 @@ def analyze_intersection(
         - full_gdf: GeoDataFrame with all features and affected status
     """
     # All hazard rasters use EPSG:4326
-    # Transform infrastructure to EPSG:4326 if needed
+    # Infrastructure GeoDataFrame is already in WGS84 (EPSG:4326) from upload
     with rasterio.open(hazard_raster_path) as src:
-        if infrastructure_gdf.crs != "EPSG:4326":
-            infrastructure_gdf = infrastructure_gdf.to_crs("EPSG:4326")
                 
         if len(infrastructure_gdf) == 0:
             return {
@@ -250,7 +247,7 @@ def analyze_intersection(
             exposure_levels_max = []
             exposure_levels_avg = []
             
-            infrastructure_gdf = infrastructure_gdf.copy()
+            # infrastructure_gdf = infrastructure_gdf.copy()
             
             for idx, row in infrastructure_gdf.iterrows():
                 line = row.geometry
