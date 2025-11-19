@@ -284,6 +284,22 @@ export default function MapView({
       return String(value)
     }
 
+    const formatExposureLevel = (value: any): string => {
+      if (value === null || value === undefined) {
+        return '<span class="text-gray-400 italic">N/A</span>'
+      }
+      if (typeof value === 'number') {
+        // Format exposure levels with 2-4 decimal places
+        // Show 4 decimal places, but remove trailing zeros
+        const formatted = value.toFixed(4).replace(/\.?0+$/, '')
+        return parseFloat(formatted).toLocaleString(undefined, {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 4
+        })
+      }
+      return String(value)
+    }
+
     const formatPropertyName = (key: string): string => {
       // Convert snake_case and camelCase to Title Case
       return key
@@ -297,12 +313,52 @@ export default function MapView({
     html += '<div class="text-sm font-semibold text-gray-800 mb-1.5 pb-1.5 border-b border-gray-200">Feature Properties</div>'
     html += '<div class="space-y-0.5">'
 
-    // Sort properties: show 'affected' first if present, then alphabetically
-    const sortedKeys = Object.keys(properties).sort((a, b) => {
-      if (a === 'affected') return -1
-      if (b === 'affected') return 1
-      return a.localeCompare(b)
-    })
+    // Extract affected status and exposure level properties to display prominently at the top
+    const affected = properties['affected']
+    const exposureLevel = properties['exposure_level']
+    const exposureLevelMax = properties['exposure_level_max']
+    const exposureLevelAvg = properties['exposure_level_avg']
+    
+    // Build list of computed features to display in a single shaded box
+    const computedFeatures: Array<{label: string, value: string}> = []
+    
+    if (affected !== undefined) {
+      const affectedValue = typeof affected === 'boolean' ? (affected ? 'Yes' : 'No') : formatValue(affected)
+      computedFeatures.push({ label: 'Affected:', value: affectedValue })
+    }
+    
+    if (exposureLevel !== undefined && exposureLevel !== null) {
+      // Point feature - show single exposure level
+      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
+    } else if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
+      // LineString feature - show max and avg exposure levels
+      if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
+        computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax) })
+      }
+      if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
+        computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg) })
+      }
+    }
+    
+    // Display all computed features at the top (bold font distinguishes them)
+    if (computedFeatures.length > 0) {
+      for (let i = 0; i < computedFeatures.length; i++) {
+        const feature = computedFeatures[i]
+        html += `<div class="flex justify-between text-xs py-0.5">`
+        html += `<span class="font-semibold text-gray-800 mr-2">${feature.label}</span>`
+        html += `<span class="text-gray-900 text-right flex-1 font-medium">${feature.value}</span>`
+        html += `</div>`
+      }
+      // Add horizontal rule between computed features and other properties
+      // Match spacing of title: pb-1.5 (space before border) + mb-1.5 (space after border)
+      html += `<div class="pt-1.5 mb-1.5 border-b border-gray-200"></div>`
+    }
+
+    // Sort properties alphabetically
+    // Exclude affected and exposure level properties from the main list since they're shown at the top
+    const sortedKeys = Object.keys(properties)
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
+      .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {
       const value = properties[key]

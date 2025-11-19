@@ -217,6 +217,9 @@ def analyze_intersection(
             raster_values = list(src.sample(coords))
             raster_values = [v[0] if len(v) > 0 and not np.isnan(v[0]) else None for v in raster_values]
             
+            # Store exposure level (raster value at point location)
+            infrastructure_gdf['exposure_level'] = [v if v is not None else None for v in raster_values]
+            
             # Determine affected points
             if intensity_threshold is not None:
                 affected_mask = [v is not None and v >= intensity_threshold for v in raster_values]
@@ -263,6 +266,8 @@ def analyze_intersection(
             affected_length = 0.0
             unaffected_length = 0.0
             affected_status = []
+            exposure_levels_max = []
+            exposure_levels_avg = []
             
             infrastructure_gdf = infrastructure_gdf.copy()
             
@@ -281,6 +286,18 @@ def analyze_intersection(
                     raster_values = list(src.sample(coords))
                     raster_values = [v[0] if len(v) > 0 and not np.isnan(v[0]) else None for v in raster_values]
                     
+                    # Calculate exposure levels (max and avg from sampled points)
+                    valid_values = [v for v in raster_values if v is not None]
+                    if len(valid_values) > 0:
+                        exposure_max = max(valid_values)
+                        exposure_avg = sum(valid_values) / len(valid_values)
+                    else:
+                        exposure_max = None
+                        exposure_avg = None
+                    
+                    exposure_levels_max.append(exposure_max)
+                    exposure_levels_avg.append(exposure_avg)
+                    
                     # Determine if line is affected (if any point above threshold)
                     if intensity_threshold is not None:
                         is_affected = any(v is not None and v >= intensity_threshold for v in raster_values)
@@ -297,10 +314,14 @@ def analyze_intersection(
                 except Exception:
                     # If sampling fails, assume unaffected
                     affected_status.append(False)
+                    exposure_levels_max.append(None)
+                    exposure_levels_avg.append(None)
                     unaffected_length += length
             
-            # Mark affected status in GeoDataFrame
+            # Mark affected status and exposure levels in GeoDataFrame
             infrastructure_gdf['affected'] = affected_status
+            infrastructure_gdf['exposure_level_max'] = exposure_levels_max
+            infrastructure_gdf['exposure_level_avg'] = exposure_levels_avg
             
             # Clean NaN values from GeoDataFrame before returning
             import pandas as pd
