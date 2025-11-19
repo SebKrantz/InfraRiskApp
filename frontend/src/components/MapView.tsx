@@ -3,6 +3,9 @@ import maplibregl from 'maplibre-gl'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Select } from './ui/select'
 
+// Get Thunderforest API key from environment variable
+const THUNDERFOREST_API_KEY = import.meta.env.VITE_THUNDERFOREST_API_KEY || ''
+
 interface MapViewProps {
   uploadedFile: UploadedFile | null
   selectedHazard: Hazard | null
@@ -83,6 +86,54 @@ const basemapStyles: Record<Basemap, any> = {
         source: 'osm',
         minzoom: 0,
         maxzoom: 19
+      }
+    ]
+  },
+  'osm-transport': {
+    version: 8,
+    sources: {
+      'osm-transport': {
+        type: 'raster',
+        tiles: [
+          THUNDERFOREST_API_KEY
+            ? `https://tile.thunderforest.com/transport/{z}/{x}/{y}.png?apikey=${THUNDERFOREST_API_KEY}`
+            : 'https://tile.thunderforest.com/transport/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors, Tiles courtesy of Thunderforest'
+      }
+    },
+    layers: [
+      {
+        id: 'osm-transport-layer',
+        type: 'raster',
+        source: 'osm-transport',
+        minzoom: 0,
+        maxzoom: 22
+      }
+    ]
+  },
+  'osm-tracestrack-topo': {
+    version: 8,
+    sources: {
+      'osm-tracestrack-topo': {
+        type: 'raster',
+        tiles: [
+          THUNDERFOREST_API_KEY
+            ? `https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png?apikey=${THUNDERFOREST_API_KEY}`
+            : 'https://tile.thunderforest.com/landscape/{z}/{x}/{y}.png'
+        ],
+        tileSize: 256,
+        attribution: '© OpenStreetMap contributors, Tiles courtesy of Thunderforest'
+      }
+    },
+    layers: [
+      {
+        id: 'osm-tracestrack-topo-layer',
+        type: 'raster',
+        source: 'osm-tracestrack-topo',
+        minzoom: 0,
+        maxzoom: 22
       }
     ]
   },
@@ -1659,6 +1710,8 @@ export default function MapView({
           <option value="positron">CartoDB Positron</option>
           <option value="dark-matter">CartoDB Dark Matter</option>
           <option value="osm">OpenStreetMap</option>
+          <option value="osm-transport">Transport Map</option>
+          <option value="osm-tracestrack-topo">Tracestrack Topo</option>
           <option value="topo">OpenTopoMap</option>
           <option value="esri-street">Esri World Street Map</option>
           <option value="esri-topo">Esri World Topo Map</option>
