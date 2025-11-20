@@ -331,8 +331,10 @@ def analyze_intersection(
                                     segment_values = [raster_values[j] for j in current_segment_indices if raster_values[j] is not None]
                                     if len(segment_values) > 0:
                                         avg_value = sum(segment_values) / len(segment_values)
+                                        max_value = max(segment_values)
                                     else:
                                         avg_value = None
+                                        max_value = None
                                     
                                     if current_affected:
                                         affected_length += segment_length_m
@@ -342,7 +344,8 @@ def analyze_intersection(
                                     segment_row = row.to_dict()
                                     segment_row['geometry'] = segment_geom
                                     segment_row['affected'] = current_affected
-                                    segment_row['exposure_level'] = avg_value
+                                    segment_row['exposure_level_avg'] = avg_value
+                                    segment_row['exposure_level_max'] = max_value
                                     segment_rows.append(segment_row)
                                 
                                 current_segment_points = [sampled_points[i-1], sampled_points[i]]
@@ -355,12 +358,14 @@ def analyze_intersection(
                             # Calculate geodesic length in meters
                             segment_length_m = geod.line_length(*zip(*current_segment_points))
                             
-                            # Calculate average exposure level for segment
+                            # Calculate average and maximum exposure levels for segment
                             segment_values = [raster_values[j] for j in current_segment_indices if j < len(raster_values) and raster_values[j] is not None]
                             if len(segment_values) > 0:
                                 avg_value = sum(segment_values) / len(segment_values)
+                                max_value = max(segment_values)
                             else:
                                 avg_value = None
+                                max_value = None
                             
                             # Update length totals
                             if current_affected:
@@ -372,7 +377,8 @@ def analyze_intersection(
                             segment_row = row.to_dict()
                             segment_row['geometry'] = segment_geom
                             segment_row['affected'] = current_affected
-                            segment_row['exposure_level'] = avg_value
+                            segment_row['exposure_level_avg'] = avg_value
+                            segment_row['exposure_level_max'] = max_value
                             segment_rows.append(segment_row)
                             
                     except Exception as e:
@@ -381,7 +387,8 @@ def analyze_intersection(
                         segment_row = row.to_dict()
                         segment_row['geometry'] = single_line
                         segment_row['affected'] = False
-                        segment_row['exposure_level'] = None
+                        segment_row['exposure_level_avg'] = None
+                        segment_row['exposure_level_max'] = None
                         segment_rows.append(segment_row)
                         unaffected_length += total_length_m
             

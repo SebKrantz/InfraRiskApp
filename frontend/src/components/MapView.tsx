@@ -515,17 +515,19 @@ export default function MapView({
       computedFeatures.push({ label: 'Affected:', value: affectedValue })
     }
     
-    if (exposureLevel !== undefined && exposureLevel !== null) {
-      // Point feature - show single exposure level
-      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
-    } else if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
-      // LineString feature - show max and avg exposure levels
+    // For line segments, prioritize showing max and avg exposure levels
+    // For points, show single exposure level
+    if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
+      // LineString segment feature - show max and avg exposure levels
       if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
         computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax) })
       }
       if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
         computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg) })
       }
+    } else if (exposureLevel !== undefined && exposureLevel !== null) {
+      // Point feature - show single exposure level
+      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
     }
     
     // Display all computed features at the top (bold font distinguishes them)
