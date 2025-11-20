@@ -447,11 +447,11 @@ export default function MapView({
       if (typeof value === 'number') {
         // Format numbers with appropriate precision
         if (Number.isInteger(value)) {
-          return value.toLocaleString()
+          return value.toLocaleString('en-US')
         }
         // For decimals, show up to 6 decimal places but remove trailing zeros
         const formatted = value.toFixed(6).replace(/\.?0+$/, '')
-        return parseFloat(formatted).toLocaleString()
+        return parseFloat(formatted).toLocaleString('en-US')
       }
       if (typeof value === 'boolean') {
         return value ? 'Yes' : 'No'
@@ -480,7 +480,7 @@ export default function MapView({
         // Format exposure levels with 2-4 decimal places
         // Show 4 decimal places, but remove trailing zeros
         const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-        return parseFloat(formatted).toLocaleString(undefined, {
+        return parseFloat(formatted).toLocaleString('en-US', {
           minimumFractionDigits: 0,
           maximumFractionDigits: 4
         })
@@ -502,6 +502,7 @@ export default function MapView({
     html += '<div class="space-y-0.5">'
 
     // Extract affected status and exposure level properties to display prominently at the top
+    const lengthM = properties['length_m']
     const affected = properties['affected']
     const exposureLevel = properties['exposure_level']
     const exposureLevelMax = properties['exposure_level_max']
@@ -510,22 +511,40 @@ export default function MapView({
     // Build list of computed features to display in a single shaded box
     const computedFeatures: Array<{label: string, value: string}> = []
     
+    // Display length first (for line segments)
+    if (lengthM !== undefined && lengthM !== null) {
+      const formatLength = (value: number): string => {
+        // Format length in meters with appropriate precision
+        if (value >= 1000) {
+          // Show in km with 2 decimal places for values >= 1km
+          const km = value / 1000
+          return `${km.toFixed(2)} km`
+        } else {
+          // Show in meters with no decimals for values < 1km
+          return `${Math.round(value)} m`
+        }
+      }
+      computedFeatures.push({ label: 'Length:', value: formatLength(lengthM) })
+    }
+    
     if (affected !== undefined) {
       const affectedValue = typeof affected === 'boolean' ? (affected ? 'Yes' : 'No') : formatValue(affected)
       computedFeatures.push({ label: 'Affected:', value: affectedValue })
     }
     
-    if (exposureLevel !== undefined && exposureLevel !== null) {
-      // Point feature - show single exposure level
-      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
-    } else if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
-      // LineString feature - show max and avg exposure levels
+    // For line segments, prioritize showing max and avg exposure levels
+    // For points, show single exposure level
+    if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
+      // LineString segment feature - show max and avg exposure levels
       if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
         computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax) })
       }
       if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
         computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg) })
       }
+    } else if (exposureLevel !== undefined && exposureLevel !== null) {
+      // Point feature - show single exposure level
+      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
     }
     
     // Display all computed features at the top (bold font distinguishes them)
@@ -545,7 +564,7 @@ export default function MapView({
     // Sort properties alphabetically
     // Exclude affected and exposure level properties from the main list since they're shown at the top
     const sortedKeys = Object.keys(properties)
-      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m'].includes(key))
       .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {
