@@ -564,7 +564,7 @@ export default function MapView({
     // Sort properties alphabetically
     // Exclude affected and exposure level properties from the main list since they're shown at the top
     const sortedKeys = Object.keys(properties)
-      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg'].includes(key))
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m'].includes(key))
       .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {
