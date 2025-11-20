@@ -6,9 +6,10 @@ import geopandas as gpd
 import pandas as pd
 import rasterio
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString, MultiLineString
 from typing import Tuple, Optional
 import pyogrio
+from pyproj import Geod
 
 def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     """
@@ -239,72 +240,160 @@ def analyze_intersection(
             }
         
         else:  # LineString
-            # For lines, we need to sample along the line
-            # This is a simplified approach - could be optimized
+            # Sample lines at 100m intervals and split into affected/non-affected segments
+            # Using geodesic distance for accurate sampling (matching notebook implementation)
             affected_length = 0.0
             unaffected_length = 0.0
-            affected_status = []
-            exposure_levels_max = []
-            exposure_levels_avg = []
-            
-            # infrastructure_gdf = infrastructure_gdf.copy()
+            segment_rows = []
+            geod = Geod(ellps="WGS84")
             
             for idx, row in infrastructure_gdf.iterrows():
                 line = row.geometry
-                length = line.length
                 
-                # Sample points along the line (every 100m or at least 5 points)
-                num_samples = max(5, int(length / 100))
-                distances = np.linspace(0, length, num_samples)
+                # Handle MultiLineString (matching notebook approach)
+                if line.geom_type == 'MultiLineString':
+                    lines = list(line.geoms)
+                else:
+                    lines = [line]
                 
-                sampled_points = [line.interpolate(d) for d in distances]
-                coords = [(p.x, p.y) for p in sampled_points]
-                
-                try:
-                    raster_values = list(src.sample(coords))
-                    # Extract first band value, converting NaN to None for JSON serialization
-                    raster_values = [None if len(v) == 0 or np.isnan(v[0]) else float(v[0]) for v in raster_values]
+                # Process each line separately
+                for single_line in lines:
+                    line_coords = list(single_line.coords)
                     
-                    # Calculate exposure levels (max and avg from sampled points)
-                    valid_values = [v for v in raster_values if v is not None]
-                    if len(valid_values) > 0:
-                        exposure_max = max(valid_values)
-                        exposure_avg = sum(valid_values) / len(valid_values)
-                    else:
-                        exposure_max = None
-                        exposure_avg = None
+                    if len(line_coords) < 2:
+                        continue
                     
-                    exposure_levels_max.append(exposure_max)
-                    exposure_levels_avg.append(exposure_avg)
+                    # Calculate total geodesic length in meters
+                    total_length_m = geod.line_length(*zip(*line_coords))
                     
-                    # Determine if line is affected (if any point above threshold)
-                    if intensity_threshold is not None:
-                        is_affected = any(v is not None and v >= intensity_threshold for v in raster_values)
-                    else:
-                        is_affected = any(v is not None and v > 0 for v in raster_values)
+                    if total_length_m == 0:
+                        # Zero-length line, skip
+                        continue
                     
-                    affected_status.append(is_affected)
+                    # Sample points along the line at 100m intervals (matching notebook)
+                    interval_meters = 100.0
+                    sampled_points = []
                     
-                    if is_affected:
-                        affected_length += length
-                    else:
-                        unaffected_length += length
+                    # Always include start point
+                    sampled_points.append(line_coords[0])
+                    
+                    # Sample at regular intervals
+                    current_distance = 0.0
+                    while current_distance < total_length_m:
+                        current_distance += interval_meters
+                        if current_distance >= total_length_m:
+                            # Include end point
+                            sampled_points.append(line_coords[-1])
+                            break
                         
-                except Exception:
-                    # If sampling fails, assume unaffected
-                    affected_status.append(False)
-                    exposure_levels_max.append(None)
-                    exposure_levels_avg.append(None)
-                    unaffected_length += length
+                        # Interpolate point at this distance using normalized interpolation
+                        normalized_dist = current_distance / total_length_m
+                        point = single_line.interpolate(normalized_dist, normalized=True)
+                        sampled_points.append((point.x, point.y))
+                    
+                    # Ensure end point is included
+                    if sampled_points[-1] != line_coords[-1]:
+                        sampled_points.append(line_coords[-1])
+                    
+                    if len(sampled_points) < 2:
+                        continue
+                    
+                    try:
+                        # Get raster values at sampled points
+                        coords = [(x, y) for x, y in sampled_points]
+                        raster_values = list(src.sample(coords))
+                        # Extract first band value, converting NaN to None for JSON serialization
+                        raster_values = [None if len(v) == 0 or np.isnan(v[0]) else float(v[0]) for v in raster_values]
+                        
+                        # Classify each point as affected or not (matching notebook approach)
+                        if intensity_threshold is not None:
+                            point_affected = [v is not None and v >= intensity_threshold for v in raster_values]
+                        else:
+                            point_affected = [v is not None and v > 0 for v in raster_values]
+                        
+                        # Create segments: group consecutive points with same affected status
+                        # (matching notebook approach)
+                        current_segment_points = [sampled_points[0]]
+                        current_segment_indices = [0]  # Track which sampled points are in this segment
+                        current_affected = point_affected[0]
+                        
+                        for i in range(1, len(sampled_points)):
+                            if point_affected[i] == current_affected:
+                                # Same status, continue current segment
+                                current_segment_points.append(sampled_points[i])
+                                current_segment_indices.append(i)
+                            else:
+                                # Status changed, create segment from current points
+                                if len(current_segment_points) >= 2:
+                                    segment_geom = LineString(current_segment_points)
+                                    segment_length_m = geod.line_length(*zip(*current_segment_points))
+                                    
+                                    segment_values = [raster_values[j] for j in current_segment_indices if raster_values[j] is not None]
+                                    if len(segment_values) > 0:
+                                        avg_value = sum(segment_values) / len(segment_values)
+                                    else:
+                                        avg_value = None
+                                    
+                                    if current_affected:
+                                        affected_length += segment_length_m
+                                    else:
+                                        unaffected_length += segment_length_m
+                                    
+                                    segment_row = row.to_dict()
+                                    segment_row['geometry'] = segment_geom
+                                    segment_row['affected'] = current_affected
+                                    segment_row['exposure_level'] = avg_value
+                                    segment_rows.append(segment_row)
+                                
+                                current_segment_points = [sampled_points[i-1], sampled_points[i]]
+                                current_segment_indices = [i-1, i]
+                                current_affected = point_affected[i]
+                        
+                        # Add final segment
+                        if len(current_segment_points) >= 2:
+                            segment_geom = LineString(current_segment_points)
+                            # Calculate geodesic length in meters
+                            segment_length_m = geod.line_length(*zip(*current_segment_points))
+                            
+                            # Calculate average exposure level for segment
+                            segment_values = [raster_values[j] for j in current_segment_indices if j < len(raster_values) and raster_values[j] is not None]
+                            if len(segment_values) > 0:
+                                avg_value = sum(segment_values) / len(segment_values)
+                            else:
+                                avg_value = None
+                            
+                            # Update length totals
+                            if current_affected:
+                                affected_length += segment_length_m
+                            else:
+                                unaffected_length += segment_length_m
+                            
+                            # Create segment row with all original attributes
+                            segment_row = row.to_dict()
+                            segment_row['geometry'] = segment_geom
+                            segment_row['affected'] = current_affected
+                            segment_row['exposure_level'] = avg_value
+                            segment_rows.append(segment_row)
+                            
+                    except Exception as e:
+                        # If sampling fails, log the error and create single unaffected segment for entire line
+                        print(f"Warning: Raster sampling failed for line {idx}, part: {e}")
+                        segment_row = row.to_dict()
+                        segment_row['geometry'] = single_line
+                        segment_row['affected'] = False
+                        segment_row['exposure_level'] = None
+                        segment_rows.append(segment_row)
+                        unaffected_length += total_length_m
             
-            # Mark affected status and exposure levels in GeoDataFrame
-            infrastructure_gdf['affected'] = affected_status
-            infrastructure_gdf['exposure_level_max'] = exposure_levels_max
-            infrastructure_gdf['exposure_level_avg'] = exposure_levels_avg
-            
-            # Clean only the new columns we added (exposure_level_max/avg may have None, which is fine)
-            # The original dataframe was already cleaned on upload, so we only need to ensure
-            # the new columns are clean. exposure_level_max/avg already have None instead of NaN from above.
+            # Build new GeoDataFrame with segments
+            if segment_rows:
+                segment_gdf = gpd.GeoDataFrame(segment_rows, crs=infrastructure_gdf.crs)
+                # Ensure 'affected' column is boolean type
+                if 'affected' in segment_gdf.columns:
+                    segment_gdf['affected'] = segment_gdf['affected'].astype(bool)
+            else:
+                # Empty result
+                segment_gdf = gpd.GeoDataFrame(geometry=[], crs=infrastructure_gdf.crs)
             
             # Ensure meters are valid floats (not NaN)
             affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
@@ -315,6 +404,6 @@ def analyze_intersection(
                 "unaffected_count": 0,
                 "affected_meters": affected_meters,
                 "unaffected_meters": unaffected_meters,
-                "full_gdf": infrastructure_gdf  # Return full GDF with affected status
+                "full_gdf": segment_gdf  # Return segmented GDF
             }
 
