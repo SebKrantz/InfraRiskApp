@@ -14,7 +14,7 @@ const CustomTooltip = ({ active, payload }: any) => {
     
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
-        <p className="text-white text-sm">{name} : {value.toLocaleString()}</p>
+        <p className="text-white text-sm">{name} : {value.toLocaleString('en-US')}</p>
       </div>
     )
   }
@@ -68,6 +68,7 @@ export default function BarChart({ data }: BarChartProps) {
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af' }}
             label={{ fill: '#9ca3af' }}
+            tickFormatter={(value) => value.toLocaleString('en-US')}
           />
           <Tooltip content={<CustomTooltip />} />
           <Bar dataKey="value" />

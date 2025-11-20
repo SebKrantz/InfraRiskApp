@@ -447,11 +447,11 @@ export default function MapView({
       if (typeof value === 'number') {
         // Format numbers with appropriate precision
         if (Number.isInteger(value)) {
-          return value.toLocaleString()
+          return value.toLocaleString('en-US')
         }
         // For decimals, show up to 6 decimal places but remove trailing zeros
         const formatted = value.toFixed(6).replace(/\.?0+$/, '')
-        return parseFloat(formatted).toLocaleString()
+        return parseFloat(formatted).toLocaleString('en-US')
       }
       if (typeof value === 'boolean') {
         return value ? 'Yes' : 'No'
@@ -480,7 +480,7 @@ export default function MapView({
         // Format exposure levels with 2-4 decimal places
         // Show 4 decimal places, but remove trailing zeros
         const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-        return parseFloat(formatted).toLocaleString(undefined, {
+        return parseFloat(formatted).toLocaleString('en-US', {
           minimumFractionDigits: 0,
           maximumFractionDigits: 4
         })
