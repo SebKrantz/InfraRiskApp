@@ -343,6 +343,7 @@ def analyze_intersection(
                                     
                                     segment_row = row.to_dict()
                                     segment_row['geometry'] = segment_geom
+                                    segment_row['length_m'] = segment_length_m
                                     segment_row['affected'] = current_affected
                                     segment_row['exposure_level_avg'] = avg_value
                                     segment_row['exposure_level_max'] = max_value
@@ -376,6 +377,7 @@ def analyze_intersection(
                             # Create segment row with all original attributes
                             segment_row = row.to_dict()
                             segment_row['geometry'] = segment_geom
+                            segment_row['length_m'] = segment_length_m
                             segment_row['affected'] = current_affected
                             segment_row['exposure_level_avg'] = avg_value
                             segment_row['exposure_level_max'] = max_value
@@ -386,6 +388,7 @@ def analyze_intersection(
                         print(f"Warning: Raster sampling failed for line {idx}, part: {e}")
                         segment_row = row.to_dict()
                         segment_row['geometry'] = single_line
+                        segment_row['length_m'] = total_length_m
                         segment_row['affected'] = False
                         segment_row['exposure_level_avg'] = None
                         segment_row['exposure_level_max'] = None

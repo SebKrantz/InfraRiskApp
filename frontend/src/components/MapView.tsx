@@ -502,6 +502,7 @@ export default function MapView({
     html += '<div class="space-y-0.5">'
 
     // Extract affected status and exposure level properties to display prominently at the top
+    const lengthM = properties['length_m']
     const affected = properties['affected']
     const exposureLevel = properties['exposure_level']
     const exposureLevelMax = properties['exposure_level_max']
@@ -509,6 +510,22 @@ export default function MapView({
     
     // Build list of computed features to display in a single shaded box
     const computedFeatures: Array<{label: string, value: string}> = []
+    
+    // Display length first (for line segments)
+    if (lengthM !== undefined && lengthM !== null) {
+      const formatLength = (value: number): string => {
+        // Format length in meters with appropriate precision
+        if (value >= 1000) {
+          // Show in km with 2 decimal places for values >= 1km
+          const km = value / 1000
+          return `${km.toFixed(2)} km`
+        } else {
+          // Show in meters with no decimals for values < 1km
+          return `${Math.round(value)} m`
+        }
+      }
+      computedFeatures.push({ label: 'Length:', value: formatLength(lengthM) })
+    }
     
     if (affected !== undefined) {
       const affectedValue = typeof affected === 'boolean' ? (affected ? 'Yes' : 'No') : formatValue(affected)
