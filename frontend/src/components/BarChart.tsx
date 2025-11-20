@@ -9,12 +9,13 @@ interface BarChartProps {
 const CustomTooltip = ({ active, payload }: any) => {
   if (active && payload && payload.length) {
     const data = payload[0].payload
-    const name = data.name.replace(' (m)', '') // Remove "(m)" suffix for tooltip
+    const name = data.name
     const value = data.value
+    const unit = data.unit || ''
     
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
-        <p className="text-white text-sm">{name} : {value.toLocaleString('en-US')}</p>
+        <p className="text-white text-sm">{name} : {value.toLocaleString('en-US')}{unit ? ` ${unit}` : ''}</p>
       </div>
     )
   }
@@ -29,25 +30,29 @@ export default function BarChart({ data }: BarChartProps) {
       {
         name: 'Affected',
         value: data.summary.affected_count || 0,
-        fill: '#ef4444'
+        fill: '#ef4444',
+        unit: ''
       },
       {
         name: 'Unaffected',
         value: data.summary.unaffected_count || 0,
-        fill: '#10b981'
+        fill: '#10b981',
+        unit: ''
       }
     )
   } else {
     chartData.push(
       {
-        name: 'Affected (m)',
-        value: data.summary.affected_meters || 0,
-        fill: '#ef4444'
+        name: 'Affected',
+        value: (data.summary.affected_meters || 0) / 1000,
+        fill: '#ef4444',
+        unit: 'km'
       },
       {
-        name: 'Unaffected (m)',
-        value: data.summary.unaffected_meters || 0,
-        fill: '#10b981'
+        name: 'Unaffected',
+        value: (data.summary.unaffected_meters || 0) / 1000,
+        fill: '#10b981',
+        unit: 'km'
       }
     )
   }
