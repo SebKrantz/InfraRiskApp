@@ -170,5 +170,10 @@ async def delete_upload(file_id: str):
         raise HTTPException(status_code=404, detail="File not found")
     
     del uploaded_files[file_id]
+    
+    # Clear any cached raster values for this file
+    from app.api.analyze import clear_raster_cache_for_file
+    clear_raster_cache_for_file(file_id)
+    
     return JSONResponse(content={"message": "File deleted successfully"})
 

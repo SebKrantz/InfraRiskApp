@@ -9,9 +9,9 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict, Tuple
+import numpy as np
 
-from app.config import settings
 from app.utils.geospatial import analyze_intersection
 from app.api.upload import uploaded_files
 
@@ -19,6 +19,29 @@ router = APIRouter()
 
 # Thread pool for blocking analysis operations
 _analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis_worker")
+
+# Cache for sampled raster values: (file_id, hazard_id) -> cached data
+# For Points: np.ndarray of raster values
+# For LineStrings: dict with 'line_data' and 'raster_values'
+# This allows threshold changes without re-sampling the raster
+_raster_values_cache: Dict[Tuple[str, str], any] = {}
+
+
+def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[any]:
+    """Get cached raster values if available."""
+    return _raster_values_cache.get((file_id, hazard_id))
+
+
+def set_cached_raster_values(file_id: str, hazard_id: str, values: any):
+    """Cache raster values for future threshold changes."""
+    _raster_values_cache[(file_id, hazard_id)] = values
+
+
+def clear_raster_cache_for_file(file_id: str):
+    """Clear cached raster values for a file (called when file is deleted)."""
+    keys_to_remove = [k for k in _raster_values_cache if k[0] == file_id]
+    for key in keys_to_remove:
+        del _raster_values_cache[key]
 
 
 class AnalyzeRequest(BaseModel):
@@ -53,6 +76,9 @@ async def analyze_intersections(request: AnalyzeRequest):
     infrastructure_gdf = file_info["gdf"]
     
     try:
+        # Check cache for previously sampled raster values
+        cached_values = get_cached_raster_values(request.file_id, request.hazard_id)
+        
         # Perform spatial intersection analysis in thread pool to avoid blocking event loop
         loop = asyncio.get_event_loop()
         analysis_result = await loop.run_in_executor(
@@ -61,9 +87,21 @@ async def analyze_intersections(request: AnalyzeRequest):
                 infrastructure_gdf=infrastructure_gdf,
                 hazard_raster_path=request.hazard_url,
                 geometry_type=geometry_type,
-                intensity_threshold=request.intensity_threshold
+                intensity_threshold=request.intensity_threshold,
+                cached_raster_values=cached_values
             )
         )
+        
+        # Cache raster values for future threshold changes
+        if "raster_values" in analysis_result:
+            if geometry_type == "Point":
+                set_cached_raster_values(request.file_id, request.hazard_id, analysis_result["raster_values"])
+            elif geometry_type == "LineString" and "line_data" in analysis_result:
+                # For LineString, cache both line_data and raster_values
+                set_cached_raster_values(request.file_id, request.hazard_id, {
+                    "line_data": analysis_result["line_data"],
+                    "raster_values": analysis_result["raster_values"]
+                })
         
         # Build response - ensure no NaN values
         def safe_float(value):
@@ -108,8 +146,7 @@ async def analyze_intersections(request: AnalyzeRequest):
             
             # GeoDataFrame is already in WGS84 (EPSG:4326) and cleaned from upload
             # Convert to GeoJSON
-            geo_interface = display_gdf.__geo_interface__
-            result["infrastructure_features"] = geo_interface
+            result["infrastructure_features"] = display_gdf.__geo_interface__
         except Exception as e:
             # If GeoJSON conversion fails, skip it
             print(f"Warning: Could not convert to GeoJSON: {e}")
