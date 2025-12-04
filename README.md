@@ -230,8 +230,10 @@ npm run build
 
 **Backend**:
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+> **Note**: Use `--workers 1` as the application uses in-memory state for uploaded files and analysis caching. Multi-worker deployment would require Redis or similar for shared state.
 
 ## License
 

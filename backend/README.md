@@ -77,8 +77,10 @@ The API will be available at `http://localhost:8000`
 ### Production Mode
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4
+uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 ```
+
+> **Note**: Use `--workers 1` as the application uses in-memory state for uploaded files and analysis caching. Multi-worker deployment would require Redis or similar for shared state.
 
 ## API Endpoints
 
@@ -280,8 +282,8 @@ backend/
 
 ## Notes
 
-- Uploaded files are currently stored in memory (for Step 1). In production, you'd want to persist them to disk or a database.
-- The analysis endpoint (`/api/analyze`) currently returns a placeholder structure. Full implementation will be completed in integration step.
+- Uploaded files and analysis results are stored in memory with intelligent caching for fast threshold adjustments.
+- The tile server uses thread-local rasterio connections and tile caching for optimal performance.
 - CORS is configured to allow all origins for development. Update for production.
 
 ## Troubleshooting
