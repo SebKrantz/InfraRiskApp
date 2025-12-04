@@ -210,30 +210,35 @@ def analyze_intersection(
         
         # Sample raster values at infrastructure locations
         if geometry_type == "Point":
-            # Sample points
-            coords = [(geom.x, geom.y) for geom in infrastructure_gdf.geometry]
-            raster_values = list(src.sample(coords))
-            # Extract first band value, converting NaN to None for JSON serialization
-            raster_values = [None if len(v) == 0 or np.isnan(v[0]) else float(v[0]) for v in raster_values]
+            # Extract coordinates as numpy arrays (vectorized, much faster than list comprehension)
+            x_coords = infrastructure_gdf.geometry.x.to_numpy()
+            y_coords = infrastructure_gdf.geometry.y.to_numpy()
+            coords = np.column_stack([x_coords, y_coords])
             
-            # Store exposure level (raster value at point location)
-            infrastructure_gdf['exposure_level'] = raster_values
+            # Sample all points at once and convert to numpy array
+            raster_values = np.array([v[0] if len(v) > 0 else np.nan for v in src.sample(coords)])
             
-            # Determine affected points
+            # Vectorized operations for valid/affected status (much faster than Python loops)
+            valid_mask = ~np.isnan(raster_values)
             if intensity_threshold is not None:
-                affected_mask = [v is not None and v >= intensity_threshold for v in raster_values]
+                affected_mask = valid_mask & (raster_values >= intensity_threshold)
             else:
-                affected_mask = [v is not None and v > 0 for v in raster_values]
+                affected_mask = valid_mask & (raster_values > 0)
             
-            affected_count = sum(affected_mask)
-            unaffected_count = len(infrastructure_gdf) - affected_count
+            # Store exposure level - convert NaN to None for JSON serialization
+            exposure_values = np.where(valid_mask, raster_values, np.nan)
+            infrastructure_gdf['exposure_level'] = exposure_values
+            infrastructure_gdf['exposure_level'] = infrastructure_gdf['exposure_level'].replace({np.nan: None})
             
             # Mark affected status in GeoDataFrame
             infrastructure_gdf['affected'] = affected_mask
             
+            affected_count = int(affected_mask.sum())
+            unaffected_count = len(infrastructure_gdf) - affected_count
+            
             return {
-                "affected_count": int(affected_count),
-                "unaffected_count": int(unaffected_count),
+                "affected_count": affected_count,
+                "unaffected_count": unaffected_count,
                 "affected_meters": 0.0,
                 "unaffected_meters": 0.0,
                 "full_gdf": infrastructure_gdf  # Return full GDF with affected status
