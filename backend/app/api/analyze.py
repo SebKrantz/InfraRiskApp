@@ -4,6 +4,8 @@ Analysis endpoints for computing intersections
 
 import math
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -14,6 +16,9 @@ from app.utils.geospatial import analyze_intersection
 from app.api.upload import uploaded_files
 
 router = APIRouter()
+
+# Thread pool for blocking analysis operations
+_analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis_worker")
 
 
 class AnalyzeRequest(BaseModel):
@@ -48,12 +53,16 @@ async def analyze_intersections(request: AnalyzeRequest):
     infrastructure_gdf = file_info["gdf"]
     
     try:
-        # Perform spatial intersection analysis
-        analysis_result = analyze_intersection(
-            infrastructure_gdf=infrastructure_gdf,
-            hazard_raster_path=request.hazard_url,
-            geometry_type=geometry_type,
-            intensity_threshold=request.intensity_threshold
+        # Perform spatial intersection analysis in thread pool to avoid blocking event loop
+        loop = asyncio.get_event_loop()
+        analysis_result = await loop.run_in_executor(
+            _analysis_executor,
+            lambda: analyze_intersection(
+                infrastructure_gdf=infrastructure_gdf,
+                hazard_raster_path=request.hazard_url,
+                geometry_type=geometry_type,
+                intensity_threshold=request.intensity_threshold
+            )
         )
         
         # Build response - ensure no NaN values
