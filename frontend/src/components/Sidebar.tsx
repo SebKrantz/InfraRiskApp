@@ -25,7 +25,8 @@ interface SidebarProps {
   onIntensityThresholdChange: (threshold: number) => void
   hazardStats: { min: number; max: number } | null
   analysisResult: AnalysisResult | null
-  loading?: boolean
+  loadingUpload?: boolean
+  loadingAnalysis?: boolean
   error?: string | null
 }
 
@@ -48,7 +49,8 @@ export default function Sidebar({
   onIntensityThresholdChange,
   hazardStats,
   analysisResult,
-  loading = false,
+  loadingUpload = false,
+  loadingAnalysis = false,
   error = null,
 }: SidebarProps) {
   const [infoOpen, setInfoOpen] = useState(false)
@@ -120,7 +122,7 @@ export default function Sidebar({
                         variant="ghost"
                         size="sm"
                         onClick={onClearData}
-                        disabled={loading}
+                        disabled={loadingUpload || loadingAnalysis}
                         className="ml-2 text-xs text-gray-300 bg-gray-700 hover:text-red-500 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Clear Data
@@ -134,11 +136,11 @@ export default function Sidebar({
                         type="file"
                         accept=".shp,.gpkg,.csv,.zip"
                         onChange={handleFileChange}
-                        disabled={loading}
+                        disabled={loadingUpload}
                         className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed [&::file-selector-button]:mr-4"
                       />
                     </div>
-                    {loading && (
+                    {loadingUpload && (
                       <p className="text-xs text-blue-400 mt-1">Uploading...</p>
                     )}
                     {error && (
@@ -228,7 +230,7 @@ export default function Sidebar({
                               onHazardOpacityChange(hazardOpacity + 1)
                             }
                           }}
-                          disabled={hazardOpacity >= 100 || loading}
+                          disabled={hazardOpacity >= 100}
                           className="p-0 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <ChevronUp className="h-3 w-3" />
@@ -240,7 +242,7 @@ export default function Sidebar({
                               onHazardOpacityChange(hazardOpacity - 1)
                             }
                           }}
-                          disabled={hazardOpacity <= 0 || loading}
+                          disabled={hazardOpacity <= 0}
                           className="p-0 text-gray-400 hover:text-gray-300 disabled:opacity-30 disabled:cursor-not-allowed"
                         >
                           <ChevronDown className="h-3 w-3" />
@@ -291,7 +293,7 @@ export default function Sidebar({
             {/* Bar Chart Section */}
             <div className="flex-shrink-0">
               <h3 className="text-sm font-medium text-gray-300 mb-2">Analysis Results</h3>
-              {loading && !analysisResult && (
+              {loadingAnalysis && !analysisResult && (
                 <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800">
                   <div className="text-center">
                     <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500 mx-auto mb-2"></div>
@@ -299,9 +301,9 @@ export default function Sidebar({
                   </div>
                 </div>
               )}
-              {!loading && analysisResult ? (
+              {!loadingAnalysis && analysisResult ? (
                 <BarChart data={analysisResult} />
-              ) : !loading && !analysisResult ? (
+              ) : !loadingAnalysis && !analysisResult ? (
                 <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800">
                   {uploadedFile && selectedHazard ? 'No analysis data yet' : 'Upload data and select a hazard to analyze'}
                 </div>

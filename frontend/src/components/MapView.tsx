@@ -12,7 +12,7 @@ interface MapViewProps {
   hazardOpacity: number
   basemap: Basemap
   onBasemapChange: (basemap: Basemap) => void
-  loading?: boolean
+  loadingAnalysis?: boolean
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -331,7 +331,7 @@ export default function MapView({
   hazardOpacity,
   basemap,
   onBasemapChange,
-  loading = false,
+  loadingAnalysis = false,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)

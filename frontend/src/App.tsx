@@ -15,20 +15,18 @@ function App() {
   const [hazardStats, setHazardStats] = useState<{ min: number; max: number } | null>(null)
   const [basemap, setBasemap] = useState<Basemap>('positron')
   const [hazards, setHazards] = useState<Hazard[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loadingUpload, setLoadingUpload] = useState(false)
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Fetch hazards on mount
   useEffect(() => {
     const fetchHazards = async () => {
       try {
-        setLoading(true)
         const hazardsData = await getHazards()
         setHazards(hazardsData)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load hazards')
-      } finally {
-        setLoading(false)
       }
     }
     fetchHazards()
@@ -44,7 +42,6 @@ function App() {
       }
 
       try {
-        setLoading(true)
         const stats = await getHazardStats(selectedHazard.id)
         setHazardStats({ min: stats.min, max: stats.max })
         // Set threshold to min value initially
@@ -53,8 +50,6 @@ function App() {
         console.error('Failed to fetch hazard statistics:', err)
         // Fallback to default range if stats fail
         setHazardStats({ min: 0, max: 100 })
-      } finally {
-        setLoading(false)
       }
     }
     fetchStats()
@@ -63,7 +58,7 @@ function App() {
   // Handle file upload
   const handleFileUpload = async (file: File) => {
     try {
-      setLoading(true)
+      setLoadingUpload(true)
       setError(null)
       const uploaded = await uploadFile(file)
       setUploadedFile(uploaded)
@@ -73,7 +68,7 @@ function App() {
       setError(err instanceof Error ? err.message : 'Failed to upload file')
       setUploadedFile(null)
     } finally {
-      setLoading(false)
+      setLoadingUpload(false)
     }
   }
 
@@ -93,7 +88,7 @@ function App() {
 
     const performAnalysis = async () => {
       try {
-        setLoading(true)
+        setLoadingAnalysis(true)
         setError(null)
         // Use threshold only if it's greater than the min value
         const threshold = hazardStats && intensityThreshold > hazardStats.min 
@@ -111,7 +106,7 @@ function App() {
         setError(err instanceof Error ? err.message : 'Failed to perform analysis')
         setAnalysisResult(null)
       } finally {
-        setLoading(false)
+        setLoadingAnalysis(false)
       }
     }
 
@@ -139,7 +134,8 @@ function App() {
         onIntensityThresholdChange={setIntensityThreshold}
         hazardStats={hazardStats}
         analysisResult={analysisResult}
-        loading={loading}
+        loadingUpload={loadingUpload}
+        loadingAnalysis={loadingAnalysis}
         error={error}
       />
       <MapView
@@ -151,7 +147,7 @@ function App() {
         hazardOpacity={hazardOpacity}
         basemap={basemap}
         onBasemapChange={setBasemap}
-        loading={loading}
+        loadingAnalysis={loadingAnalysis}
       />
     </div>
   )
