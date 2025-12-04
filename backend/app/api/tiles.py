@@ -2,6 +2,12 @@
 Tile endpoints for serving COG tiles
 """
 import io
+import math
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from typing import Tuple
+import threading
+
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 import rasterio
@@ -9,8 +15,35 @@ from rasterio.windows import from_bounds
 import numpy as np
 from PIL import Image
 import matplotlib.cm as cm
+from cachetools import TTLCache
 
 router = APIRouter()
+
+# Thread pool for blocking I/O operations
+_tile_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tile_worker")
+
+# Tile cache: cache rendered PNG tiles (key: "hazard_id:z:x:y:palette")
+# Max 2000 tiles, 5 minute TTL
+_tile_cache: TTLCache = TTLCache(maxsize=2000, ttl=300)
+_tile_cache_lock = threading.Lock()
+
+# Thread-local storage for rasterio datasets (each thread gets its own dataset)
+# This avoids thread-safety issues with shared datasets
+_thread_local = threading.local()
+
+
+def _get_thread_local_dataset(cog_url: str) -> rasterio.DatasetReader:
+    """
+    Get a thread-local rasterio dataset.
+    Each thread maintains its own set of open datasets to avoid thread-safety issues.
+    """
+    if not hasattr(_thread_local, 'datasets'):
+        _thread_local.datasets = {}
+    
+    if cog_url not in _thread_local.datasets:
+        _thread_local.datasets[cog_url] = rasterio.open(cog_url)
+    
+    return _thread_local.datasets[cog_url]
 
 
 def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None, vmax: float = None) -> np.ndarray:
@@ -32,6 +65,9 @@ def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None,
         if vmax > vmin:
             normalized[valid_mask] = (np.sqrt(data[valid_mask]) - vmin) / (vmax - vmin)
     
+    # Clip to [0, 1] in place
+    np.clip(normalized, 0, 1, out=normalized)
+    
     # Apply colormap
     colored = cmap(normalized)
     
@@ -39,6 +75,92 @@ def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None,
     colored_uint8 = (colored[:, :, :3] * 255).astype(np.uint8)
     
     return colored_uint8
+
+
+def _tile_bounds(z: int, x: int, y: int) -> Tuple[float, float, float, float]:
+    """Calculate tile bounds in EPSG:4326."""
+    n = 2.0 ** z
+    lon_deg = (x / n) * 360.0 - 180.0
+    lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+    lat_deg = math.degrees(lat_rad)
+    
+    tile_size = 256
+    pixel_size = 360.0 / n / tile_size
+    
+    minx = lon_deg
+    maxx = lon_deg + pixel_size * tile_size
+    miny = lat_deg - pixel_size * tile_size
+    maxy = lat_deg
+    
+    return (minx, miny, maxx, maxy)
+
+
+def _generate_tile_sync(
+    cog_url: str,
+    z: int,
+    x: int,
+    y: int,
+    palette: str,
+    vmin: float,
+    vmax: float
+) -> bytes:
+    """
+    Generate a tile synchronously (runs in thread pool).
+    Returns PNG bytes.
+    """
+    tile_size = 256
+    bounds = _tile_bounds(z, x, y)
+    
+    try:
+        # Use thread-local dataset to avoid thread-safety issues
+        src = _get_thread_local_dataset(cog_url)
+        window = from_bounds(*bounds, src.transform)
+        data = src.read(1, window=window, out_shape=(tile_size, tile_size))
+        
+        colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
+        
+        img = Image.fromarray(colored, 'RGB')
+        img_buffer = io.BytesIO()
+        img.save(img_buffer, format='PNG', optimize=False)
+        return img_buffer.getvalue()
+        
+    except rasterio.errors.RasterioIOError as e:
+        # Connection may have been closed - clear thread-local cache and retry once
+        if hasattr(_thread_local, 'datasets') and cog_url in _thread_local.datasets:
+            try:
+                _thread_local.datasets[cog_url].close()
+            except Exception:
+                pass
+            del _thread_local.datasets[cog_url]
+        
+        # Retry with fresh connection
+        try:
+            src = _get_thread_local_dataset(cog_url)
+            window = from_bounds(*bounds, src.transform)
+            data = src.read(1, window=window, out_shape=(tile_size, tile_size))
+            
+            colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
+            
+            img = Image.fromarray(colored, 'RGB')
+            img_buffer = io.BytesIO()
+            img.save(img_buffer, format='PNG', optimize=False)
+            return img_buffer.getvalue()
+        except Exception as retry_e:
+            print(f"Tile generation error (retry failed) for z={z},x={x},y={y}: {type(retry_e).__name__}: {retry_e}")
+            return _empty_tile()
+        
+    except Exception as e:
+        print(f"Tile generation error for z={z},x={x},y={y}: {type(e).__name__}: {e}")
+        return _empty_tile()
+
+
+def _empty_tile() -> bytes:
+    """Generate an empty transparent tile."""
+    transparent = np.zeros((256, 256, 4), dtype=np.uint8)
+    img = Image.fromarray(transparent, 'RGBA')
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format='PNG')
+    return img_buffer.getvalue()
 
 
 @router.get("/tiles/{hazard_id}/{z}/{x}/{y}.png")
@@ -50,81 +172,62 @@ async def get_tile(
     palette: str = Query('turbo', description="Color palette"),
 ):
     """
-    Get a tile from a COG hazard layer
+    Get a tile from a COG hazard layer.
     
-    Parameters:
-    - hazard_id: ID of hazard layer
-    - z, x, y: Tile coordinates
-    - palette: Color palette name
+    Uses caching and thread-local connection pooling for efficiency.
     """
     from app.api.hazards import load_hazards_dict, get_hazard_stats_cached
     
-    try:
-        # Get hazard info from cached dict
-        hazards_dict = load_hazards_dict()
-        
-        if hazard_id not in hazards_dict:
-            raise HTTPException(status_code=404, detail=f"Hazard layer '{hazard_id}' not found")
-        
-        hazard_data = hazards_dict[hazard_id]
-        cog_url = hazard_data.get("dataset_url", "")
-        
-        if not cog_url:
-            raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
-        
-        # Get cached min/max values for consistent colormap scaling
-        stats = get_hazard_stats_cached(hazard_id)
-        if stats:
-            vmin, vmax = stats
-        else:
-            vmin, vmax = 0.0, 1e6
-        
-        # Open COG
-        with rasterio.open(cog_url) as src:
-            # Calculate tile bounds in EPSG:4326 (geographic degrees)
-            # All hazard rasters use EPSG:4326, so no CRS transformation needed
-            import math
-            n = 2.0 ** z
-            lon_deg = (x / n) * 360.0 - 180.0
-            lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
-            lat_deg = math.degrees(lat_rad)
-            
-            # Calculate bounds for this tile
-            tile_size = 256
-            pixel_size = 360.0 / n / tile_size
-            
-            minx = lon_deg
-            maxx = lon_deg + pixel_size * tile_size
-            miny = lat_deg - pixel_size * tile_size
-            maxy = lat_deg
-            
-            # Bounds are already in EPSG:4326 (geographic degrees)
-            bounds_4326 = (minx, miny, maxx, maxy)
-            
-            # Read data from COG
-            try:
-                window = from_bounds(*bounds_4326, src.transform)
-                data = src.read(1, window=window, out_shape=(tile_size, tile_size))
-                
-                colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
-                
-                # Create PNG image
-                img = Image.fromarray(colored, 'RGB')
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_buffer.seek(0)
-                
-                return Response(content=img_buffer.read(), media_type="image/png")
-            except Exception as e:
-                print(f"Tile generation error: {e}")
-                # Return transparent tile if read fails
-                transparent = np.zeros((tile_size, tile_size, 4), dtype=np.uint8)
-                img = Image.fromarray(transparent, 'RGBA')
-                img_buffer = io.BytesIO()
-                img.save(img_buffer, format='PNG')
-                img_buffer.seek(0)
-                return Response(content=img_buffer.read(), media_type="image/png")
-                
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error generating tile: {str(e)}")
+    # Check tile cache first
+    cache_key = f"{hazard_id}:{z}:{x}:{y}:{palette}"
+    with _tile_cache_lock:
+        if cache_key in _tile_cache:
+            return Response(content=_tile_cache[cache_key], media_type="image/png")
+    
+    # Get hazard info
+    hazards_dict = load_hazards_dict()
+    
+    if hazard_id not in hazards_dict:
+        raise HTTPException(status_code=404, detail=f"Hazard layer '{hazard_id}' not found")
+    
+    hazard_data = hazards_dict[hazard_id]
+    cog_url = hazard_data.get("dataset_url", "")
+    
+    if not cog_url:
+        raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
+    
+    # Get cached min/max values for consistent colormap scaling
+    stats = get_hazard_stats_cached(hazard_id)
+    if stats:
+        vmin, vmax = stats
+    else:
+        vmin, vmax = 0.0, 1e3  # Fallback if stats not cached yet
+    
+    # Run blocking tile generation in thread pool
+    loop = asyncio.get_event_loop()
+    tile_bytes = await loop.run_in_executor(
+        _tile_executor,
+        _generate_tile_sync,
+        cog_url,
+        z,
+        x,
+        y,
+        palette,
+        vmin,
+        vmax
+    )
+    
+    # Only cache if we have proper stats (avoid caching tiles with wrong colors)
+    if stats:
+        with _tile_cache_lock:
+            _tile_cache[cache_key] = tile_bytes
+    
+    return Response(content=tile_bytes, media_type="image/png")
 
+
+@router.post("/tiles/clear-cache")
+async def clear_tile_cache():
+    """Clear tile cache."""
+    with _tile_cache_lock:
+        _tile_cache.clear()
+    return {"message": "Tile cache cleared"}
