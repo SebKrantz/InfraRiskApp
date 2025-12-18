@@ -307,7 +307,7 @@ export default function Sidebar({
               <hr className="my-4 border-gray-700" />
 
               {/* Vulnerability Analysis Section */}
-              <div className="mb-5">
+              <div className="mb-2">
                 <div className="flex items-center mb-3">
                   <input
                     type="checkbox"

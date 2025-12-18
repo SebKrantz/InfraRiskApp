@@ -32,6 +32,7 @@ export interface AnalysisResult {
     affected_meters?: number
     unaffected_meters?: number
     total_damage_cost?: number
+    total_replacement_value?: number
   }
   affected_features?: any
   infrastructure_features?: any // Full GeoJSON with affected status (includes vulnerability and damage_cost properties)

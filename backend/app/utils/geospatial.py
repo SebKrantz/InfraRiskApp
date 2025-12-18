@@ -9,6 +9,7 @@ import numpy as np
 from shapely.geometry import Point, LineString
 from typing import Optional, Callable
 from pyproj import Geod
+import csv
 
 def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     """
@@ -172,6 +173,85 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
         return "LineString"
 
 
+def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
+    """
+    Parse a vulnerability curve CSV file and return an interpolation function.
+    
+    CSV format: Two columns (intensity, proportion_destroyed)
+    - First column: hazard intensity
+    - Second column: proportion destroyed (0-1)
+    
+    Args:
+        csv_path: Path to CSV file
+        
+    Returns:
+        Interpolation function that takes intensity and returns proportion destroyed
+    """
+    # Try multiple encodings
+    encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
+    delimiter = ','
+    encoding = 'utf-8'
+    
+    for enc in encodings:
+        try:
+            with open(csv_path, 'r', encoding=enc) as f:
+                first_line = f.readline()
+                sniffer = csv.Sniffer()
+                try:
+                    delimiter = sniffer.sniff(first_line, delimiters=',;').delimiter
+                except:
+                    delimiter = ';' if ';' in first_line else ','
+                encoding = enc
+                break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # Read CSV
+    df = pd.read_csv(csv_path, sep=delimiter, encoding=encoding, header=None)
+    
+    if df.shape[1] < 2:
+        raise ValueError("Vulnerability curve CSV must have at least 2 columns")
+    
+    # Extract intensity and proportion_destroyed (first two columns)
+    intensity = pd.to_numeric(df.iloc[:, 0], errors='coerce')
+    proportion_destroyed = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+    
+    # Remove rows with NaN
+    valid_mask = ~(intensity.isna() | proportion_destroyed.isna())
+    intensity = intensity[valid_mask].values
+    proportion_destroyed = proportion_destroyed[valid_mask].values
+    
+    if len(intensity) == 0:
+        raise ValueError("No valid data rows found in vulnerability curve CSV")
+    
+    # Validate proportion_destroyed is in [0, 1]
+    if (proportion_destroyed < 0).any() or (proportion_destroyed > 1).any():
+        raise ValueError("Proportion destroyed values must be between 0 and 1")
+    
+    # Sort by intensity
+    sort_idx = np.argsort(intensity)
+    intensity = intensity[sort_idx]
+    proportion_destroyed = proportion_destroyed[sort_idx]
+    
+    # Create interpolation function
+    # For values below minimum, return 0 (or first value)
+    # For values above maximum, return 1 (or last value)
+    # For values in range, use linear interpolation
+    def interpolate(intensity_value: float) -> float:
+        if np.isnan(intensity_value):
+            return 0.0
+        
+        if intensity_value <= intensity[0]:
+            return float(proportion_destroyed[0])
+        if intensity_value >= intensity[-1]:
+            return float(proportion_destroyed[-1])
+        
+        # Linear interpolation
+        return float(np.interp(intensity_value, intensity, proportion_destroyed))
+    
+    return interpolate
+
+
 def analyze_intersection(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
@@ -310,9 +390,13 @@ def analyze_intersection(
             
             # Calculate vulnerability and damage cost if vulnerability analysis is enabled
             total_damage_cost = 0.0
+            total_replacement_value = 0.0
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 vulnerability_values = []
                 damage_cost_values = []
+                
+                # For points, total replacement value = replacement_value * number of points
+                total_replacement_value = replacement_value * len(infrastructure_gdf)
                 
                 for idx, row in infrastructure_gdf.iterrows():
                     exposure = row.get('exposure_level')
@@ -347,6 +431,7 @@ def analyze_intersection(
             
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
+                result["total_replacement_value"] = total_replacement_value
             
             return result
         
@@ -497,7 +582,16 @@ def analyze_intersection(
             affected_length = 0.0
             unaffected_length = 0.0
             total_damage_cost = 0.0
+            total_replacement_value = 0.0
             segment_rows = []
+            
+            # Calculate total original length of all lines for replacement value calculation
+            # This must be done before processing segments to get the full original length
+            total_original_length = 0.0
+            if vulnerability_curve_interp is not None and replacement_value is not None:
+                for ld in line_data:
+                    total_original_length += ld['total_length_m']
+                total_replacement_value = replacement_value * total_original_length
             
             for ld in line_data:
                 row_dict = ld['row_dict']
@@ -549,7 +643,9 @@ def analyze_intersection(
                                 # Calculate segment length
                                 pt1 = points[i]
                                 pt2 = points[i + 1]
-                                seg_len = geod.line_length([pt1[0]], [pt1[1]], [pt2[0]], [pt2[1]])
+                                # geod.line_length expects two arrays: lons and lats
+                                # Use the same pattern as elsewhere: *zip(*coords)
+                                seg_len = geod.line_length(*zip(*[pt1, pt2]))
                                 
                                 # Calculate vulnerability for this segment
                                 if val1 is not None and val2 is not None:
@@ -620,6 +716,8 @@ def analyze_intersection(
             affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
             unaffected_meters = float(unaffected_length) if not np.isnan(unaffected_length) else 0.0
             
+            # total_replacement_value is already calculated above using total_original_length
+            
             result = {
                 "affected_count": 0,
                 "unaffected_count": 0,
@@ -632,6 +730,7 @@ def analyze_intersection(
             
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
+                result["total_replacement_value"] = total_replacement_value
             
             return result
 

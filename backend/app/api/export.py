@@ -67,35 +67,61 @@ def generate_barchart_png(
     --------
     bytes : PNG image bytes
     """
-    # Calculate summary statistics
-    if geometry_type == 'Point':
-        affected = analysis_result.get('affected_count', 0)
-        unaffected = analysis_result.get('unaffected_count', 0)
-        ylabel = 'Count'
-    else:
-        affected = analysis_result.get('affected_meters', 0)
-        unaffected = analysis_result.get('unaffected_meters', 0)
-        ylabel = 'Length (meters)'
-    
-    # Create DataFrame for plotting
     import pandas as pd
-    plot_data = pd.DataFrame({
-        'Status': ['Affected', 'Unaffected'],
-        'Value': [affected, unaffected]
-    })
+    
+    # Check if vulnerability analysis data is available
+    total_damage_cost = analysis_result.get('total_damage_cost')
+    total_replacement_value = analysis_result.get('total_replacement_value')
+    
+    if total_damage_cost is not None and total_replacement_value is not None:
+        # Vulnerability analysis mode - show damage cost and remaining value
+        damage_cost = max(0, total_damage_cost)
+        remaining_value = max(0, total_replacement_value - total_damage_cost)
+        
+        plot_data = pd.DataFrame({
+            'Category': ['Damage', 'Remaining'],
+            'Value': [damage_cost, remaining_value]
+        })
+        
+        ylabel = 'Value (USD)'
+        palette = ['#f59e0b', '#10b981']  # Orange for damage, green for remaining
+    else:
+        # Standard exposure analysis mode
+        if geometry_type == 'Point':
+            affected = analysis_result.get('affected_count', 0)
+            unaffected = analysis_result.get('unaffected_count', 0)
+            ylabel = 'Count'
+        else:
+            affected = analysis_result.get('affected_meters', 0)
+            unaffected = analysis_result.get('unaffected_meters', 0)
+            ylabel = 'Length (meters)'
+        
+        plot_data = pd.DataFrame({
+            'Category': ['Affected', 'Unaffected'],
+            'Value': [affected, unaffected]
+        })
+        
+        palette = ['#d62728', '#2ca02c']  # Red for affected, green for unaffected
     
     # Create plot
     fig, ax = plt.subplots(figsize=(6, 5))
-    sns.barplot(data=plot_data, x='Status', y='Value', 
-                palette=['#d62728', '#2ca02c'], ax=ax)
+    sns.barplot(data=plot_data, x='Category', y='Value', 
+                palette=palette, ax=ax)
     ax.set_ylabel(ylabel, fontsize=12)
     ax.set_xlabel('', fontsize=12)
     ax.set_title(title, fontsize=14, fontweight='bold')
     
     # Add value labels on bars
+    max_value = max(plot_data['Value'])
     for i, v in enumerate(plot_data['Value']):
-        ax.text(i, v + max(plot_data['Value']) * 0.01, 
-                f'{v:,.0f}', ha='center', va='bottom', fontsize=11)
+        if total_damage_cost is not None:
+            # Format as currency for vulnerability analysis
+            label = f'${v:,.0f}'
+        else:
+            # Format as number for standard analysis
+            label = f'{v:,.0f}'
+        ax.text(i, v + max_value * 0.01, 
+                label, ha='center', va='bottom', fontsize=11)
     
     plt.tight_layout()
     
@@ -355,17 +381,22 @@ async def export_barchart(request: ExportBarchartRequest):
         # Use cached result - no recalculation needed!
         analysis_result = cached_analysis
         
-        # Build summary for barchart
+        # Build summary for barchart (include vulnerability data if available)
         summary = {
             "affected_count": analysis_result.get("affected_count", 0),
             "unaffected_count": analysis_result.get("unaffected_count", 0),
             "affected_meters": analysis_result.get("affected_meters", 0.0),
-            "unaffected_meters": analysis_result.get("unaffected_meters", 0.0)
+            "unaffected_meters": analysis_result.get("unaffected_meters", 0.0),
+            "total_damage_cost": analysis_result.get("total_damage_cost"),
+            "total_replacement_value": analysis_result.get("total_replacement_value")
         }
         
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
-        title = f"{hazard_name} - Infrastructure Exposure Analysis"
+        if summary.get("total_damage_cost") is not None:
+            title = f"{hazard_name} - Vulnerability Analysis"
+        else:
+            title = f"{hazard_name} - Infrastructure Exposure Analysis"
         
         # Generate PNG
         loop = asyncio.get_event_loop()

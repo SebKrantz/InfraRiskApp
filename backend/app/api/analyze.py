@@ -6,7 +6,7 @@ import math
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Tuple
@@ -73,14 +73,15 @@ class AnalyzeRequest(BaseModel):
 
 @router.post("/analyze")
 async def analyze_intersections(
+    request_obj: Request,
     request: Optional[AnalyzeRequest] = None,
     # FormData parameters (optional, used when vulnerability curve is provided)
-    file_id: Optional[str] = Form(None),
-    hazard_id: Optional[str] = Form(None),
-    hazard_url: Optional[str] = Form(None),
-    intensity_threshold: Optional[float] = Form(None),
-    vulnerability_curve_file: Optional[UploadFile] = File(None),
-    replacement_value: Optional[float] = Form(None)
+    file_id: Optional[str] = Form(default=None),
+    hazard_id: Optional[str] = Form(default=None),
+    hazard_url: Optional[str] = Form(default=None),
+    intensity_threshold: Optional[float] = Form(default=None),
+    vulnerability_curve_file: Optional[UploadFile] = File(default=None),
+    replacement_value: Optional[float] = Form(default=None)
 ):
     """
     Analyze intersections between uploaded infrastructure and hazard raster
@@ -97,17 +98,13 @@ async def analyze_intersections(
     - Summary statistics (counts/meters affected, or total damage cost if vulnerability analysis enabled)
     - Optional GeoJSON for visualization
     """
+    # Check content type to determine request format
+    # Note: FastAPI may not parse JSON body when Form params are declared, so we check content-type header
+    content_type = request_obj.headers.get("content-type", "")
+    
     # Handle both JSON and FormData requests
-    if request is not None:
-        # JSON request
-        actual_file_id = request.file_id
-        actual_hazard_id = request.hazard_id
-        actual_hazard_url = request.hazard_url
-        actual_threshold = request.intensity_threshold
-        actual_vulnerability_file = None
-        actual_replacement_value = None
-    else:
-        # FormData request
+    if "multipart/form-data" in content_type:
+        # FormData request (when vulnerability curve file is included)
         if file_id is None or hazard_id is None or hazard_url is None:
             raise HTTPException(status_code=400, detail="Missing required parameters: file_id, hazard_id, hazard_url")
         actual_file_id = file_id
@@ -116,6 +113,21 @@ async def analyze_intersections(
         actual_threshold = intensity_threshold
         actual_vulnerability_file = vulnerability_curve_file
         actual_replacement_value = replacement_value
+    else:
+        # JSON request - FastAPI should have parsed it into 'request'
+        if request is None:
+            # If request is None, try to parse JSON body manually
+            try:
+                body = await request_obj.json()
+                request = AnalyzeRequest(**body)
+            except Exception:
+                raise HTTPException(status_code=400, detail="Missing or invalid request body")
+        actual_file_id = request.file_id
+        actual_hazard_id = request.hazard_id
+        actual_hazard_url = request.hazard_url
+        actual_threshold = request.intensity_threshold
+        actual_vulnerability_file = None
+        actual_replacement_value = None
     
     # Check if file exists
     if actual_file_id not in uploaded_files:
@@ -203,6 +215,8 @@ async def analyze_intersections(
         # Add vulnerability analysis results if available
         if "total_damage_cost" in analysis_result:
             result["summary"]["total_damage_cost"] = safe_float(analysis_result["total_damage_cost"])
+        if "total_replacement_value" in analysis_result:
+            result["summary"]["total_replacement_value"] = safe_float(analysis_result["total_replacement_value"])
         
         if geometry_type == "Point":
             result["summary"]["affected_count"] = analysis_result["affected_count"]
