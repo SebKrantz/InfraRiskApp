@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown, Download } from 'lucide-react'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette } from '../types'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
@@ -7,6 +7,7 @@ import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import BarChart from './BarChart'
+import { exportBarchart, exportMap } from '../services/api'
 
 interface SidebarProps {
   isOpen: boolean
@@ -57,6 +58,8 @@ export default function Sidebar({
   const [uploadInfoOpen, setUploadInfoOpen] = useState(false)
   const [thresholdInfoOpen, setThresholdInfoOpen] = useState(false)
   const [paletteInfoOpen, setPaletteInfoOpen] = useState(false)
+  const [exportingBarchart, setExportingBarchart] = useState(false)
+  const [exportingMap, setExportingMap] = useState(false)
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -310,6 +313,84 @@ export default function Sidebar({
               ) : null}
               {error && (
                 <p className="text-xs text-red-400 mt-2">{error}</p>
+              )}
+              
+              {/* Export Buttons */}
+              {!loadingAnalysis && analysisResult && uploadedFile && selectedHazard && (
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    onClick={async () => {
+                      if (!uploadedFile || !selectedHazard) return
+                      try {
+                        setExportingBarchart(true)
+                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
+                          ? intensityThreshold 
+                          : undefined
+                        await exportBarchart(
+                          uploadedFile.file_id,
+                          selectedHazard.id,
+                          threshold
+                        )
+                      } catch (err) {
+                        console.error('Failed to export barchart:', err)
+                        alert(err instanceof Error ? err.message : 'Failed to export barchart')
+                      } finally {
+                        setExportingBarchart(false)
+                      }
+                    }}
+                    disabled={exportingBarchart || exportingMap}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {exportingBarchart ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Barchart
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (!uploadedFile || !selectedHazard) return
+                      try {
+                        setExportingMap(true)
+                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
+                          ? intensityThreshold 
+                          : undefined
+                        await exportMap(
+                          uploadedFile.file_id,
+                          selectedHazard.id,
+                          colorPalette,
+                          hazardOpacity,
+                          threshold
+                        )
+                      } catch (err) {
+                        console.error('Failed to export map:', err)
+                        alert(err instanceof Error ? err.message : 'Failed to export map')
+                      } finally {
+                        setExportingMap(false)
+                      }
+                    }}
+                    disabled={exportingBarchart || exportingMap}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {exportingMap ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Map
+                      </>
+                    )}
+                  </Button>
+                </div>
               )}
             </div>
           </div>

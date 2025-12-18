@@ -105,3 +105,101 @@ export async function getHazardStats(hazardId: string): Promise<{ min: number; m
   return response.json()
 }
 
+/**
+ * Export analysis results as a high-resolution PNG barchart
+ */
+export async function exportBarchart(
+  fileId: string,
+  hazardId: string,
+  intensityThreshold?: number
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/export/barchart`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      hazard_id: hazardId,
+      intensity_threshold: intensityThreshold,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Export failed' }))
+    throw new Error(error.detail || 'Failed to export barchart')
+  }
+
+  // Get filename from Content-Disposition header or generate one
+  const contentDisposition = response.headers.get('Content-Disposition')
+  let filename = `barchart_${fileId.slice(0, 8)}_${hazardId.slice(0, 8)}.png`
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="(.+)"/)
+    if (filenameMatch) {
+      filename = filenameMatch[1]
+    }
+  }
+
+  // Download the blob
+  const blob = await response.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
+/**
+ * Export analysis results as a high-resolution PNG map
+ */
+export async function exportMap(
+  fileId: string,
+  hazardId: string,
+  colorPalette: string,
+  hazardOpacity: number,
+  intensityThreshold?: number
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/export/map`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      hazard_id: hazardId,
+      color_palette: colorPalette,
+      hazard_opacity: hazardOpacity / 100, // Convert percentage to 0-1
+      intensity_threshold: intensityThreshold,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Export failed' }))
+    throw new Error(error.detail || 'Failed to export map')
+  }
+
+  // Get filename from Content-Disposition header or generate one
+  const contentDisposition = response.headers.get('Content-Disposition')
+  let filename = `map_${fileId.slice(0, 8)}_${hazardId.slice(0, 8)}.png`
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="(.+)"/)
+    if (filenameMatch) {
+      filename = filenameMatch[1]
+    }
+  }
+
+  // Download the blob
+  const blob = await response.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
