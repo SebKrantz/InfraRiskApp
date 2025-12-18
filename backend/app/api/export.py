@@ -217,6 +217,37 @@ def generate_map_png(
                 im = ax.imshow(colored_uint8, extent=extent, 
                               alpha=hazard_opacity, interpolation='bilinear', 
                               aspect='auto', origin='upper', zorder=1)
+                
+                # Create a ScalarMappable for the colorbar
+                # We need to create a normalization that matches our sqrt transformation
+                from matplotlib.colors import Normalize
+                from matplotlib.cm import ScalarMappable
+                
+                # Create a custom normalization class for sqrt scaling
+                class SqrtNormalize(Normalize):
+                    def __init__(self, vmin=None, vmax=None, clip=False):
+                        super().__init__(vmin, vmax, clip)
+                    
+                    def __call__(self, value, clip=None):
+                        # Apply sqrt normalization
+                        result = np.ma.masked_array(value, mask=np.ma.getmask(value))
+                        if self.vmin is not None and self.vmax is not None and self.vmax > self.vmin:
+                            sqrt_vmin = np.sqrt(self.vmin)
+                            sqrt_vmax = np.sqrt(self.vmax)
+                            result = (np.sqrt(result) - sqrt_vmin) / (sqrt_vmax - sqrt_vmin)
+                            result = np.clip(result, 0, 1)
+                        return result
+                
+                # Create ScalarMappable for colorbar
+                norm = SqrtNormalize(vmin=vmin, vmax=vmax)
+                sm = ScalarMappable(norm=norm, cmap=cmap)
+                sm.set_array([])
+                
+                # Add colorbar
+                cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
+                                   pad=0.02, shrink=0.6, aspect=20)
+                cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                cbar.ax.tick_params(labelsize=9)
     except Exception as e:
         print(f"Warning: Could not load hazard raster: {e}")
         # Continue without hazard layer
