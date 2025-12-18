@@ -26,6 +26,10 @@ _analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analy
 # This allows threshold changes without re-sampling the raster
 _raster_values_cache: Dict[Tuple[str, str], any] = {}
 
+# Cache for full analysis results: (file_id, hazard_id, threshold) -> full analysis result
+# This allows export to use pre-computed results without recalculation
+_analysis_results_cache: Dict[Tuple[str, str, Optional[float]], dict] = {}
+
 
 def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[any]:
     """Get cached raster values if available."""
@@ -42,6 +46,21 @@ def clear_raster_cache_for_file(file_id: str):
     keys_to_remove = [k for k in _raster_values_cache if k[0] == file_id]
     for key in keys_to_remove:
         del _raster_values_cache[key]
+    
+    # Also clear analysis results cache
+    keys_to_remove = [k for k in _analysis_results_cache if k[0] == file_id]
+    for key in keys_to_remove:
+        del _analysis_results_cache[key]
+
+
+def get_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float]) -> Optional[dict]:
+    """Get cached analysis result if available."""
+    return _analysis_results_cache.get((file_id, hazard_id, threshold))
+
+
+def set_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float], result: dict):
+    """Cache full analysis result."""
+    _analysis_results_cache[(file_id, hazard_id, threshold)] = result
 
 
 class AnalyzeRequest(BaseModel):
@@ -102,6 +121,9 @@ async def analyze_intersections(request: AnalyzeRequest):
                     "line_data": analysis_result["line_data"],
                     "raster_values": analysis_result["raster_values"]
                 })
+        
+        # Cache full analysis result for export endpoints
+        set_cached_analysis_result(request.file_id, request.hazard_id, request.intensity_threshold, analysis_result)
         
         # Build response - ensure no NaN values
         def safe_float(value):

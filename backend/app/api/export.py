@@ -13,12 +13,11 @@ matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import seaborn as sns
 import geopandas as gpd
-import xarray as xr
 import numpy as np
 
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
-from app.api.analyze import get_cached_raster_values
+from app.api.analyze import get_cached_raster_values, get_cached_analysis_result
 from app.utils.geospatial import analyze_intersection
 
 router = APIRouter()
@@ -154,49 +153,70 @@ def generate_map_png(
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
     
-    # Load and clip hazard raster
+    # Load and clip hazard raster using rasterio (much faster than xarray)
     try:
-        hazard_map = xr.open_dataset(hazard_raster_path, engine="rasterio")
-        hazard_clipped = hazard_map.rio.clip_box(
-            minx=bbox[0],
-            miny=bbox[1],
-            maxx=bbox[2],
-            maxy=bbox[3]
-        )
+        import rasterio
+        from rasterio.windows import from_bounds, bounds as window_bounds
         
-        # Get hazard data
-        hazard_data = hazard_clipped.band_data.values[0]
-        extent = [
-            hazard_clipped.x.values.min(),
-            hazard_clipped.x.values.max(),
-            hazard_clipped.y.values.min(),
-            hazard_clipped.y.values.max()
-        ]
-        
-        # Apply colormap
-        import matplotlib.cm as cm
-        cmap = cm.get_cmap(color_palette)
-        
-        # Normalize data
-        valid_mask = ~np.isnan(hazard_data) & (hazard_data >= 0.0) & (hazard_data < 1e15)
-        if np.any(valid_mask):
-            vmin = np.nanmin(hazard_data[valid_mask])
-            vmax = np.nanmax(hazard_data[valid_mask])
-            if vmax > vmin:
-                normalized = (np.sqrt(hazard_data) - np.sqrt(vmin)) / (np.sqrt(vmax) - np.sqrt(vmin))
-                normalized = np.clip(normalized, 0, 1)
+        with rasterio.open(hazard_raster_path) as src:
+            # Create window from bounding box
+            window = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], src.transform)
+            
+            # Downsample to reasonable resolution for visualization (max 2000x2000)
+            # Calculate target resolution based on window size
+            window_height = window.height
+            window_width = window.width
+            
+            # Target max dimension
+            max_dim = 2000
+            if window_height > max_dim or window_width > max_dim:
+                scale = max(window_height, window_width) / max_dim
+                out_shape = (int(window_height / scale), int(window_width / scale))
             else:
-                normalized = np.zeros_like(hazard_data, dtype=np.float32)
-            normalized[~valid_mask] = np.nan
+                out_shape = (int(window_height), int(window_width))
+            
+            # Read only the windowed, downsampled data
+            hazard_data = src.read(1, window=window, out_shape=out_shape, boundless=True, fill_value=np.nan)
+            
+            # Get transform for the downsampled window
+            window_transform = src.window_transform(window)
+            
+            # Calculate extent from window bounds (more reliable than transform calculation)
+            # Get the actual bounds of the window
+            win_bounds = window_bounds(window, src.transform)
+            extent = [
+                win_bounds[0],  # minx
+                win_bounds[2],  # maxx
+                win_bounds[1],  # miny
+                win_bounds[3]   # maxy
+            ]
             
             # Apply colormap
-            colored = cmap(normalized)
-            colored_uint8 = (colored[:, :, :3] * 255).astype(np.uint8)
+            import matplotlib.cm as cm
+            cmap = cm.get_cmap(color_palette)
             
-            # Plot hazard raster
-            im = ax.imshow(colored_uint8, extent=extent, 
-                          alpha=hazard_opacity, interpolation='bilinear', 
-                          aspect='auto', origin='upper', zorder=1)
+            # Normalize data
+            valid_mask = ~np.isnan(hazard_data) & (hazard_data >= 0.0) & (hazard_data < 1e15)
+            if np.any(valid_mask):
+                vmin = np.nanmin(hazard_data[valid_mask])
+                vmax = np.nanmax(hazard_data[valid_mask])
+                
+                if vmax > vmin:
+                    # Use sqrt normalization like tile service
+                    normalized = (np.sqrt(hazard_data) - np.sqrt(vmin)) / (np.sqrt(vmax) - np.sqrt(vmin))
+                    normalized = np.clip(normalized, 0, 1)
+                else:
+                    normalized = np.zeros_like(hazard_data, dtype=np.float32)
+                normalized[~valid_mask] = np.nan
+                
+                # Apply colormap
+                colored = cmap(normalized)
+                colored_uint8 = (colored[:, :, :3] * 255).astype(np.uint8)
+                
+                # Plot hazard raster
+                im = ax.imshow(colored_uint8, extent=extent, 
+                              alpha=hazard_opacity, interpolation='bilinear', 
+                              aspect='auto', origin='upper', zorder=1)
     except Exception as e:
         print(f"Warning: Could not load hazard raster: {e}")
         # Continue without hazard layer
@@ -279,20 +299,30 @@ async def export_barchart(request: ExportBarchartRequest):
         raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
     
     try:
-        # Perform analysis to get current results
-        cached_values = get_cached_raster_values(request.file_id, request.hazard_id)
-        
-        loop = asyncio.get_event_loop()
-        analysis_result = await loop.run_in_executor(
-            _export_executor,
-            lambda: analyze_intersection(
-                infrastructure_gdf=infrastructure_gdf,
-                hazard_raster_path=hazard_url,
-                geometry_type=geometry_type,
-                intensity_threshold=request.intensity_threshold,
-                cached_raster_values=cached_values
-            )
+        # Since button only appears after analysis completes, we should always have a cached result
+        # Try to find cached result (check with provided threshold first, then try None)
+        cached_analysis = get_cached_analysis_result(
+            request.file_id, 
+            request.hazard_id, 
+            request.intensity_threshold
         )
+        
+        # If not found with threshold, try without threshold (for cases where threshold wasn't used)
+        if cached_analysis is None:
+            cached_analysis = get_cached_analysis_result(
+                request.file_id, 
+                request.hazard_id, 
+                None
+            )
+        
+        if cached_analysis is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No analysis results found. Please run analysis first."
+            )
+        
+        # Use cached result - no recalculation needed!
+        analysis_result = cached_analysis
         
         # Build summary for barchart
         summary = {
@@ -307,6 +337,7 @@ async def export_barchart(request: ExportBarchartRequest):
         title = f"{hazard_name} - Infrastructure Exposure Analysis"
         
         # Generate PNG
+        loop = asyncio.get_event_loop()
         png_bytes = await loop.run_in_executor(
             _export_executor,
             generate_barchart_png,
@@ -356,20 +387,30 @@ async def export_map(request: ExportMapRequest):
         raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
     
     try:
-        # Perform analysis to get infrastructure with affected status
-        cached_values = get_cached_raster_values(request.file_id, request.hazard_id)
-        
-        loop = asyncio.get_event_loop()
-        analysis_result = await loop.run_in_executor(
-            _export_executor,
-            lambda: analyze_intersection(
-                infrastructure_gdf=infrastructure_gdf,
-                hazard_raster_path=hazard_url,
-                geometry_type=geometry_type,
-                intensity_threshold=request.intensity_threshold,
-                cached_raster_values=cached_values
-            )
+        # Since button only appears after analysis completes, we should always have a cached result
+        # Try to find cached result (check with provided threshold first, then try None)
+        cached_analysis = get_cached_analysis_result(
+            request.file_id, 
+            request.hazard_id, 
+            request.intensity_threshold
         )
+        
+        # If not found with threshold, try without threshold (for cases where threshold wasn't used)
+        if cached_analysis is None:
+            cached_analysis = get_cached_analysis_result(
+                request.file_id, 
+                request.hazard_id, 
+                None
+            )
+        
+        if cached_analysis is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No analysis results found. Please run analysis first."
+            )
+        
+        # Use cached result - no recalculation needed!
+        analysis_result = cached_analysis
         
         # Get infrastructure GeoDataFrame with affected status
         if "full_gdf" in analysis_result:
@@ -383,6 +424,7 @@ async def export_map(request: ExportMapRequest):
         title = f"{hazard_name} - Infrastructure Exposure Map"
         
         # Generate PNG
+        loop = asyncio.get_event_loop()
         png_bytes = await loop.run_in_executor(
             _export_executor,
             generate_map_png,
