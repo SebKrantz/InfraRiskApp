@@ -339,7 +339,7 @@ export default function Sidebar({
                       }
                     }}
                     disabled={exportingBarchart || exportingMap}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {exportingBarchart ? (
                       <>
@@ -376,7 +376,7 @@ export default function Sidebar({
                       }
                     }}
                     disabled={exportingBarchart || exportingMap}
-                    className="flex-1 bg-gray-700 hover:bg-gray-600 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 bg-gray-800 border border-gray-700 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {exportingMap ? (
                       <>
