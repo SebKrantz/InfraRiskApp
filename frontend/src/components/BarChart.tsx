@@ -13,9 +13,22 @@ const CustomTooltip = ({ active, payload }: any) => {
     const value = data.value
     const unit = data.unit || ''
     
+    // Format currency for damage cost
+    const formatValue = (val: number) => {
+      if (name === 'Total Damage Cost') {
+        return val.toLocaleString('en-US', { 
+          style: 'currency', 
+          currency: 'USD',
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0
+        })
+      }
+      return val.toLocaleString('en-US') + (unit ? ` ${unit}` : '')
+    }
+    
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
-        <p className="text-white text-sm">{name} : {value.toLocaleString('en-US')}{unit ? ` ${unit}` : ''}</p>
+        <p className="text-white text-sm">{name}: {formatValue(value)}</p>
       </div>
     )
   }
@@ -25,36 +38,47 @@ const CustomTooltip = ({ active, payload }: any) => {
 export default function BarChart({ data }: BarChartProps) {
   const chartData = []
 
-  if (data.geometry_type === 'Point') {
-    chartData.push(
-      {
-        name: 'Affected',
-        value: data.summary.affected_count || 0,
-        fill: '#ef4444',
-        unit: ''
-      },
-      {
-        name: 'Unaffected',
-        value: data.summary.unaffected_count || 0,
-        fill: '#10b981',
-        unit: ''
-      }
-    )
+  // If vulnerability analysis is enabled, show total damage cost
+  if (data.summary.total_damage_cost !== undefined && data.summary.total_damage_cost !== null) {
+    chartData.push({
+      name: 'Total Damage Cost',
+      value: data.summary.total_damage_cost,
+      fill: '#f59e0b',
+      unit: ''
+    })
   } else {
-    chartData.push(
-      {
-        name: 'Affected',
-        value: (data.summary.affected_meters || 0) / 1000,
-        fill: '#ef4444',
-        unit: 'km'
-      },
-      {
-        name: 'Unaffected',
-        value: (data.summary.unaffected_meters || 0) / 1000,
-        fill: '#10b981',
-        unit: 'km'
-      }
-    )
+    // Otherwise show affected/unaffected as before
+    if (data.geometry_type === 'Point') {
+      chartData.push(
+        {
+          name: 'Affected',
+          value: data.summary.affected_count || 0,
+          fill: '#ef4444',
+          unit: ''
+        },
+        {
+          name: 'Unaffected',
+          value: data.summary.unaffected_count || 0,
+          fill: '#10b981',
+          unit: ''
+        }
+      )
+    } else {
+      chartData.push(
+        {
+          name: 'Affected',
+          value: (data.summary.affected_meters || 0) / 1000,
+          fill: '#ef4444',
+          unit: 'km'
+        },
+        {
+          name: 'Unaffected',
+          value: (data.summary.unaffected_meters || 0) / 1000,
+          fill: '#10b981',
+          unit: 'km'
+        }
+      )
+    }
   }
 
   return (
@@ -73,7 +97,19 @@ export default function BarChart({ data }: BarChartProps) {
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af' }}
             label={{ fill: '#9ca3af' }}
-            tickFormatter={(value) => value.toLocaleString('en-US')}
+            tickFormatter={(value) => {
+              // Format as currency if showing damage cost
+              if (chartData.length === 1 && chartData[0].name === 'Total Damage Cost') {
+                return value.toLocaleString('en-US', { 
+                  style: 'currency', 
+                  currency: 'USD',
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0,
+                  notation: 'compact'
+                })
+              }
+              return value.toLocaleString('en-US')
+            }}
           />
           <Tooltip content={<CustomTooltip />} />
           <Bar dataKey="value" />

@@ -29,6 +29,12 @@ interface SidebarProps {
   loadingUpload?: boolean
   loadingAnalysis?: boolean
   error?: string | null
+  vulnerabilityAnalysisEnabled: boolean
+  onVulnerabilityAnalysisEnabledChange: (enabled: boolean) => void
+  vulnerabilityCurveFile: File | null
+  onVulnerabilityCurveFileChange: (file: File | null) => void
+  replacementValue: number | null
+  onReplacementValueChange: (value: number | null) => void
 }
 
 const colorPalettes: ColorPalette[] = ['viridis', 'magma', 'inferno', 'plasma', 'cividis', 'turbo']
@@ -53,11 +59,19 @@ export default function Sidebar({
   loadingUpload = false,
   loadingAnalysis = false,
   error = null,
+  vulnerabilityAnalysisEnabled,
+  onVulnerabilityAnalysisEnabledChange,
+  vulnerabilityCurveFile,
+  onVulnerabilityCurveFileChange,
+  replacementValue,
+  onReplacementValueChange,
 }: SidebarProps) {
   const [infoOpen, setInfoOpen] = useState(false)
   const [uploadInfoOpen, setUploadInfoOpen] = useState(false)
   const [thresholdInfoOpen, setThresholdInfoOpen] = useState(false)
   const [paletteInfoOpen, setPaletteInfoOpen] = useState(false)
+  const [vulnerabilityCurveInfoOpen, setVulnerabilityCurveInfoOpen] = useState(false)
+  const [replacementValueInfoOpen, setReplacementValueInfoOpen] = useState(false)
   const [exportingBarchart, setExportingBarchart] = useState(false)
   const [exportingMap, setExportingMap] = useState(false)
 
@@ -288,6 +302,117 @@ export default function Sidebar({
                   </div>
                 </div>
               )}
+
+              {/* Horizontal Separator */}
+              <hr className="my-4 border-gray-700" />
+
+              {/* Vulnerability Analysis Section */}
+              <div className="mb-5">
+                <div className="flex items-center mb-3">
+                  <input
+                    type="checkbox"
+                    id="vulnerability-analysis"
+                    checked={vulnerabilityAnalysisEnabled}
+                    onChange={(e) => onVulnerabilityAnalysisEnabledChange(e.target.checked)}
+                    disabled={loadingUpload || loadingAnalysis}
+                    className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <label
+                    htmlFor="vulnerability-analysis"
+                    className="ml-2 text-sm font-medium text-gray-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Vulnerability Analysis
+                  </label>
+                </div>
+
+                {vulnerabilityAnalysisEnabled && (
+                  <div className="space-y-4">
+                    {/* Vulnerability Curve Upload */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-medium text-gray-300">
+                          Vulnerability Curve
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setVulnerabilityCurveInfoOpen(true)}
+                          className="h-6 w-6 p-0 text-gray-300 hover:text-white hover:bg-gray-800"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      {vulnerabilityCurveFile ? (
+                        <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs text-gray-300 truncate">
+                                ✓ {vulnerabilityCurveFile.name}
+                              </p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onVulnerabilityCurveFileChange(null)}
+                              disabled={loadingUpload || loadingAnalysis}
+                              className="ml-2 text-xs text-gray-300 bg-gray-700 hover:text-red-500 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Clear
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                          <Input
+                            type="file"
+                            accept=".csv"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) {
+                                onVulnerabilityCurveFileChange(file)
+                              }
+                            }}
+                            disabled={loadingUpload || loadingAnalysis}
+                            className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed [&::file-selector-button]:mr-4"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Replacement Value */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-sm font-medium text-gray-300">
+                          Replacement Value
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setReplacementValueInfoOpen(true)}
+                          className="h-6 w-6 p-0 text-gray-300 hover:text-white hover:bg-gray-800"
+                        >
+                          <Info className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                      <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
+                        <Input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={replacementValue ?? ''}
+                          onChange={(e) => {
+                            const val = e.target.value === '' ? null : parseFloat(e.target.value)
+                            onReplacementValueChange(val)
+                          }}
+                          disabled={loadingUpload || loadingAnalysis}
+                          placeholder="Enter replacement value"
+                          className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300 placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Horizontal Separator */}
@@ -565,7 +690,7 @@ export default function Sidebar({
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">Opacity:</p>
               <p className="text-sm text-gray-600">
-                The opacity percentage controls the transparency of the hazard layer. 
+                The opacity percentage controls the transparency of the hazard layer.
               </p>
               {/* <ul className="text-sm text-gray-600 space-y-1 mt-2 ml-4 list-disc">
                 <li>View the underlying basemap through the hazard layer</li>
@@ -580,6 +705,76 @@ export default function Sidebar({
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
                 <strong>Tip:</strong> Experiment with different palettes and opacity levels to find the best visualization for your analysis. The hazard layer is displayed between the basemap and infrastructure layers.
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vulnerability Curve Info Dialog */}
+      <Dialog open={vulnerabilityCurveInfoOpen} onOpenChange={setVulnerabilityCurveInfoOpen}>
+        <DialogContent onClose={() => setVulnerabilityCurveInfoOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Vulnerability Curve</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm text-gray-700">
+                Upload a CSV file containing a vulnerability curve that defines the relationship between hazard intensity and the proportion of infrastructure destroyed.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">CSV Format:</p>
+              <p className="text-sm text-gray-600">
+                The CSV file must contain exactly two columns:
+              </p>
+              <ul className="text-sm text-gray-600 space-y-1 mt-2 ml-4 list-disc">
+                <li><strong>Column 1:</strong> Hazard intensity (numeric values)</li>
+                <li><strong>Column 2:</strong> Proportion destroyed (numeric values between 0 and 1)</li>
+              </ul>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">How it works:</p>
+              <p className="text-sm text-gray-600">
+                The vulnerability curve is interpolated to calculate the proportion of each infrastructure feature that would be destroyed based on the hazard intensity at that location. This proportion is then multiplied by the replacement value to calculate total damage costs.
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-gray-300">
+              <p className="text-xs text-gray-500">
+                <strong>Note:</strong> The curve is linearly interpolated. Values below the minimum intensity in the curve use the first proportion value, and values above the maximum use the last proportion value.
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Replacement Value Info Dialog */}
+      <Dialog open={replacementValueInfoOpen} onOpenChange={setReplacementValueInfoOpen}>
+        <DialogContent onClose={() => setReplacementValueInfoOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Replacement Value</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm text-gray-700">
+                Enter the monetary cost of replacing the infrastructure asset. This value is unitless and can be in any currency.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">For Point features:</p>
+              <p className="text-sm text-gray-600">
+                The replacement value represents the total cost of the asset. Damage cost is calculated as: <strong>replacement_value × vulnerability</strong>
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">For LineString features:</p>
+              <p className="text-sm text-gray-600">
+                The replacement value represents the cost per meter of the line. Damage cost is calculated as: <strong>replacement_value × vulnerability × length (in meters)</strong>
+              </p>
+            </div>
+            <div className="mt-4 pt-3 border-t border-gray-300">
+              <p className="text-xs text-gray-500">
+                <strong>Tip:</strong> The total damage cost shown in the barchart is the sum of all individual feature damage costs.
               </p>
             </div>
           </div>
