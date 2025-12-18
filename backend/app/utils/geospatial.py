@@ -390,13 +390,9 @@ def analyze_intersection(
             
             # Calculate vulnerability and damage cost if vulnerability analysis is enabled
             total_damage_cost = 0.0
-            total_replacement_value = 0.0
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 vulnerability_values = []
                 damage_cost_values = []
-                
-                # For points, total replacement value = replacement_value * number of points
-                total_replacement_value = replacement_value * len(infrastructure_gdf)
                 
                 for idx, row in infrastructure_gdf.iterrows():
                     exposure = row.get('exposure_level')
@@ -431,7 +427,6 @@ def analyze_intersection(
             
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
-                result["total_replacement_value"] = total_replacement_value
             
             return result
         
@@ -582,16 +577,7 @@ def analyze_intersection(
             affected_length = 0.0
             unaffected_length = 0.0
             total_damage_cost = 0.0
-            total_replacement_value = 0.0
             segment_rows = []
-            
-            # Calculate total original length of all lines for replacement value calculation
-            # This must be done before processing segments to get the full original length
-            total_original_length = 0.0
-            if vulnerability_curve_interp is not None and replacement_value is not None:
-                for ld in line_data:
-                    total_original_length += ld['total_length_m']
-                total_replacement_value = replacement_value * total_original_length
             
             for ld in line_data:
                 row_dict = ld['row_dict']
@@ -715,9 +701,7 @@ def analyze_intersection(
             
             affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
             unaffected_meters = float(unaffected_length) if not np.isnan(unaffected_length) else 0.0
-            
-            # total_replacement_value is already calculated above using total_original_length
-            
+
             result = {
                 "affected_count": 0,
                 "unaffected_count": 0,
@@ -730,7 +714,6 @@ def analyze_intersection(
             
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
-                result["total_replacement_value"] = total_replacement_value
             
             return result
 

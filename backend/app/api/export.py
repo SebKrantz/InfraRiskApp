@@ -71,20 +71,18 @@ def generate_barchart_png(
     
     # Check if vulnerability analysis data is available
     total_damage_cost = analysis_result.get('total_damage_cost')
-    total_replacement_value = analysis_result.get('total_replacement_value')
     
-    if total_damage_cost is not None and total_replacement_value is not None:
-        # Vulnerability analysis mode - show damage cost and remaining value
+    if total_damage_cost is not None:
+        # Vulnerability analysis mode - show damage cost only
         damage_cost = max(0, total_damage_cost)
-        remaining_value = max(0, total_replacement_value - total_damage_cost)
         
         plot_data = pd.DataFrame({
-            'Category': ['Damage', 'Remaining'],
-            'Value': [damage_cost, remaining_value]
+            'Category': ['Damage'],
+            'Value': [damage_cost]
         })
         
         ylabel = 'Value (USD)'
-        palette = ['#f59e0b', '#10b981']  # Orange for damage, green for remaining
+        palette = ['#f59e0b']  # Orange for damage
     else:
         # Standard exposure analysis mode
         if geometry_type == 'Point':
@@ -387,8 +385,7 @@ async def export_barchart(request: ExportBarchartRequest):
             "unaffected_count": analysis_result.get("unaffected_count", 0),
             "affected_meters": analysis_result.get("affected_meters", 0.0),
             "unaffected_meters": analysis_result.get("unaffected_meters", 0.0),
-            "total_damage_cost": analysis_result.get("total_damage_cost"),
-            "total_replacement_value": analysis_result.get("total_replacement_value")
+            "total_damage_cost": analysis_result.get("total_damage_cost")
         }
         
         # Generate title

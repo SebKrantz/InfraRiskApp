@@ -13,9 +13,9 @@ const CustomTooltip = ({ active, payload }: any) => {
     const value = data.value
     const unit = data.unit || ''
     
-    // Format currency for damage cost and remaining value
+    // Format currency for damage cost
     const formatValue = (val: number) => {
-      if (name === 'Damage Cost' || name === 'Remaining Value') {
+      if (name === 'Damage Cost') {
         return val.toLocaleString('en-US', { 
           style: 'currency', 
           currency: 'USD',
@@ -38,25 +38,15 @@ const CustomTooltip = ({ active, payload }: any) => {
 export default function BarChart({ data }: BarChartProps) {
   const chartData = []
 
-  // If vulnerability analysis is enabled, show damage cost and remaining value
+  // If vulnerability analysis is enabled, show damage cost only
   if (data.summary.total_damage_cost !== undefined && data.summary.total_damage_cost !== null) {
     const totalDamageCost = Math.max(0, data.summary.total_damage_cost || 0)
-    const totalReplacementValue = Math.max(0, data.summary.total_replacement_value || 0)
-    const remainingValue = Math.max(0, totalReplacementValue - totalDamageCost)
-    
+
     chartData.push(
       {
-        name: 'Damage Cost', // Full name for tooltip
-        shortName: 'Damage', // Short name for X-axis
+        name: 'Damage Cost',
         value: totalDamageCost,
         fill: '#f59e0b',
-        unit: ''
-      },
-      {
-        name: 'Remaining Value', // Full name for tooltip
-        shortName: 'Remaining', // Short name for X-axis
-        value: remainingValue,
-        fill: '#10b981',
         unit: ''
       }
     )
@@ -101,7 +91,7 @@ export default function BarChart({ data }: BarChartProps) {
         <RechartsBarChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="#9ca3af" vertical={false} />
           <XAxis 
-            dataKey={chartData.length === 2 && chartData[0].shortName ? "shortName" : "name"}
+            dataKey="name"
             stroke="#9ca3af"
             tick={{ fill: '#9ca3af' }}
             label={{ fill: '#9ca3af' }}
@@ -112,8 +102,8 @@ export default function BarChart({ data }: BarChartProps) {
             tick={{ fill: '#9ca3af' }}
             label={{ fill: '#9ca3af' }}
             tickFormatter={(value) => {
-              // Format as currency if showing damage cost or remaining value
-              if (chartData.length === 2 && (chartData[0].name === 'Damage Cost' || chartData[1].name === 'Remaining Value')) {
+              // Format as currency if showing damage cost
+              if (chartData.length === 1 && chartData[0].name === 'Damage Cost') {
                 return value.toLocaleString('en-US', { 
                   style: 'currency', 
                   currency: 'USD',
