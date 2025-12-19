@@ -151,35 +151,42 @@ export default function BarChart({ data }: BarChartProps) {
             label={isVulnerabilityMode ? undefined : { fill: '#9ca3af' }}
             tickLine={false}
           />
-          {/* Left Y axis: damage cost (currency) */}
-          <YAxis 
-            yAxisId="left"
-            stroke="#9ca3af"
-            tick={{ fill: '#9ca3af' }}
-            label={{ fill: '#9ca3af' }}
-            tickFormatter={(value) => {
-              if (isVulnerabilityMode) {
-                return value.toLocaleString('en-US', { 
-                  style: 'currency', 
-                  currency: 'USD',
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 0,
-                  notation: 'compact'
-                })
-              }
-              return value.toLocaleString('en-US')
-            }}
-          />
-          {/* Right Y axis: percentages for exposure and vulnerability */}
-          {isVulnerabilityMode && (
-            <YAxis
-              yAxisId="right"
-              orientation="right"
+          {/* Y axis: conditional based on mode */}
+          {isVulnerabilityMode ? (
+            <>
+              {/* Left Y axis: damage cost (currency) */}
+              <YAxis 
+                yAxisId="left"
+                stroke="#9ca3af"
+                tick={{ fill: '#9ca3af' }}
+                label={{ fill: '#9ca3af' }}
+                tickFormatter={(value) => {
+                  return value.toLocaleString('en-US', { 
+                    style: 'currency', 
+                    currency: 'USD',
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                    notation: 'compact'
+                  })
+                }}
+              />
+              {/* Right Y axis: percentages for exposure and vulnerability */}
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                stroke="#9ca3af"
+                tick={{ fill: '#9ca3af' }}
+                label={{ fill: '#9ca3af' }}
+                tickFormatter={(value) => `${value.toFixed(0)}%`}
+                domain={[0, 100]}
+              />
+            </>
+          ) : (
+            <YAxis 
               stroke="#9ca3af"
               tick={{ fill: '#9ca3af' }}
               label={{ fill: '#9ca3af' }}
-              tickFormatter={(value) => `${value.toFixed(0)}%`}
-              domain={[0, 100]}
+              tickFormatter={(value) => value.toLocaleString('en-US')}
             />
           )}
           <Tooltip content={<CustomTooltip />} />
