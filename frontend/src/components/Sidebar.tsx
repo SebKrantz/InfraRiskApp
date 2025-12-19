@@ -72,6 +72,7 @@ export default function Sidebar({
   const [paletteInfoOpen, setPaletteInfoOpen] = useState(false)
   const [vulnerabilityCurveInfoOpen, setVulnerabilityCurveInfoOpen] = useState(false)
   const [replacementValueInfoOpen, setReplacementValueInfoOpen] = useState(false)
+  const [vulnerabilityAnalysisInfoOpen, setVulnerabilityAnalysisInfoOpen] = useState(false)
   const [analysisResultsInfoOpen, setAnalysisResultsInfoOpen] = useState(false)
   const [exportingBarchart, setExportingBarchart] = useState(false)
   const [exportingMap, setExportingMap] = useState(false)
@@ -309,21 +310,31 @@ export default function Sidebar({
 
               {/* Vulnerability Analysis Section */}
               <div className="mb-2">
-                <div className="flex items-center mb-3">
-                  <input
-                    type="checkbox"
-                    id="vulnerability-analysis"
-                    checked={vulnerabilityAnalysisEnabled}
-                    onChange={(e) => onVulnerabilityAnalysisEnabledChange(e.target.checked)}
-                    disabled={loadingUpload || loadingAnalysis}
-                    className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  />
-                  <label
-                    htmlFor="vulnerability-analysis"
-                    className="ml-2 text-sm font-medium text-gray-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="vulnerability-analysis"
+                      checked={vulnerabilityAnalysisEnabled}
+                      onChange={(e) => onVulnerabilityAnalysisEnabledChange(e.target.checked)}
+                      disabled={loadingUpload || loadingAnalysis}
+                      className="w-4 h-4 text-blue-600 bg-gray-700 border-gray-600 rounded focus:ring-blue-500 focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <label
+                      htmlFor="vulnerability-analysis"
+                      className="ml-2 text-sm font-medium text-gray-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Vulnerability Analysis
+                    </label>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setVulnerabilityAnalysisInfoOpen(true)}
+                    className="h-6 w-6 p-0 text-gray-300 hover:text-white hover:bg-gray-800"
                   >
-                    Vulnerability Analysis
-                  </label>
+                    <Info className="h-3.5 w-3.5" />
+                  </Button>
                 </div>
 
                 {vulnerabilityAnalysisEnabled && (
@@ -786,6 +797,41 @@ export default function Sidebar({
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
                 <strong>Tip:</strong> The total damage cost shown in the barchart is the sum of all individual feature damage costs.
+              </p>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Vulnerability Analysis Info Dialog */}
+      <Dialog open={vulnerabilityAnalysisInfoOpen} onOpenChange={setVulnerabilityAnalysisInfoOpen}>
+        <DialogContent onClose={() => setVulnerabilityAnalysisInfoOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Vulnerability Analysis</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm text-gray-700">
+                Enable vulnerability analysis to calculate the proportion of infrastructure destroyed based on hazard intensity and estimate total damage costs.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">What it does:</p>
+              <p className="text-sm text-gray-600">
+                When enabled, the analysis applies a vulnerability curve to determine how much of each infrastructure feature would be destroyed at different hazard intensities. Combined with a replacement value, this calculates monetary damage costs.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">Display changes:</p>
+              <ul className="text-sm text-gray-600 space-y-1 ml-4 list-disc">
+                <li><strong>Map viewer:</strong> The map display remains unchanged - infrastructure is still shown as affected (red) or unaffected (green) based on the intensity threshold.</li>
+                <li><strong>Barchart:</strong> Shows damage cost, exposure percentage, and average vulnerability instead of just affected/unaffected counts.</li>
+                <li><strong>Map popups:</strong> When clicking on affected lines or points, popups will display vulnerability (proportion destroyed) and damage cost in addition to exposure information.</li>
+              </ul>
+            </div>
+            <div className="mt-4 pt-3 border-t border-gray-300">
+              <p className="text-xs text-gray-500">
+                <strong>Note:</strong> You must upload a vulnerability curve CSV and enter a replacement value for the analysis to run. The vulnerability curve defines the relationship between hazard intensity and proportion destroyed.
               </p>
             </div>
           </div>
