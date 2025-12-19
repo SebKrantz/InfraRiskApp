@@ -351,10 +351,6 @@ def generate_map_png(
                 transformer.transform(extent_wgs84[1], extent_wgs84[3])[1]   # maxy
             ]
             
-            # Apply colormap
-            import matplotlib.cm as cm
-            cmap = cm.get_cmap(color_palette)
-            
             # Normalize data
             valid_mask = ~np.isnan(hazard_data) & (hazard_data >= 0.0) & (hazard_data < 1e15)
             if np.any(valid_mask):
@@ -369,13 +365,25 @@ def generate_map_png(
                     normalized = np.zeros_like(hazard_data, dtype=np.float32)
                 normalized[~valid_mask] = np.nan
                 
-                # Apply colormap
-                colored = cmap(normalized)
-                colored_uint8 = (colored[:, :, :3] * 255).astype(np.uint8)
+                # Create single-color (blue-ish) overlay with variable transparency
+                # Dark blue color: #1e40af (RGB: 30, 64, 175) - darker blue, clearly different from red and green
+                blue_color = np.array([30, 64, 175]) / 255.0  # Normalize to 0-1
                 
-                # Plot hazard raster
+                # Create RGBA image: blue color with alpha based on normalized hazard
+                # Alpha goes from 0 (transparent) at hazard=0 to full opacity at hazard=max
+                h, w = normalized.shape
+                colored_rgba = np.zeros((h, w, 4), dtype=np.float32)
+                colored_rgba[:, :, 0] = blue_color[0]  # Red channel
+                colored_rgba[:, :, 1] = blue_color[1]  # Green channel
+                colored_rgba[:, :, 2] = blue_color[2]  # Blue channel
+                colored_rgba[:, :, 3] = normalized * hazard_opacity  # Alpha channel (0 to hazard_opacity)
+                
+                # Convert to uint8
+                colored_uint8 = (colored_rgba * 255).astype(np.uint8)
+                
+                # Plot hazard raster with RGBA (includes alpha channel)
                 im = ax.imshow(colored_uint8, extent=extent, 
-                              alpha=hazard_opacity, interpolation='bilinear', 
+                              interpolation='bilinear', 
                               aspect='auto', origin='upper', zorder=1)
                 
                 # Create a ScalarMappable for the colorbar
@@ -398,9 +406,14 @@ def generate_map_png(
                             result = np.clip(result, 0, 1)
                         return result
                 
-                # Create ScalarMappable for colorbar
+                # Create ScalarMappable for colorbar with blue colormap
+                from matplotlib.colors import LinearSegmentedColormap
+                # Create a blue colormap (light to dark blue) for the colorbar
+                blue_colors = ['#dbeafe', '#1e40af']  # Light blue to dark blue
+                blue_cmap = LinearSegmentedColormap.from_list('blue_hazard', blue_colors, N=256)
+                
                 norm = SqrtNormalize(vmin=vmin, vmax=vmax)
-                sm = ScalarMappable(norm=norm, cmap=cmap)
+                sm = ScalarMappable(norm=norm, cmap=blue_cmap)
                 sm.set_array([])
                 
                 # Add colorbar - position depends on vulnerability mode
