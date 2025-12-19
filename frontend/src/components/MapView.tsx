@@ -507,6 +507,8 @@ export default function MapView({
     const exposureLevel = properties['exposure_level']
     const exposureLevelMax = properties['exposure_level_max']
     const exposureLevelAvg = properties['exposure_level_avg']
+    const vulnerability = properties['vulnerability']
+    const damageCost = properties['damage_cost']
     
     // Build list of computed features to display in a single shaded box
     const computedFeatures: Array<{label: string, value: string}> = []
@@ -547,6 +549,28 @@ export default function MapView({
       computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
     }
     
+    // Add vulnerability and damage cost if available
+    if (vulnerability !== undefined && vulnerability !== null) {
+      const formatVulnerability = (value: number): string => {
+        // Format as percentage with 1-2 decimal places
+        const percentage = value * 100
+        return `${percentage.toFixed(percentage < 1 ? 2 : 1)}%`
+      }
+      computedFeatures.push({ label: 'Vulnerability:', value: formatVulnerability(vulnerability) })
+    }
+    
+    if (damageCost !== undefined && damageCost !== null) {
+      const formatDamageCost = (value: number): string => {
+        return value.toLocaleString('en-US', {
+          style: 'currency',
+          currency: 'USD',
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0
+        })
+      }
+      computedFeatures.push({ label: 'Damage Cost:', value: formatDamageCost(damageCost) })
+    }
+    
     // Display all computed features at the top (bold font distinguishes them)
     if (computedFeatures.length > 0) {
       for (let i = 0; i < computedFeatures.length; i++) {
@@ -562,9 +586,9 @@ export default function MapView({
     }
 
     // Sort properties alphabetically
-    // Exclude affected and exposure level properties from the main list since they're shown at the top
+    // Exclude affected, exposure level, vulnerability, and damage_cost properties from the main list since they're shown at the top
     const sortedKeys = Object.keys(properties)
-      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m'].includes(key))
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m', 'vulnerability', 'damage_cost'].includes(key))
       .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {

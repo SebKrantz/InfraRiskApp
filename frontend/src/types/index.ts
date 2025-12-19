@@ -31,9 +31,10 @@ export interface AnalysisResult {
     unaffected_count?: number
     affected_meters?: number
     unaffected_meters?: number
+    total_damage_cost?: number
   }
   affected_features?: any
-  infrastructure_features?: any // Full GeoJSON with affected status
+  infrastructure_features?: any // Full GeoJSON with affected status (includes vulnerability and damage_cost properties)
 }
 
 export type ColorPalette = 'viridis' | 'magma' | 'inferno' | 'plasma' | 'cividis' | 'turbo'

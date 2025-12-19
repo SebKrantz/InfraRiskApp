@@ -7,8 +7,9 @@ import pandas as pd
 import rasterio
 import numpy as np
 from shapely.geometry import Point, LineString
-from typing import Optional
+from typing import Optional, Callable
 from pyproj import Geod
+import csv
 
 def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     """
@@ -172,12 +173,93 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
         return "LineString"
 
 
+def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
+    """
+    Parse a vulnerability curve CSV file and return an interpolation function.
+    
+    CSV format: Two columns (intensity, proportion_destroyed)
+    - First column: hazard intensity
+    - Second column: proportion destroyed (0-1)
+    
+    Args:
+        csv_path: Path to CSV file
+        
+    Returns:
+        Interpolation function that takes intensity and returns proportion destroyed
+    """
+    # Try multiple encodings
+    encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
+    delimiter = ','
+    encoding = 'utf-8'
+    
+    for enc in encodings:
+        try:
+            with open(csv_path, 'r', encoding=enc) as f:
+                first_line = f.readline()
+                sniffer = csv.Sniffer()
+                try:
+                    delimiter = sniffer.sniff(first_line, delimiters=',;').delimiter
+                except:
+                    delimiter = ';' if ';' in first_line else ','
+                encoding = enc
+                break
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+    
+    # Read CSV
+    df = pd.read_csv(csv_path, sep=delimiter, encoding=encoding, header=None)
+    
+    if df.shape[1] < 2:
+        raise ValueError("Vulnerability curve CSV must have at least 2 columns")
+    
+    # Extract intensity and proportion_destroyed (first two columns)
+    intensity = pd.to_numeric(df.iloc[:, 0], errors='coerce')
+    proportion_destroyed = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+    
+    # Remove rows with NaN
+    valid_mask = ~(intensity.isna() | proportion_destroyed.isna())
+    intensity = intensity[valid_mask].values
+    proportion_destroyed = proportion_destroyed[valid_mask].values
+    
+    if len(intensity) == 0:
+        raise ValueError("No valid data rows found in vulnerability curve CSV")
+    
+    # Validate proportion_destroyed is in [0, 1]
+    if (proportion_destroyed < 0).any() or (proportion_destroyed > 1).any():
+        raise ValueError("Proportion destroyed values must be between 0 and 1")
+    
+    # Sort by intensity
+    sort_idx = np.argsort(intensity)
+    intensity = intensity[sort_idx]
+    proportion_destroyed = proportion_destroyed[sort_idx]
+    
+    # Create interpolation function
+    # For values below minimum, return 0 (or first value)
+    # For values above maximum, return 1 (or last value)
+    # For values in range, use linear interpolation
+    def interpolate(intensity_value: float) -> float:
+        if np.isnan(intensity_value):
+            return 0.0
+        
+        if intensity_value <= intensity[0]:
+            return float(proportion_destroyed[0])
+        if intensity_value >= intensity[-1]:
+            return float(proportion_destroyed[-1])
+        
+        # Linear interpolation
+        return float(np.interp(intensity_value, intensity, proportion_destroyed))
+    
+    return interpolate
+
+
 def analyze_intersection(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
     geometry_type: str,
     intensity_threshold: Optional[float] = None,
-    cached_raster_values: Optional[np.ndarray] = None
+    cached_raster_values: Optional[np.ndarray] = None,
+    vulnerability_curve_interp: Optional[Callable[[float], float]] = None,
+    replacement_value: Optional[float] = None
 ) -> dict:
     """
     Analyze intersection between infrastructure and hazard raster
@@ -306,10 +388,35 @@ def analyze_intersection(
             # Mark affected status in GeoDataFrame
             infrastructure_gdf['affected'] = affected_mask
             
+            # Calculate vulnerability and damage cost if vulnerability analysis is enabled
+            total_damage_cost = 0.0
+            if vulnerability_curve_interp is not None and replacement_value is not None:
+                vulnerability_values = []
+                damage_cost_values = []
+                
+                for idx, row in infrastructure_gdf.iterrows():
+                    exposure = row.get('exposure_level')
+                    if exposure is not None and not np.isnan(exposure):
+                        vulnerability = vulnerability_curve_interp(float(exposure))
+                        damage_cost = replacement_value * vulnerability
+                    else:
+                        vulnerability = 0.0
+                        damage_cost = 0.0
+                    
+                    vulnerability_values.append(vulnerability)
+                    damage_cost_values.append(damage_cost)
+                    total_damage_cost += damage_cost
+                
+                infrastructure_gdf['vulnerability'] = vulnerability_values
+                infrastructure_gdf['damage_cost'] = damage_cost_values
+            else:
+                infrastructure_gdf['vulnerability'] = None
+                infrastructure_gdf['damage_cost'] = None
+            
             affected_count = int(affected_mask.sum())
             unaffected_count = len(infrastructure_gdf) - affected_count
             
-            return {
+            result = {
                 "affected_count": affected_count,
                 "unaffected_count": unaffected_count,
                 "affected_meters": 0.0,
@@ -317,6 +424,11 @@ def analyze_intersection(
                 "full_gdf": infrastructure_gdf,  # Return full GDF with affected status
                 "raster_values": raster_values  # Return for caching (threshold changes)
             }
+            
+            if vulnerability_curve_interp is not None and replacement_value is not None:
+                result["total_damage_cost"] = total_damage_cost
+            
+            return result
         
         else:  # LineString
             from rasterio.windows import from_bounds
@@ -464,6 +576,7 @@ def analyze_intersection(
             # Phase 3: Process each line with pre-sampled values (always runs)
             affected_length = 0.0
             unaffected_length = 0.0
+            total_damage_cost = 0.0
             segment_rows = []
             
             for ld in line_data:
@@ -483,7 +596,7 @@ def analyze_intersection(
                 current_affected = point_affected[0]
                 
                 def create_segment(points, indices, affected):
-                    nonlocal affected_length, unaffected_length
+                    nonlocal affected_length, unaffected_length, total_damage_cost
                     if len(points) < 2:
                         return
                     
@@ -493,6 +606,60 @@ def analyze_intersection(
                     segment_vals = [raster_values[j] for j in indices if not np.isnan(raster_values[j])]
                     avg_value = sum(segment_vals) / len(segment_vals) if segment_vals else None
                     max_value = max(segment_vals) if segment_vals else None
+                    
+                    # Calculate distance-weighted average vulnerability for this segment
+                    vulnerability = None
+                    damage_cost = None
+                    if vulnerability_curve_interp is not None and replacement_value is not None:
+                        if segment_vals:
+                            # Calculate distance-weighted average vulnerability
+                            # For each segment between consecutive points, calculate vulnerability
+                            # at the segment midpoint (average of endpoints) and weight by segment length
+                            vulnerability_sum = 0.0
+                            length_sum = 0.0
+                            
+                            for i in range(len(points) - 1):
+                                idx1 = indices[i]
+                                idx2 = indices[i + 1]
+                                
+                                # Get exposure values at both endpoints
+                                val1 = raster_values[idx1] if idx1 < len(raster_values) and not np.isnan(raster_values[idx1]) else None
+                                val2 = raster_values[idx2] if idx2 < len(raster_values) and not np.isnan(raster_values[idx2]) else None
+                                
+                                # Calculate segment length
+                                pt1 = points[i]
+                                pt2 = points[i + 1]
+                                # geod.line_length expects two arrays: lons and lats
+                                # Use the same pattern as elsewhere: *zip(*coords)
+                                seg_len = geod.line_length(*zip(*[pt1, pt2]))
+                                
+                                # Calculate vulnerability for this segment
+                                if val1 is not None and val2 is not None:
+                                    # Average vulnerability of both endpoints
+                                    vuln1 = vulnerability_curve_interp(float(val1))
+                                    vuln2 = vulnerability_curve_interp(float(val2))
+                                    avg_vuln = (vuln1 + vuln2) / 2.0
+                                elif val1 is not None:
+                                    avg_vuln = vulnerability_curve_interp(float(val1))
+                                elif val2 is not None:
+                                    avg_vuln = vulnerability_curve_interp(float(val2))
+                                else:
+                                    avg_vuln = 0.0
+                                
+                                vulnerability_sum += avg_vuln * seg_len
+                                length_sum += seg_len
+                            
+                            if length_sum > 0:
+                                vulnerability = vulnerability_sum / length_sum
+                            else:
+                                vulnerability = 0.0
+                            
+                            # Damage cost = replacement_value (per meter) × vulnerability × length
+                            damage_cost = replacement_value * vulnerability * segment_length_m
+                            total_damage_cost += damage_cost
+                        else:
+                            vulnerability = 0.0
+                            damage_cost = 0.0
                     
                     if affected:
                         affected_length += segment_length_m
@@ -505,6 +672,10 @@ def analyze_intersection(
                     seg_row['affected'] = affected
                     seg_row['exposure_level_avg'] = avg_value
                     seg_row['exposure_level_max'] = max_value
+                    if vulnerability is not None:
+                        seg_row['vulnerability'] = vulnerability
+                    if damage_cost is not None:
+                        seg_row['damage_cost'] = damage_cost
                     segment_rows.append(seg_row)
                 
                 for i in range(1, len(sampled_points)):
@@ -530,8 +701,8 @@ def analyze_intersection(
             
             affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
             unaffected_meters = float(unaffected_length) if not np.isnan(unaffected_length) else 0.0
-            
-            return {
+
+            result = {
                 "affected_count": 0,
                 "unaffected_count": 0,
                 "affected_meters": affected_meters,
@@ -540,4 +711,9 @@ def analyze_intersection(
                 "line_data": line_data,
                 "raster_values": all_raster_values
             }
+            
+            if vulnerability_curve_interp is not None and replacement_value is not None:
+                result["total_damage_cost"] = total_damage_cost
+            
+            return result
 

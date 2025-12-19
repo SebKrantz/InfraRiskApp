@@ -18,6 +18,9 @@ function App() {
   const [loadingUpload, setLoadingUpload] = useState(false)
   const [loadingAnalysis, setLoadingAnalysis] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [vulnerabilityAnalysisEnabled, setVulnerabilityAnalysisEnabled] = useState(false)
+  const [vulnerabilityCurveFile, setVulnerabilityCurveFile] = useState<File | null>(null)
+  const [replacementValue, setReplacementValue] = useState<number | null>(null)
 
   // Fetch hazards on mount
   useEffect(() => {
@@ -79,10 +82,16 @@ function App() {
     setError(null)
   }
 
-  // Perform analysis when hazard or threshold changes
+  // Perform analysis when hazard, threshold, or vulnerability analysis changes
   useEffect(() => {
     if (!uploadedFile || !selectedHazard) {
       setAnalysisResult(null)
+      return
+    }
+
+    // If vulnerability analysis is enabled, require both curve file and replacement value
+    if (vulnerabilityAnalysisEnabled && (!vulnerabilityCurveFile || replacementValue === null)) {
+      // Don't trigger analysis if vulnerability analysis is enabled but missing required fields
       return
     }
 
@@ -99,7 +108,9 @@ function App() {
           uploadedFile.file_id,
           selectedHazard.id,
           selectedHazard.url,
-          threshold
+          threshold,
+          vulnerabilityAnalysisEnabled ? vulnerabilityCurveFile : null,
+          vulnerabilityAnalysisEnabled ? replacementValue : null
         )
         setAnalysisResult(result)
       } catch (err) {
@@ -113,7 +124,7 @@ function App() {
     // Debounce analysis calls
     const timeoutId = setTimeout(performAnalysis, 300)
     return () => clearTimeout(timeoutId)
-  }, [uploadedFile, selectedHazard, intensityThreshold])
+  }, [uploadedFile, selectedHazard, intensityThreshold, vulnerabilityAnalysisEnabled, vulnerabilityCurveFile, replacementValue])
 
   return (
     <div className="flex h-screen w-screen overflow-hidden m-0 p-0">
@@ -137,6 +148,12 @@ function App() {
         loadingUpload={loadingUpload}
         loadingAnalysis={loadingAnalysis}
         error={error}
+        vulnerabilityAnalysisEnabled={vulnerabilityAnalysisEnabled}
+        onVulnerabilityAnalysisEnabledChange={setVulnerabilityAnalysisEnabled}
+        vulnerabilityCurveFile={vulnerabilityCurveFile}
+        onVulnerabilityCurveFileChange={setVulnerabilityCurveFile}
+        replacementValue={replacementValue}
+        onReplacementValueChange={setReplacementValue}
       />
       <MapView
         uploadedFile={uploadedFile}

@@ -49,7 +49,8 @@ class ExportMapRequest(BaseModel):
 def generate_barchart_png(
     analysis_result: dict,
     geometry_type: str,
-    title: str
+    title: str,
+    full_gdf: Optional[gpd.GeoDataFrame] = None
 ) -> bytes:
     """
     Generate PNG barchart from analysis results.
@@ -62,49 +63,157 @@ def generate_barchart_png(
         'Point' or 'LineString'
     title : str
         Chart title
+    full_gdf : GeoDataFrame, optional
+        Full GeoDataFrame with vulnerability and damage_cost properties (for vulnerability mode)
     
     Returns:
     --------
     bytes : PNG image bytes
     """
-    # Calculate summary statistics
-    if geometry_type == 'Point':
-        affected = analysis_result.get('affected_count', 0)
-        unaffected = analysis_result.get('unaffected_count', 0)
-        ylabel = 'Count'
-    else:
-        affected = analysis_result.get('affected_meters', 0)
-        unaffected = analysis_result.get('unaffected_meters', 0)
-        ylabel = 'Length (meters)'
-    
-    # Create DataFrame for plotting
     import pandas as pd
-    plot_data = pd.DataFrame({
-        'Status': ['Affected', 'Unaffected'],
-        'Value': [affected, unaffected]
-    })
     
-    # Create plot
-    fig, ax = plt.subplots(figsize=(6, 5))
-    sns.barplot(data=plot_data, x='Status', y='Value', 
-                palette=['#d62728', '#2ca02c'], ax=ax)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_xlabel('', fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight='bold')
+    # Check if vulnerability analysis data is available
+    total_damage_cost = analysis_result.get('total_damage_cost')
     
-    # Add value labels on bars
-    for i, v in enumerate(plot_data['Value']):
-        ax.text(i, v + max(plot_data['Value']) * 0.01, 
-                f'{v:,.0f}', ha='center', va='bottom', fontsize=11)
-    
-    plt.tight_layout()
-    
-    # Save to bytes buffer
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    
-    return img_buffer.getvalue()
+    if total_damage_cost is not None:
+        # Vulnerability analysis mode - show damage cost (left axis) and exposure/vulnerability (right axis)
+        damage_cost = max(0, total_damage_cost)
+        
+        # Calculate exposure percentage
+        exposure_pct = 0.0
+        if geometry_type == 'Point':
+            affected_count = analysis_result.get('affected_count', 0)
+            total_features = analysis_result.get('total_features', 0)
+            if total_features > 0:
+                exposure_pct = (affected_count / total_features) * 100
+        else:
+            affected_meters = analysis_result.get('affected_meters', 0.0)
+            unaffected_meters = analysis_result.get('unaffected_meters', 0.0)
+            total_meters = affected_meters + unaffected_meters
+            if total_meters > 0:
+                exposure_pct = (affected_meters / total_meters) * 100
+        
+        # Calculate average vulnerability of exposed assets (as percentage)
+        vulnerability_pct = 0.0
+        if full_gdf is not None and 'vulnerability' in full_gdf.columns:
+            if geometry_type == 'Point':
+                # For points: simple average of vulnerability for affected points
+                exposed = full_gdf[full_gdf['affected'] & full_gdf['vulnerability'].notna()]
+                if len(exposed) > 0:
+                    vulnerability_pct = exposed['vulnerability'].mean() * 100
+            else:
+                # For lines: length-weighted average vulnerability of exposed segments
+                exposed = full_gdf[full_gdf['affected'] & full_gdf['vulnerability'].notna()]
+                if len(exposed) > 0 and 'length_m' in exposed.columns:
+                    # Calculate weighted average
+                    exposed = exposed[exposed['length_m'] > 0]
+                    if len(exposed) > 0:
+                        weighted_sum = (exposed['vulnerability'] * exposed['length_m']).sum()
+                        length_sum = exposed['length_m'].sum()
+                        if length_sum > 0:
+                            vulnerability_pct = (weighted_sum / length_sum) * 100
+        
+        # Create dual-axis plot
+        fig, ax1 = plt.subplots(figsize=(6, 5))
+        
+        # Disable gridlines
+        ax1.grid(False)
+        
+        # Left axis: damage cost
+        categories = ['Damage Cost', 'Exposure', 'Vulnerability']
+        damage_values = [damage_cost, 0, 0]
+        pct_values = [0, exposure_pct, vulnerability_pct]
+        
+        x_pos = np.arange(len(categories))
+        width = 0.6
+        
+        # Plot damage cost on left axis
+        bars1 = ax1.bar(x_pos[0], damage_cost, width, color='#f59e0b', alpha=0.8)
+        ax1.set_ylabel('Damage Cost (USD)', fontsize=12, color='#4b5563')
+        ax1.tick_params(axis='y', labelcolor='#4b5563')
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(['Damage', 'Exposure', 'Vulnerability'], fontsize=11, color='#4b5563')
+        ax1.set_title(title, fontsize=14, fontweight='bold')
+        
+        # Set y-axis limits to add margin above damage cost bar
+        ax1.set_ylim(bottom=0, top=damage_cost * 1.15)
+        
+        # Format left axis as currency
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+        
+        # Right axis: percentages
+        ax2 = ax1.twinx()
+        ax2.grid(False)  # Disable gridlines on right axis too
+        bars2 = ax2.bar(x_pos[1], exposure_pct, width, color='#3b82f6', alpha=0.8)
+        bars3 = ax2.bar(x_pos[2], vulnerability_pct, width, color='#10b981', alpha=0.8)
+        ax2.set_ylabel('Percentage (%)', fontsize=12, color='#4b5563')
+        ax2.tick_params(axis='y', labelcolor='#4b5563')
+        ax2.set_ylim(0, 100)
+        
+        # Add value labels on bars
+        # Damage cost
+        ax1.text(x_pos[0], damage_cost + max(damage_cost, 1) * 0.01, 
+                f'${damage_cost:,.0f}', ha='center', va='bottom', fontsize=10, color='#f59e0b')
+        # Exposure
+        ax2.text(x_pos[1], exposure_pct + 1, 
+                f'{exposure_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#3b82f6')
+        # Vulnerability
+        ax2.text(x_pos[2], vulnerability_pct + 1, 
+                f'{vulnerability_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#10b981')
+        
+        plt.tight_layout()
+        
+        # Save to bytes buffer
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        return img_buffer.getvalue()
+    else:
+        # Standard exposure analysis mode
+        if geometry_type == 'Point':
+            affected = analysis_result.get('affected_count', 0)
+            unaffected = analysis_result.get('unaffected_count', 0)
+            ylabel = 'Count'
+        else:
+            affected = analysis_result.get('affected_meters', 0)
+            unaffected = analysis_result.get('unaffected_meters', 0)
+            ylabel = 'Length (meters)'
+        
+        plot_data = pd.DataFrame({
+            'Category': ['Affected', 'Unaffected'],
+            'Value': [affected, unaffected]
+        })
+        
+        palette = ['#d62728', '#2ca02c']  # Red for affected, green for unaffected
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=(6, 5))
+        sns.barplot(data=plot_data, x='Category', y='Value', 
+                    palette=palette, ax=ax)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_xlabel('', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        
+        # Add value labels on bars
+        max_value = max(plot_data['Value'])
+        
+        # Set y-axis limits to add margin above bars
+        ax.set_ylim(bottom=0, top=max_value * 1.15)
+        
+        for i, v in enumerate(plot_data['Value']):
+            label = f'{v:,.0f}'
+            ax.text(i, v + max_value * 0.01, 
+                    label, ha='center', va='bottom', fontsize=11)
+        
+        plt.tight_layout()
+        
+        # Save to bytes buffer
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        return img_buffer.getvalue()
 
 
 def generate_map_png(
@@ -113,7 +222,8 @@ def generate_map_png(
     geometry_type: str,
     title: str,
     color_palette: str = 'turbo',
-    hazard_opacity: float = 0.6
+    hazard_opacity: float = 0.6,
+    is_vulnerability_mode: bool = False
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -140,18 +250,60 @@ def generate_map_png(
     if infrastructure_gdf is None or len(infrastructure_gdf) == 0:
         raise ValueError("No infrastructure data to plot")
     
-    # Ensure infrastructure is in WGS84
+    # Ensure infrastructure is in WGS84 first
     if infrastructure_gdf.crs != 'EPSG:4326':
         infrastructure_gdf = infrastructure_gdf.to_crs('EPSG:4326')
     
-    # Get bounding box from infrastructure
-    bounds = infrastructure_gdf.total_bounds
-    margin = (bounds[2] - bounds[0]) * 0.1
-    bbox = [bounds[0] - margin, bounds[1] - margin, 
-            bounds[2] + margin, bounds[3] + margin]
+    # Get bounding box from infrastructure in WGS84
+    bounds_wgs84 = infrastructure_gdf.total_bounds
+    margin = (bounds_wgs84[2] - bounds_wgs84[0]) * 0.1
+    bbox_wgs84 = [bounds_wgs84[0] - margin, bounds_wgs84[1] - margin, 
+                   bounds_wgs84[2] + margin, bounds_wgs84[3] + margin]
+    
+    # Convert to Web Mercator for basemap and plotting
+    from pyproj import Transformer
+    transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+    bbox_mercator = [
+        transformer.transform(bbox_wgs84[0], bbox_wgs84[1])[0],  # minx
+        transformer.transform(bbox_wgs84[0], bbox_wgs84[1])[1],  # miny
+        transformer.transform(bbox_wgs84[2], bbox_wgs84[3])[0],  # maxx
+        transformer.transform(bbox_wgs84[2], bbox_wgs84[3])[1]   # maxy
+    ]
+    
+    # Convert infrastructure to Web Mercator for plotting
+    infrastructure_mercator = infrastructure_gdf.to_crs('EPSG:3857')
     
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Set extent first so basemap knows the bounds
+    ax.set_xlim(bbox_mercator[0], bbox_mercator[2])
+    ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
+    ax.set_aspect('equal')
+    
+    # Store colorbar position parameters for vulnerability mode (will be set if needed)
+    cbar_params = None
+    
+    # Add basemap (should be at zorder 0, behind everything)
+    try:
+        import contextily as ctx
+        # Add basemap in Web Mercator
+        # Note: contextily will automatically fetch tiles for the current axes extent
+        ctx.add_basemap(
+            ax,
+            crs='EPSG:3857',
+            source=ctx.providers.CartoDB.Positron,  # Light basemap that works well with overlays
+            zoom='auto',  # Automatically determine zoom level
+            zorder=0  # Ensure basemap is behind all other layers
+        )
+    except ImportError:
+        # If contextily is not available, skip basemap
+        print("Warning: contextily not available, skipping basemap")
+    except Exception as e:
+        # If basemap fails for any reason, continue without it
+        import traceback
+        print(f"Warning: Could not add basemap: {e}")
+        traceback.print_exc()
     
     # Load and clip hazard raster using rasterio (much faster than xarray)
     try:
@@ -159,8 +311,8 @@ def generate_map_png(
         from rasterio.windows import from_bounds, bounds as window_bounds
         
         with rasterio.open(hazard_raster_path) as src:
-            # Create window from bounding box
-            window = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], src.transform)
+            # Create window from bounding box (use WGS84 bbox for raster reading)
+            window = from_bounds(bbox_wgs84[0], bbox_wgs84[1], bbox_wgs84[2], bbox_wgs84[3], src.transform)
             
             # Downsample to reasonable resolution for visualization (max 2000x2000)
             # Calculate target resolution based on window size
@@ -182,18 +334,22 @@ def generate_map_png(
             window_transform = src.window_transform(window)
             
             # Calculate extent from window bounds (more reliable than transform calculation)
-            # Get the actual bounds of the window
+            # Get the actual bounds of the window (in raster CRS, likely WGS84)
             win_bounds = window_bounds(window, src.transform)
-            extent = [
+            # Convert extent to Web Mercator for plotting
+            extent_wgs84 = [
                 win_bounds[0],  # minx
                 win_bounds[2],  # maxx
                 win_bounds[1],  # miny
                 win_bounds[3]   # maxy
             ]
-            
-            # Apply colormap
-            import matplotlib.cm as cm
-            cmap = cm.get_cmap(color_palette)
+            # Convert to Web Mercator
+            extent = [
+                transformer.transform(extent_wgs84[0], extent_wgs84[2])[0],  # minx
+                transformer.transform(extent_wgs84[1], extent_wgs84[3])[0],  # maxx
+                transformer.transform(extent_wgs84[0], extent_wgs84[2])[1],  # miny
+                transformer.transform(extent_wgs84[1], extent_wgs84[3])[1]   # maxy
+            ]
             
             # Normalize data
             valid_mask = ~np.isnan(hazard_data) & (hazard_data >= 0.0) & (hazard_data < 1e15)
@@ -209,13 +365,25 @@ def generate_map_png(
                     normalized = np.zeros_like(hazard_data, dtype=np.float32)
                 normalized[~valid_mask] = np.nan
                 
-                # Apply colormap
-                colored = cmap(normalized)
-                colored_uint8 = (colored[:, :, :3] * 255).astype(np.uint8)
+                # Create single-color (blue-ish) overlay with variable transparency
+                # Dark blue color: #1e40af (RGB: 30, 64, 175) - darker blue, clearly different from red and green
+                blue_color = np.array([30, 64, 175]) / 255.0  # Normalize to 0-1
                 
-                # Plot hazard raster
+                # Create RGBA image: blue color with alpha based on normalized hazard
+                # Alpha goes from 0 (transparent) at hazard=0 to full opacity at hazard=max
+                h, w = normalized.shape
+                colored_rgba = np.zeros((h, w, 4), dtype=np.float32)
+                colored_rgba[:, :, 0] = blue_color[0]  # Red channel
+                colored_rgba[:, :, 1] = blue_color[1]  # Green channel
+                colored_rgba[:, :, 2] = blue_color[2]  # Blue channel
+                colored_rgba[:, :, 3] = normalized * hazard_opacity  # Alpha channel (0 to hazard_opacity)
+                
+                # Convert to uint8
+                colored_uint8 = (colored_rgba * 255).astype(np.uint8)
+                
+                # Plot hazard raster with RGBA (includes alpha channel)
                 im = ax.imshow(colored_uint8, extent=extent, 
-                              alpha=hazard_opacity, interpolation='bilinear', 
+                              interpolation='bilinear', 
                               aspect='auto', origin='upper', zorder=1)
                 
                 # Create a ScalarMappable for the colorbar
@@ -238,24 +406,129 @@ def generate_map_png(
                             result = np.clip(result, 0, 1)
                         return result
                 
-                # Create ScalarMappable for colorbar
+                # Create ScalarMappable for colorbar with blue colormap
+                from matplotlib.colors import LinearSegmentedColormap
+                # Create a blue colormap (light to dark blue) for the colorbar
+                blue_colors = ['#dbeafe', '#1e40af']  # Light blue to dark blue
+                blue_cmap = LinearSegmentedColormap.from_list('blue_hazard', blue_colors, N=256)
+                
                 norm = SqrtNormalize(vmin=vmin, vmax=vmax)
-                sm = ScalarMappable(norm=norm, cmap=cmap)
+                sm = ScalarMappable(norm=norm, cmap=blue_cmap)
                 sm.set_array([])
                 
-                # Add colorbar
-                cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
-                                   pad=0.02, shrink=0.6, aspect=20)
-                cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
-                cbar.ax.tick_params(labelsize=9)
+                # Add colorbar - position depends on vulnerability mode
+                if is_vulnerability_mode:
+                    # Position hazard colorbar lower to make room for vulnerability colorbar
+                    # Get the position of the main axes
+                    pos = ax.get_position()
+                    # Calculate shared x position for both colorbars (aligned)
+                    # Zero or negative horizontal spacing to bring colorbars close to plot
+                    cbar_width = 0.015
+                    cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
+                    # Use full vertical space with much larger gap between colorbars
+                    gap = 0.06  # Significantly increased gap between colorbars
+                    cbar_height = (pos.height - gap) / 2  # Each colorbar gets half minus gap
+                    hazard_y = pos.y0
+                    
+                    # Store parameters for vulnerability colorbar to use exact same x position
+                    cbar_params = {
+                        'x': cbar_x,
+                        'width': cbar_width,
+                        'height': cbar_height,
+                        'gap': gap,
+                        'y0': pos.y0,
+                        'y1': pos.y1
+                    }
+                    
+                    cax_hazard = fig.add_axes([cbar_x, hazard_y, cbar_width, cbar_height])
+                    cbar = plt.colorbar(sm, cax=cax_hazard, orientation='vertical')
+                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                    cbar.ax.tick_params(labelsize=9)
+                else:
+                    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
+                                       pad=0.02, shrink=0.6, aspect=20)
+                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                    cbar.ax.tick_params(labelsize=9)
     except Exception as e:
         print(f"Warning: Could not load hazard raster: {e}")
         # Continue without hazard layer
     
-    # Plot infrastructure
-    if 'affected' in infrastructure_gdf.columns:
-        affected_gdf = infrastructure_gdf[infrastructure_gdf['affected']]
-        unaffected_gdf = infrastructure_gdf[~infrastructure_gdf['affected']]
+    # Plot infrastructure (use Web Mercator version)
+    if is_vulnerability_mode and 'vulnerability' in infrastructure_mercator.columns:
+        # Vulnerability mode: color by vulnerability percentage (green to red gradient)
+        # Unaffected segments have vulnerability = 0 (green)
+        all_gdf = infrastructure_mercator.copy()
+        
+        # Set vulnerability to 0 for unaffected segments
+        all_gdf.loc[~all_gdf['affected'], 'vulnerability'] = 0.0
+        
+        # Filter to only features with valid vulnerability values
+        all_gdf = all_gdf[all_gdf['vulnerability'].notna()]
+        
+        # Calculate max vulnerability for scaling (in percentage)
+        if len(all_gdf) > 0:
+            max_vulnerability_pct = all_gdf['vulnerability'].max() * 100
+        else:
+            max_vulnerability_pct = 100  # Default to 100% if no features
+        
+        # Create green to red colormap
+        from matplotlib.colors import LinearSegmentedColormap
+        colors = ['#10b981', '#f59e0b', '#ef4444']  # Green, orange, red
+        n_bins = 100
+        cmap_vuln = LinearSegmentedColormap.from_list('vulnerability', colors, N=n_bins)
+        
+        # Create normalized vulnerability column for coloring
+        all_gdf['vuln_norm'] = (all_gdf['vulnerability'] * 100 / max_vulnerability_pct).clip(0, 1) if max_vulnerability_pct > 0 else 0
+        
+        if geometry_type == 'Point':
+            # Plot all points colored by vulnerability (unaffected = 0 = green)
+            if len(all_gdf) > 0:
+                all_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln, 
+                            markersize=50, marker='o', alpha=0.8,
+                            edgecolor='black', linewidth=0.5, zorder=3,
+                            vmin=0, vmax=1, legend=False)
+        else:
+            # Plot all lines colored by vulnerability (unaffected = 0 = green)
+            if len(all_gdf) > 0:
+                all_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln,
+                            linewidth=2, alpha=0.8, zorder=3,
+                            vmin=0, vmax=1, legend=False)
+        
+        # Add vulnerability colorbar above hazard colorbar
+        from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable
+        norm_vuln = Normalize(vmin=0, vmax=max_vulnerability_pct)
+        sm_vuln = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
+        sm_vuln.set_array([])
+        
+        # Create axes for vulnerability colorbar positioned above hazard colorbar
+        # Use the exact same parameters stored when creating hazard colorbar
+        if cbar_params is not None:
+            # Use stored parameters to ensure perfect alignment
+            vuln_y = cbar_params['y0'] + cbar_params['height'] + cbar_params['gap']
+            cax_vuln = fig.add_axes([
+                cbar_params['x'], 
+                vuln_y, 
+                cbar_params['width'], 
+                cbar_params['height']
+            ])
+        else:
+            # Fallback if parameters weren't set (shouldn't happen in vulnerability mode)
+            pos = ax.get_position()
+            cbar_width = 0.015
+            cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
+            gap = 0.06  # Significantly increased vertical gap
+            cbar_height = (pos.height - gap) / 2
+            vuln_y = pos.y0 + cbar_height + gap
+            cax_vuln = fig.add_axes([cbar_x, vuln_y, cbar_width, cbar_height])
+        cbar_vuln = plt.colorbar(sm_vuln, cax=cax_vuln, orientation='vertical')
+        cbar_vuln.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
+        cbar_vuln.ax.tick_params(labelsize=9)
+        
+    elif 'affected' in infrastructure_mercator.columns:
+        # Standard exposure mode: red for affected, green for unaffected
+        affected_gdf = infrastructure_mercator[infrastructure_mercator['affected']]
+        unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
         
         if geometry_type == 'Point':
             if len(unaffected_gdf) > 0:
@@ -276,19 +549,19 @@ def generate_map_png(
     else:
         # No analysis - plot all in gray
         if geometry_type == 'Point':
-            infrastructure_gdf.plot(ax=ax, color='#6b7280', markersize=50, 
+            infrastructure_mercator.plot(ax=ax, color='#6b7280', markersize=50, 
                                   marker='o', alpha=0.8, 
                                   edgecolor='black', linewidth=0.5, zorder=3)
         else:
-            infrastructure_gdf.plot(ax=ax, color='#6b7280', linewidth=2, 
+            infrastructure_mercator.plot(ax=ax, color='#6b7280', linewidth=2, 
                                   alpha=0.8, zorder=3)
     
-    # Set extent
-    ax.set_xlim(bbox[0], bbox[2])
-    ax.set_ylim(bbox[1], bbox[3])
+    # Set extent in Web Mercator
+    ax.set_xlim(bbox_mercator[0], bbox_mercator[2])
+    ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
     
-    # Add legend if we have affected/unaffected
-    if 'affected' in infrastructure_gdf.columns:
+    # Add legend if we have affected/unaffected (not in vulnerability mode)
+    if 'affected' in infrastructure_mercator.columns and not is_vulnerability_mode:
         ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     
     # Add title
@@ -355,17 +628,27 @@ async def export_barchart(request: ExportBarchartRequest):
         # Use cached result - no recalculation needed!
         analysis_result = cached_analysis
         
-        # Build summary for barchart
+        # Build summary for barchart (include vulnerability data if available)
         summary = {
             "affected_count": analysis_result.get("affected_count", 0),
             "unaffected_count": analysis_result.get("unaffected_count", 0),
             "affected_meters": analysis_result.get("affected_meters", 0.0),
-            "unaffected_meters": analysis_result.get("unaffected_meters", 0.0)
+            "unaffected_meters": analysis_result.get("unaffected_meters", 0.0),
+            "total_damage_cost": analysis_result.get("total_damage_cost"),
+            "total_features": file_info["feature_count"]
         }
+        
+        # Get full_gdf for vulnerability calculations if available
+        full_gdf = None
+        if "full_gdf" in analysis_result:
+            full_gdf = analysis_result["full_gdf"]
         
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
-        title = f"{hazard_name} - Infrastructure Exposure Analysis"
+        if summary.get("total_damage_cost") is not None:
+            title = f"{hazard_name} - Vulnerability Analysis"
+        else:
+            title = f"{hazard_name} - Infrastructure Exposure Analysis"
         
         # Generate PNG
         loop = asyncio.get_event_loop()
@@ -374,7 +657,8 @@ async def export_barchart(request: ExportBarchartRequest):
             generate_barchart_png,
             summary,
             geometry_type,
-            title
+            title,
+            full_gdf
         )
         
         # Generate filename
@@ -450,9 +734,15 @@ async def export_map(request: ExportMapRequest):
             display_gdf = infrastructure_gdf.copy()
             display_gdf['affected'] = False
         
+        # Check if vulnerability analysis mode
+        is_vulnerability_mode = analysis_result.get("total_damage_cost") is not None
+        
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
-        title = f"{hazard_name} - Infrastructure Exposure Map"
+        if is_vulnerability_mode:
+            title = f"{hazard_name} - Vulnerability Analysis Map"
+        else:
+            title = f"{hazard_name} - Infrastructure Exposure Map"
         
         # Generate PNG
         loop = asyncio.get_event_loop()
@@ -464,7 +754,8 @@ async def export_map(request: ExportMapRequest):
             geometry_type,
             title,
             request.color_palette,
-            request.hazard_opacity
+            request.hazard_opacity,
+            is_vulnerability_mode
         )
         
         # Generate filename

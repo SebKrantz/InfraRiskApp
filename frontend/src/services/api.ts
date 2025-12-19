@@ -56,19 +56,46 @@ export async function analyze(
   fileId: string,
   hazardId: string,
   hazardUrl: string,
-  intensityThreshold?: number
+  intensityThreshold?: number,
+  vulnerabilityCurveFile?: File | null,
+  replacementValue?: number | null
 ): Promise<AnalysisResult> {
-  const response = await fetch(`${API_BASE_URL}/analyze`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  // Use FormData if we have a vulnerability curve file, otherwise use JSON
+  const hasVulnerabilityData = vulnerabilityCurveFile !== null && vulnerabilityCurveFile !== undefined
+  
+  let body: FormData | string
+  let headers: HeadersInit
+  
+  if (hasVulnerabilityData) {
+    const formData = new FormData()
+    formData.append('file_id', fileId)
+    formData.append('hazard_id', hazardId)
+    formData.append('hazard_url', hazardUrl)
+    if (intensityThreshold !== undefined) {
+      formData.append('intensity_threshold', intensityThreshold.toString())
+    }
+    formData.append('vulnerability_curve_file', vulnerabilityCurveFile)
+    if (replacementValue !== null && replacementValue !== undefined) {
+      formData.append('replacement_value', replacementValue.toString())
+    }
+    body = formData
+    headers = {} // Let browser set Content-Type with boundary for FormData
+  } else {
+    body = JSON.stringify({
       file_id: fileId,
       hazard_id: hazardId,
       hazard_url: hazardUrl,
       intensity_threshold: intensityThreshold,
-    }),
+    })
+    headers = {
+      'Content-Type': 'application/json',
+    }
+  }
+
+  const response = await fetch(`${API_BASE_URL}/analyze`, {
+    method: 'POST',
+    headers,
+    body,
   })
 
   if (!response.ok) {
