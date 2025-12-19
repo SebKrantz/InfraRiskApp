@@ -49,7 +49,8 @@ class ExportMapRequest(BaseModel):
 def generate_barchart_png(
     analysis_result: dict,
     geometry_type: str,
-    title: str
+    title: str,
+    full_gdf: Optional[gpd.GeoDataFrame] = None
 ) -> bytes:
     """
     Generate PNG barchart from analysis results.
@@ -62,6 +63,8 @@ def generate_barchart_png(
         'Point' or 'LineString'
     title : str
         Chart title
+    full_gdf : GeoDataFrame, optional
+        Full GeoDataFrame with vulnerability and damage_cost properties (for vulnerability mode)
     
     Returns:
     --------
@@ -73,16 +76,99 @@ def generate_barchart_png(
     total_damage_cost = analysis_result.get('total_damage_cost')
     
     if total_damage_cost is not None:
-        # Vulnerability analysis mode - show damage cost only
+        # Vulnerability analysis mode - show damage cost (left axis) and exposure/vulnerability (right axis)
         damage_cost = max(0, total_damage_cost)
         
-        plot_data = pd.DataFrame({
-            'Category': ['Damage'],
-            'Value': [damage_cost]
-        })
+        # Calculate exposure percentage
+        exposure_pct = 0.0
+        if geometry_type == 'Point':
+            affected_count = analysis_result.get('affected_count', 0)
+            total_features = analysis_result.get('total_features', 0)
+            if total_features > 0:
+                exposure_pct = (affected_count / total_features) * 100
+        else:
+            affected_meters = analysis_result.get('affected_meters', 0.0)
+            unaffected_meters = analysis_result.get('unaffected_meters', 0.0)
+            total_meters = affected_meters + unaffected_meters
+            if total_meters > 0:
+                exposure_pct = (affected_meters / total_meters) * 100
         
-        ylabel = 'Value (USD)'
-        palette = ['#f59e0b']  # Orange for damage
+        # Calculate average vulnerability of exposed assets (as percentage)
+        vulnerability_pct = 0.0
+        if full_gdf is not None and 'vulnerability' in full_gdf.columns:
+            if geometry_type == 'Point':
+                # For points: simple average of vulnerability for affected points
+                exposed = full_gdf[full_gdf['affected'] & full_gdf['vulnerability'].notna()]
+                if len(exposed) > 0:
+                    vulnerability_pct = exposed['vulnerability'].mean() * 100
+            else:
+                # For lines: length-weighted average vulnerability of exposed segments
+                exposed = full_gdf[full_gdf['affected'] & full_gdf['vulnerability'].notna()]
+                if len(exposed) > 0 and 'length_m' in exposed.columns:
+                    # Calculate weighted average
+                    exposed = exposed[exposed['length_m'] > 0]
+                    if len(exposed) > 0:
+                        weighted_sum = (exposed['vulnerability'] * exposed['length_m']).sum()
+                        length_sum = exposed['length_m'].sum()
+                        if length_sum > 0:
+                            vulnerability_pct = (weighted_sum / length_sum) * 100
+        
+        # Create dual-axis plot
+        fig, ax1 = plt.subplots(figsize=(6, 5))
+        
+        # Disable gridlines
+        ax1.grid(False)
+        
+        # Left axis: damage cost
+        categories = ['Damage Cost', 'Exposure', 'Vulnerability']
+        damage_values = [damage_cost, 0, 0]
+        pct_values = [0, exposure_pct, vulnerability_pct]
+        
+        x_pos = np.arange(len(categories))
+        width = 0.6
+        
+        # Plot damage cost on left axis
+        bars1 = ax1.bar(x_pos[0], damage_cost, width, color='#f59e0b', alpha=0.8)
+        ax1.set_ylabel('Damage Cost (USD)', fontsize=12, color='#4b5563')
+        ax1.tick_params(axis='y', labelcolor='#4b5563')
+        ax1.set_xticks(x_pos)
+        ax1.set_xticklabels(['Damage', 'Exposure', 'Vulnerability'], fontsize=11, color='#4b5563')
+        ax1.set_title(title, fontsize=14, fontweight='bold')
+        
+        # Set y-axis limits to add margin above damage cost bar
+        ax1.set_ylim(bottom=0, top=damage_cost * 1.15)
+        
+        # Format left axis as currency
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
+        
+        # Right axis: percentages
+        ax2 = ax1.twinx()
+        ax2.grid(False)  # Disable gridlines on right axis too
+        bars2 = ax2.bar(x_pos[1], exposure_pct, width, color='#3b82f6', alpha=0.8)
+        bars3 = ax2.bar(x_pos[2], vulnerability_pct, width, color='#10b981', alpha=0.8)
+        ax2.set_ylabel('Percentage (%)', fontsize=12, color='#4b5563')
+        ax2.tick_params(axis='y', labelcolor='#4b5563')
+        ax2.set_ylim(0, 100)
+        
+        # Add value labels on bars
+        # Damage cost
+        ax1.text(x_pos[0], damage_cost + max(damage_cost, 1) * 0.01, 
+                f'${damage_cost:,.0f}', ha='center', va='bottom', fontsize=10, color='#f59e0b')
+        # Exposure
+        ax2.text(x_pos[1], exposure_pct + 1, 
+                f'{exposure_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#3b82f6')
+        # Vulnerability
+        ax2.text(x_pos[2], vulnerability_pct + 1, 
+                f'{vulnerability_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#10b981')
+        
+        plt.tight_layout()
+        
+        # Save to bytes buffer
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        return img_buffer.getvalue()
     else:
         # Standard exposure analysis mode
         if geometry_type == 'Point':
@@ -100,35 +186,30 @@ def generate_barchart_png(
         })
         
         palette = ['#d62728', '#2ca02c']  # Red for affected, green for unaffected
-    
-    # Create plot
-    fig, ax = plt.subplots(figsize=(6, 5))
-    sns.barplot(data=plot_data, x='Category', y='Value', 
-                palette=palette, ax=ax)
-    ax.set_ylabel(ylabel, fontsize=12)
-    ax.set_xlabel('', fontsize=12)
-    ax.set_title(title, fontsize=14, fontweight='bold')
-    
-    # Add value labels on bars
-    max_value = max(plot_data['Value'])
-    for i, v in enumerate(plot_data['Value']):
-        if total_damage_cost is not None:
-            # Format as currency for vulnerability analysis
-            label = f'${v:,.0f}'
-        else:
-            # Format as number for standard analysis
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=(6, 5))
+        sns.barplot(data=plot_data, x='Category', y='Value', 
+                    palette=palette, ax=ax)
+        ax.set_ylabel(ylabel, fontsize=12)
+        ax.set_xlabel('', fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        
+        # Add value labels on bars
+        max_value = max(plot_data['Value'])
+        for i, v in enumerate(plot_data['Value']):
             label = f'{v:,.0f}'
-        ax.text(i, v + max_value * 0.01, 
-                label, ha='center', va='bottom', fontsize=11)
-    
-    plt.tight_layout()
-    
-    # Save to bytes buffer
-    img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    
-    return img_buffer.getvalue()
+            ax.text(i, v + max_value * 0.01, 
+                    label, ha='center', va='bottom', fontsize=11)
+        
+        plt.tight_layout()
+        
+        # Save to bytes buffer
+        img_buffer = io.BytesIO()
+        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
+        plt.close(fig)
+        
+        return img_buffer.getvalue()
 
 
 def generate_map_png(
@@ -385,8 +466,14 @@ async def export_barchart(request: ExportBarchartRequest):
             "unaffected_count": analysis_result.get("unaffected_count", 0),
             "affected_meters": analysis_result.get("affected_meters", 0.0),
             "unaffected_meters": analysis_result.get("unaffected_meters", 0.0),
-            "total_damage_cost": analysis_result.get("total_damage_cost")
+            "total_damage_cost": analysis_result.get("total_damage_cost"),
+            "total_features": file_info["feature_count"]
         }
+        
+        # Get full_gdf for vulnerability calculations if available
+        full_gdf = None
+        if "full_gdf" in analysis_result:
+            full_gdf = analysis_result["full_gdf"]
         
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
@@ -402,7 +489,8 @@ async def export_barchart(request: ExportBarchartRequest):
             generate_barchart_png,
             summary,
             geometry_type,
-            title
+            title,
+            full_gdf
         )
         
         # Generate filename
