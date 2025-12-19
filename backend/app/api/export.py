@@ -443,15 +443,20 @@ def generate_map_png(
     # Plot infrastructure (use Web Mercator version)
     if is_vulnerability_mode and 'vulnerability' in infrastructure_mercator.columns:
         # Vulnerability mode: color by vulnerability percentage (green to red gradient)
-        # Unaffected segments in grey
-        unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
-        affected_gdf = infrastructure_mercator[infrastructure_mercator['affected'] & infrastructure_mercator['vulnerability'].notna()]
+        # Unaffected segments have vulnerability = 0 (green)
+        all_gdf = infrastructure_mercator.copy()
+        
+        # Set vulnerability to 0 for unaffected segments
+        all_gdf.loc[~all_gdf['affected'], 'vulnerability'] = 0.0
+        
+        # Filter to only features with valid vulnerability values
+        all_gdf = all_gdf[all_gdf['vulnerability'].notna()]
         
         # Calculate max vulnerability for scaling (in percentage)
-        if len(affected_gdf) > 0:
-            max_vulnerability_pct = affected_gdf['vulnerability'].max() * 100
+        if len(all_gdf) > 0:
+            max_vulnerability_pct = all_gdf['vulnerability'].max() * 100
         else:
-            max_vulnerability_pct = 100  # Default to 100% if no affected features
+            max_vulnerability_pct = 100  # Default to 100% if no features
         
         # Create green to red colormap
         from matplotlib.colors import LinearSegmentedColormap
@@ -460,33 +465,21 @@ def generate_map_png(
         cmap_vuln = LinearSegmentedColormap.from_list('vulnerability', colors, N=n_bins)
         
         # Create normalized vulnerability column for coloring
-        affected_gdf = affected_gdf.copy()
-        affected_gdf['vuln_norm'] = (affected_gdf['vulnerability'] * 100 / max_vulnerability_pct).clip(0, 1) if max_vulnerability_pct > 0 else 0
+        all_gdf['vuln_norm'] = (all_gdf['vulnerability'] * 100 / max_vulnerability_pct).clip(0, 1) if max_vulnerability_pct > 0 else 0
         
         if geometry_type == 'Point':
-            # Plot unaffected points in grey
-            if len(unaffected_gdf) > 0:
-                unaffected_gdf.plot(ax=ax, color='#6b7280', markersize=50, 
-                                  marker='o', alpha=0.8, 
-                                  edgecolor='black', linewidth=0.5, zorder=3)
-            # Plot affected points colored by vulnerability
-            if len(affected_gdf) > 0:
-                # Use column-based coloring
-                affected_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln, 
-                                 markersize=50, marker='o', alpha=0.8,
-                                 edgecolor='black', linewidth=0.5, zorder=3,
-                                 vmin=0, vmax=1, legend=False)
+            # Plot all points colored by vulnerability (unaffected = 0 = green)
+            if len(all_gdf) > 0:
+                all_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln, 
+                            markersize=50, marker='o', alpha=0.8,
+                            edgecolor='black', linewidth=0.5, zorder=3,
+                            vmin=0, vmax=1, legend=False)
         else:
-            # Plot unaffected lines in grey
-            if len(unaffected_gdf) > 0:
-                unaffected_gdf.plot(ax=ax, color='#6b7280', linewidth=2, 
-                                  alpha=0.8, zorder=3)
-            # Plot affected lines colored by vulnerability
-            if len(affected_gdf) > 0:
-                # Use column-based coloring
-                affected_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln,
-                                 linewidth=2, alpha=0.8, zorder=3,
-                                 vmin=0, vmax=1, legend=False)
+            # Plot all lines colored by vulnerability (unaffected = 0 = green)
+            if len(all_gdf) > 0:
+                all_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln,
+                            linewidth=2, alpha=0.8, zorder=3,
+                            vmin=0, vmax=1, legend=False)
         
         # Add vulnerability colorbar above hazard colorbar
         from matplotlib.colors import Normalize
