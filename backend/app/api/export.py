@@ -222,7 +222,8 @@ def generate_map_png(
     geometry_type: str,
     title: str,
     color_palette: str = 'turbo',
-    hazard_opacity: float = 0.6
+    hazard_opacity: float = 0.6,
+    is_vulnerability_mode: bool = False
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -261,6 +262,9 @@ def generate_map_png(
     
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # Store colorbar position parameters for vulnerability mode (will be set if needed)
+    cbar_params = None
     
     # Load and clip hazard raster using rasterio (much faster than xarray)
     try:
@@ -352,17 +356,124 @@ def generate_map_png(
                 sm = ScalarMappable(norm=norm, cmap=cmap)
                 sm.set_array([])
                 
-                # Add colorbar
-                cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
-                                   pad=0.02, shrink=0.6, aspect=20)
-                cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
-                cbar.ax.tick_params(labelsize=9)
+                # Add colorbar - position depends on vulnerability mode
+                if is_vulnerability_mode:
+                    # Position hazard colorbar lower to make room for vulnerability colorbar
+                    # Get the position of the main axes
+                    pos = ax.get_position()
+                    # Calculate shared x position for both colorbars (aligned)
+                    # Zero or negative horizontal spacing to bring colorbars close to plot
+                    cbar_width = 0.015
+                    cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
+                    # Use full vertical space with much larger gap between colorbars
+                    gap = 0.06  # Significantly increased gap between colorbars
+                    cbar_height = (pos.height - gap) / 2  # Each colorbar gets half minus gap
+                    hazard_y = pos.y0
+                    
+                    # Store parameters for vulnerability colorbar to use exact same x position
+                    cbar_params = {
+                        'x': cbar_x,
+                        'width': cbar_width,
+                        'height': cbar_height,
+                        'gap': gap,
+                        'y0': pos.y0,
+                        'y1': pos.y1
+                    }
+                    
+                    cax_hazard = fig.add_axes([cbar_x, hazard_y, cbar_width, cbar_height])
+                    cbar = plt.colorbar(sm, cax=cax_hazard, orientation='vertical')
+                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                    cbar.ax.tick_params(labelsize=9)
+                else:
+                    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
+                                       pad=0.02, shrink=0.6, aspect=20)
+                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                    cbar.ax.tick_params(labelsize=9)
     except Exception as e:
         print(f"Warning: Could not load hazard raster: {e}")
         # Continue without hazard layer
     
     # Plot infrastructure
-    if 'affected' in infrastructure_gdf.columns:
+    if is_vulnerability_mode and 'vulnerability' in infrastructure_gdf.columns:
+        # Vulnerability mode: color by vulnerability percentage (green to red gradient)
+        # Unaffected segments in grey
+        unaffected_gdf = infrastructure_gdf[~infrastructure_gdf['affected']]
+        affected_gdf = infrastructure_gdf[infrastructure_gdf['affected'] & infrastructure_gdf['vulnerability'].notna()]
+        
+        # Calculate max vulnerability for scaling (in percentage)
+        if len(affected_gdf) > 0:
+            max_vulnerability_pct = affected_gdf['vulnerability'].max() * 100
+        else:
+            max_vulnerability_pct = 100  # Default to 100% if no affected features
+        
+        # Create green to red colormap
+        from matplotlib.colors import LinearSegmentedColormap
+        colors = ['#10b981', '#f59e0b', '#ef4444']  # Green, orange, red
+        n_bins = 100
+        cmap_vuln = LinearSegmentedColormap.from_list('vulnerability', colors, N=n_bins)
+        
+        # Create normalized vulnerability column for coloring
+        affected_gdf = affected_gdf.copy()
+        affected_gdf['vuln_norm'] = (affected_gdf['vulnerability'] * 100 / max_vulnerability_pct).clip(0, 1) if max_vulnerability_pct > 0 else 0
+        
+        if geometry_type == 'Point':
+            # Plot unaffected points in grey
+            if len(unaffected_gdf) > 0:
+                unaffected_gdf.plot(ax=ax, color='#6b7280', markersize=50, 
+                                  marker='o', alpha=0.8, 
+                                  edgecolor='black', linewidth=0.5, zorder=3)
+            # Plot affected points colored by vulnerability
+            if len(affected_gdf) > 0:
+                # Use column-based coloring
+                affected_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln, 
+                                 markersize=50, marker='o', alpha=0.8,
+                                 edgecolor='black', linewidth=0.5, zorder=3,
+                                 vmin=0, vmax=1, legend=False)
+        else:
+            # Plot unaffected lines in grey
+            if len(unaffected_gdf) > 0:
+                unaffected_gdf.plot(ax=ax, color='#6b7280', linewidth=2, 
+                                  alpha=0.8, zorder=3)
+            # Plot affected lines colored by vulnerability
+            if len(affected_gdf) > 0:
+                # Use column-based coloring
+                affected_gdf.plot(ax=ax, column='vuln_norm', cmap=cmap_vuln,
+                                 linewidth=2, alpha=0.8, zorder=3,
+                                 vmin=0, vmax=1, legend=False)
+        
+        # Add vulnerability colorbar above hazard colorbar
+        from matplotlib.colors import Normalize
+        from matplotlib.cm import ScalarMappable
+        norm_vuln = Normalize(vmin=0, vmax=max_vulnerability_pct)
+        sm_vuln = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
+        sm_vuln.set_array([])
+        
+        # Create axes for vulnerability colorbar positioned above hazard colorbar
+        # Use the exact same parameters stored when creating hazard colorbar
+        if cbar_params is not None:
+            # Use stored parameters to ensure perfect alignment
+            vuln_y = cbar_params['y0'] + cbar_params['height'] + cbar_params['gap']
+            cax_vuln = fig.add_axes([
+                cbar_params['x'], 
+                vuln_y, 
+                cbar_params['width'], 
+                cbar_params['height']
+            ])
+        else:
+            # Fallback if parameters weren't set (shouldn't happen in vulnerability mode)
+            pos = ax.get_position()
+            cbar_width = 0.015
+            cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
+            gap = 0.06  # Significantly increased vertical gap
+            cbar_height = (pos.height - gap) / 2
+            vuln_y = pos.y0 + cbar_height + gap
+            cax_vuln = fig.add_axes([cbar_x, vuln_y, cbar_width, cbar_height])
+        cbar_vuln = plt.colorbar(sm_vuln, cax=cax_vuln, orientation='vertical')
+        cbar_vuln.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
+        cbar_vuln.ax.tick_params(labelsize=9)
+        
+    elif 'affected' in infrastructure_gdf.columns:
+        # Standard exposure mode: red for affected, green for unaffected
         affected_gdf = infrastructure_gdf[infrastructure_gdf['affected']]
         unaffected_gdf = infrastructure_gdf[~infrastructure_gdf['affected']]
         
@@ -396,8 +507,8 @@ def generate_map_png(
     ax.set_xlim(bbox[0], bbox[2])
     ax.set_ylim(bbox[1], bbox[3])
     
-    # Add legend if we have affected/unaffected
-    if 'affected' in infrastructure_gdf.columns:
+    # Add legend if we have affected/unaffected (not in vulnerability mode)
+    if 'affected' in infrastructure_gdf.columns and not is_vulnerability_mode:
         ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     
     # Add title
@@ -570,9 +681,15 @@ async def export_map(request: ExportMapRequest):
             display_gdf = infrastructure_gdf.copy()
             display_gdf['affected'] = False
         
+        # Check if vulnerability analysis mode
+        is_vulnerability_mode = analysis_result.get("total_damage_cost") is not None
+        
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
-        title = f"{hazard_name} - Infrastructure Exposure Map"
+        if is_vulnerability_mode:
+            title = f"{hazard_name} - Vulnerability Analysis Map"
+        else:
+            title = f"{hazard_name} - Infrastructure Exposure Map"
         
         # Generate PNG
         loop = asyncio.get_event_loop()
@@ -584,7 +701,8 @@ async def export_map(request: ExportMapRequest):
             geometry_type,
             title,
             request.color_palette,
-            request.hazard_opacity
+            request.hazard_opacity,
+            is_vulnerability_mode
         )
         
         # Generate filename
