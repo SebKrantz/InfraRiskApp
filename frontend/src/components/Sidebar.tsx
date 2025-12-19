@@ -309,8 +309,8 @@ export default function Sidebar({
               <hr className="my-4 border-gray-700" />
 
               {/* Vulnerability Analysis Section */}
-              <div className="mb-2">
-                <div className="flex items-center justify-between mb-3">
+              <div className={vulnerabilityAnalysisEnabled ? "mb-2" : "mb-1"}>
+                <div className={`flex items-center justify-between ${vulnerabilityAnalysisEnabled ? "mb-3" : "mb-1"}`}>
                   <div className="flex items-center">
                     <input
                       type="checkbox"
@@ -428,7 +428,7 @@ export default function Sidebar({
             </div>
 
             {/* Horizontal Separator */}
-            <hr className="my-4 border-gray-700" />
+            <hr className={vulnerabilityAnalysisEnabled ? "my-4 border-gray-700" : "my-2 border-gray-700"} />
 
             {/* Bar Chart Section */}
             <div className="flex-shrink-0">
