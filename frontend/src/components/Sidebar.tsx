@@ -72,6 +72,7 @@ export default function Sidebar({
   const [paletteInfoOpen, setPaletteInfoOpen] = useState(false)
   const [vulnerabilityCurveInfoOpen, setVulnerabilityCurveInfoOpen] = useState(false)
   const [replacementValueInfoOpen, setReplacementValueInfoOpen] = useState(false)
+  const [analysisResultsInfoOpen, setAnalysisResultsInfoOpen] = useState(false)
   const [exportingBarchart, setExportingBarchart] = useState(false)
   const [exportingMap, setExportingMap] = useState(false)
 
@@ -420,7 +421,17 @@ export default function Sidebar({
 
             {/* Bar Chart Section */}
             <div className="flex-shrink-0">
-              <h3 className="text-sm font-medium text-gray-300 mb-2">Analysis Results</h3>
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-medium text-gray-300">Analysis Results</h3>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setAnalysisResultsInfoOpen(true)}
+                  className="h-6 w-6 p-0 text-gray-300 hover:text-white hover:bg-gray-800"
+                >
+                  <Info className="h-3.5 w-3.5" />
+                </Button>
+              </div>
               {loadingAnalysis && !analysisResult && (
                 <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800">
                   <div className="text-center">
@@ -777,6 +788,76 @@ export default function Sidebar({
                 <strong>Tip:</strong> The total damage cost shown in the barchart is the sum of all individual feature damage costs.
               </p>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Analysis Results Info Dialog */}
+      <Dialog open={analysisResultsInfoOpen} onOpenChange={setAnalysisResultsInfoOpen}>
+        <DialogContent onClose={() => setAnalysisResultsInfoOpen(false)}>
+          <DialogHeader>
+            <DialogTitle>Analysis Results</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {vulnerabilityAnalysisEnabled && analysisResult?.summary.total_damage_cost !== undefined ? (
+              <>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Vulnerability Analysis Mode</p>
+                  <p className="text-sm text-gray-700">
+                    The barchart displays three metrics:
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Damage Cost (left axis):</p>
+                  <p className="text-sm text-gray-600">
+                    The total monetary cost of damage to infrastructure, calculated by applying the vulnerability curve and replacement value to all affected features.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Exposure (right axis):</p>
+                  <p className="text-sm text-gray-600">
+                    The percentage of infrastructure assets (for points) or meters (for lines) that are exposed to hazards above the intensity threshold.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Vulnerability (right axis):</p>
+                  <p className="text-sm text-gray-600">
+                    The average vulnerability (proportion destroyed) of exposed infrastructure. This is calculated <strong>only across exposed assets</strong> (those above the intensity threshold). For lines, this is a length-weighted average.
+                  </p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-gray-300">
+                  <p className="text-xs text-gray-500">
+                    <strong>Important:</strong> Both exposure and vulnerability calculations depend on the <strong>hazard intensity threshold</strong>. Only infrastructure exposed to hazards above the threshold is considered in these calculations.
+                  </p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Exposure Analysis Mode</p>
+                  <p className="text-sm text-gray-700">
+                    The barchart displays the count (for points) or length in meters (for lines) of infrastructure that is affected vs. unaffected by the hazard.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Affected (red bar):</p>
+                  <p className="text-sm text-gray-600">
+                    Infrastructure exposed to hazard intensities at or above the intensity threshold.
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Unaffected (green bar):</p>
+                  <p className="text-sm text-gray-600">
+                    Infrastructure exposed to hazard intensities below the intensity threshold.
+                  </p>
+                </div>
+                <div className="mt-4 pt-3 border-t border-gray-300">
+                  <p className="text-xs text-gray-500">
+                    <strong>Important:</strong> The classification of infrastructure as affected or unaffected depends entirely on the <strong>hazard intensity threshold</strong>. Adjusting the threshold will change which features are considered exposed.
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>
