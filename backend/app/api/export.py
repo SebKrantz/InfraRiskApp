@@ -197,6 +197,10 @@ def generate_barchart_png(
         
         # Add value labels on bars
         max_value = max(plot_data['Value'])
+        
+        # Set y-axis limits to add margin above bars
+        ax.set_ylim(bottom=0, top=max_value * 1.15)
+        
         for i, v in enumerate(plot_data['Value']):
             label = f'{v:,.0f}'
             ax.text(i, v + max_value * 0.01, 
