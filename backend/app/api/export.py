@@ -250,21 +250,60 @@ def generate_map_png(
     if infrastructure_gdf is None or len(infrastructure_gdf) == 0:
         raise ValueError("No infrastructure data to plot")
     
-    # Ensure infrastructure is in WGS84
+    # Ensure infrastructure is in WGS84 first
     if infrastructure_gdf.crs != 'EPSG:4326':
         infrastructure_gdf = infrastructure_gdf.to_crs('EPSG:4326')
     
-    # Get bounding box from infrastructure
-    bounds = infrastructure_gdf.total_bounds
-    margin = (bounds[2] - bounds[0]) * 0.1
-    bbox = [bounds[0] - margin, bounds[1] - margin, 
-            bounds[2] + margin, bounds[3] + margin]
+    # Get bounding box from infrastructure in WGS84
+    bounds_wgs84 = infrastructure_gdf.total_bounds
+    margin = (bounds_wgs84[2] - bounds_wgs84[0]) * 0.1
+    bbox_wgs84 = [bounds_wgs84[0] - margin, bounds_wgs84[1] - margin, 
+                   bounds_wgs84[2] + margin, bounds_wgs84[3] + margin]
+    
+    # Convert to Web Mercator for basemap and plotting
+    from pyproj import Transformer
+    transformer = Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+    bbox_mercator = [
+        transformer.transform(bbox_wgs84[0], bbox_wgs84[1])[0],  # minx
+        transformer.transform(bbox_wgs84[0], bbox_wgs84[1])[1],  # miny
+        transformer.transform(bbox_wgs84[2], bbox_wgs84[3])[0],  # maxx
+        transformer.transform(bbox_wgs84[2], bbox_wgs84[3])[1]   # maxy
+    ]
+    
+    # Convert infrastructure to Web Mercator for plotting
+    infrastructure_mercator = infrastructure_gdf.to_crs('EPSG:3857')
     
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10))
     
+    # Set extent first so basemap knows the bounds
+    ax.set_xlim(bbox_mercator[0], bbox_mercator[2])
+    ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
+    ax.set_aspect('equal')
+    
     # Store colorbar position parameters for vulnerability mode (will be set if needed)
     cbar_params = None
+    
+    # Add basemap (should be at zorder 0, behind everything)
+    try:
+        import contextily as ctx
+        # Add basemap in Web Mercator
+        # Note: contextily will automatically fetch tiles for the current axes extent
+        ctx.add_basemap(
+            ax,
+            crs='EPSG:3857',
+            source=ctx.providers.CartoDB.Positron,  # Light basemap that works well with overlays
+            zoom='auto',  # Automatically determine zoom level
+            zorder=0  # Ensure basemap is behind all other layers
+        )
+    except ImportError:
+        # If contextily is not available, skip basemap
+        print("Warning: contextily not available, skipping basemap")
+    except Exception as e:
+        # If basemap fails for any reason, continue without it
+        import traceback
+        print(f"Warning: Could not add basemap: {e}")
+        traceback.print_exc()
     
     # Load and clip hazard raster using rasterio (much faster than xarray)
     try:
@@ -272,8 +311,8 @@ def generate_map_png(
         from rasterio.windows import from_bounds, bounds as window_bounds
         
         with rasterio.open(hazard_raster_path) as src:
-            # Create window from bounding box
-            window = from_bounds(bbox[0], bbox[1], bbox[2], bbox[3], src.transform)
+            # Create window from bounding box (use WGS84 bbox for raster reading)
+            window = from_bounds(bbox_wgs84[0], bbox_wgs84[1], bbox_wgs84[2], bbox_wgs84[3], src.transform)
             
             # Downsample to reasonable resolution for visualization (max 2000x2000)
             # Calculate target resolution based on window size
@@ -295,13 +334,21 @@ def generate_map_png(
             window_transform = src.window_transform(window)
             
             # Calculate extent from window bounds (more reliable than transform calculation)
-            # Get the actual bounds of the window
+            # Get the actual bounds of the window (in raster CRS, likely WGS84)
             win_bounds = window_bounds(window, src.transform)
-            extent = [
+            # Convert extent to Web Mercator for plotting
+            extent_wgs84 = [
                 win_bounds[0],  # minx
                 win_bounds[2],  # maxx
                 win_bounds[1],  # miny
                 win_bounds[3]   # maxy
+            ]
+            # Convert to Web Mercator
+            extent = [
+                transformer.transform(extent_wgs84[0], extent_wgs84[2])[0],  # minx
+                transformer.transform(extent_wgs84[1], extent_wgs84[3])[0],  # maxx
+                transformer.transform(extent_wgs84[0], extent_wgs84[2])[1],  # miny
+                transformer.transform(extent_wgs84[1], extent_wgs84[3])[1]   # maxy
             ]
             
             # Apply colormap
@@ -393,12 +440,12 @@ def generate_map_png(
         print(f"Warning: Could not load hazard raster: {e}")
         # Continue without hazard layer
     
-    # Plot infrastructure
-    if is_vulnerability_mode and 'vulnerability' in infrastructure_gdf.columns:
+    # Plot infrastructure (use Web Mercator version)
+    if is_vulnerability_mode and 'vulnerability' in infrastructure_mercator.columns:
         # Vulnerability mode: color by vulnerability percentage (green to red gradient)
         # Unaffected segments in grey
-        unaffected_gdf = infrastructure_gdf[~infrastructure_gdf['affected']]
-        affected_gdf = infrastructure_gdf[infrastructure_gdf['affected'] & infrastructure_gdf['vulnerability'].notna()]
+        unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
+        affected_gdf = infrastructure_mercator[infrastructure_mercator['affected'] & infrastructure_mercator['vulnerability'].notna()]
         
         # Calculate max vulnerability for scaling (in percentage)
         if len(affected_gdf) > 0:
@@ -472,10 +519,10 @@ def generate_map_png(
         cbar_vuln.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
         cbar_vuln.ax.tick_params(labelsize=9)
         
-    elif 'affected' in infrastructure_gdf.columns:
+    elif 'affected' in infrastructure_mercator.columns:
         # Standard exposure mode: red for affected, green for unaffected
-        affected_gdf = infrastructure_gdf[infrastructure_gdf['affected']]
-        unaffected_gdf = infrastructure_gdf[~infrastructure_gdf['affected']]
+        affected_gdf = infrastructure_mercator[infrastructure_mercator['affected']]
+        unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
         
         if geometry_type == 'Point':
             if len(unaffected_gdf) > 0:
@@ -496,19 +543,19 @@ def generate_map_png(
     else:
         # No analysis - plot all in gray
         if geometry_type == 'Point':
-            infrastructure_gdf.plot(ax=ax, color='#6b7280', markersize=50, 
+            infrastructure_mercator.plot(ax=ax, color='#6b7280', markersize=50, 
                                   marker='o', alpha=0.8, 
                                   edgecolor='black', linewidth=0.5, zorder=3)
         else:
-            infrastructure_gdf.plot(ax=ax, color='#6b7280', linewidth=2, 
+            infrastructure_mercator.plot(ax=ax, color='#6b7280', linewidth=2, 
                                   alpha=0.8, zorder=3)
     
-    # Set extent
-    ax.set_xlim(bbox[0], bbox[2])
-    ax.set_ylim(bbox[1], bbox[3])
+    # Set extent in Web Mercator
+    ax.set_xlim(bbox_mercator[0], bbox_mercator[2])
+    ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
     
     # Add legend if we have affected/unaffected (not in vulnerability mode)
-    if 'affected' in infrastructure_gdf.columns and not is_vulnerability_mode:
+    if 'affected' in infrastructure_mercator.columns and not is_vulnerability_mode:
         ax.legend(loc='upper right', framealpha=0.9, fontsize=10)
     
     # Add title
