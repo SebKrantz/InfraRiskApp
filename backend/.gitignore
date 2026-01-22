@@ -29,4 +29,5 @@ data/*.shp
 
 # Logs
 *.log
+.DS_Store
 

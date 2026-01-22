@@ -372,7 +372,17 @@ export default function MapView({
         style: basemapStyles.positron,
         center: [0, 20],
         zoom: 2,
+        attributionControl: false,
       })
+
+      map.current.addControl(
+        new maplibregl.AttributionControl({
+          compact: true,
+          customAttribution:
+            'Created by <a href="https://sebastiankrantz.com/" target="_blank" rel="noopener noreferrer">Sebastian Krantz</a>, funded by the World Bank',
+        }),
+        'bottom-right'
+      )
 
       map.current.on('load', () => {
         console.log('Map loaded successfully')
