@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 import rasterio
 from rasterio.windows import from_bounds
+from rasterio.warp import transform_bounds
+from rasterio.crs import CRS
 import numpy as np
 from PIL import Image
 import matplotlib.cm as cm
@@ -30,6 +32,7 @@ _tile_cache_lock = threading.Lock()
 # Thread-local storage for rasterio datasets (each thread gets its own dataset)
 # This avoids thread-safety issues with shared datasets
 _thread_local = threading.local()
+_WGS84 = CRS.from_epsg(4326)
 
 
 def _get_thread_local_dataset(cog_url: str) -> rasterio.DatasetReader:
@@ -78,21 +81,29 @@ def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None,
 
 
 def _tile_bounds(z: int, x: int, y: int) -> Tuple[float, float, float, float]:
-    """Calculate tile bounds in EPSG:4326."""
+    """Calculate XYZ tile bounds in EPSG:4326."""
     n = 2.0 ** z
-    lon_deg = (x / n) * 360.0 - 180.0
-    lat_rad = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
-    lat_deg = math.degrees(lat_rad)
-    
-    tile_size = 256
-    pixel_size = 360.0 / n / tile_size
-    
-    minx = lon_deg
-    maxx = lon_deg + pixel_size * tile_size
-    miny = lat_deg - pixel_size * tile_size
-    maxy = lat_deg
-    
+    minx = (x / n) * 360.0 - 180.0
+    maxx = ((x + 1) / n) * 360.0 - 180.0
+
+    lat_rad_max = math.atan(math.sinh(math.pi * (1 - 2 * y / n)))
+    lat_rad_min = math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n)))
+    maxy = math.degrees(lat_rad_max)
+    miny = math.degrees(lat_rad_min)
+
     return (minx, miny, maxx, maxy)
+
+
+def _bounds_in_dataset_crs(
+    bounds_wgs84: Tuple[float, float, float, float],
+    src: rasterio.DatasetReader
+) -> Tuple[float, float, float, float]:
+    """Transform EPSG:4326 bounds into dataset CRS if needed."""
+    if src.crs is None:
+        raise ValueError("Raster dataset missing CRS; expected EPSG:4326 or projected CRS.")
+    if src.crs == _WGS84:
+        return bounds_wgs84
+    return transform_bounds(_WGS84, src.crs, *bounds_wgs84, densify_pts=21)
 
 
 def _generate_tile_sync(
@@ -109,11 +120,12 @@ def _generate_tile_sync(
     Returns PNG bytes.
     """
     tile_size = 256
-    bounds = _tile_bounds(z, x, y)
+    bounds_wgs84 = _tile_bounds(z, x, y)
     
     try:
         # Use thread-local dataset to avoid thread-safety issues
         src = _get_thread_local_dataset(cog_url)
+        bounds = _bounds_in_dataset_crs(bounds_wgs84, src)
         window = from_bounds(*bounds, src.transform)
         data = src.read(1, window=window, out_shape=(tile_size, tile_size))
         
@@ -136,6 +148,7 @@ def _generate_tile_sync(
         # Retry with fresh connection
         try:
             src = _get_thread_local_dataset(cog_url)
+            bounds = _bounds_in_dataset_crs(bounds_wgs84, src)
             window = from_bounds(*bounds, src.transform)
             data = src.read(1, window=window, out_shape=(tile_size, tile_size))
             
