@@ -77,6 +77,26 @@ export default function Sidebar({
   const [exportingBarchart, setExportingBarchart] = useState(false)
   const [exportingMap, setExportingMap] = useState(false)
 
+  const sliderExponent = 2
+
+  const clamp = (value: number, min: number, max: number) => {
+    if (value < min) return min
+    if (value > max) return max
+    return value
+  }
+
+  const toSliderValue = (value: number, min: number, max: number) => {
+    if (max <= min) return 0
+    const normalized = (clamp(value, min, max) - min) / (max - min)
+    return Math.pow(normalized, 1 / sliderExponent)
+  }
+
+  const fromSliderValue = (value: number, min: number, max: number) => {
+    if (max <= min) return min
+    const normalized = Math.pow(clamp(value, 0, 1), sliderExponent)
+    return min + normalized * (max - min)
+  }
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -290,11 +310,15 @@ export default function Sidebar({
                   </div>
                   <div className="space-y-1">
                     <Slider
-                      value={intensityThreshold}
-                      onValueChange={onIntensityThresholdChange}
-                      min={hazardStats.min}
-                      max={hazardStats.max}
-                      step={(hazardStats.max - hazardStats.min) / 1000}
+                      value={toSliderValue(intensityThreshold, hazardStats.min, hazardStats.max)}
+                      onValueChange={(value) => {
+                        onIntensityThresholdChange(
+                          fromSliderValue(value, hazardStats.min, hazardStats.max)
+                        )
+                      }}
+                      min={0}
+                      max={1}
+                      step={0.001}
                     />
                     <div className="flex justify-between text-xs text-gray-400">
                       <span>{hazardStats.min.toFixed(2)}</span>
