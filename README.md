@@ -235,6 +235,26 @@ uvicorn main:app --host 0.0.0.0 --port 8000 --workers 1
 
 > **Note**: Use `--workers 1` as the application uses in-memory state for uploaded files and analysis caching. Multi-worker deployment would require Redis or similar for shared state.
 
+### Posit Connect Deployment
+
+Posit Connect supports FastAPI applications and can serve the built React assets from the same app.
+
+1. Build the frontend for Connect (outputs to `backend/static`):
+```bash
+cd frontend
+npm run build:connect
+```
+
+2. Deploy the FastAPI app from the repo root:
+```bash
+rsconnect deploy fastapi -n <saved-server-name> --entrypoint main:app backend/
+```
+
+Notes:
+- Ensure `data/hazard_layers.csv` is present on the server or included in the bundle.
+- Keep `--workers 1` in production unless you add a shared cache (e.g., Redis).
+- See the Posit Connect FastAPI docs for entrypoint details.
+
 ## License
 
 GPL-3

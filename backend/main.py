@@ -4,7 +4,8 @@ FastAPI backend for Hazard-Infrastructure Analyzer
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 from typing import Optional
 
@@ -33,10 +34,18 @@ app.include_router(analyze.router, prefix="/api", tags=["analyze"])
 app.include_router(tiles.router, prefix="/api", tags=["tiles"])
 app.include_router(export.router, prefix="/api", tags=["export"])
 
+STATIC_DIR = settings.BASE_DIR / "backend" / "static"
+ASSETS_DIR = STATIC_DIR / "assets"
 
-@app.get("/")
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+
+@app.get("/", include_in_schema=False)
 async def root():
     """Root endpoint"""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
     return {"message": "Hazard-Infrastructure Analyzer API", "version": "1.0.0"}
 
 
@@ -44,6 +53,13 @@ async def root():
 async def health():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str):
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == "__main__":
