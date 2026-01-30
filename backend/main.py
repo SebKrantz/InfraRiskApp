@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 from typing import Optional
+from pathlib import Path
 
 from app.api import upload, hazards, analyze, tiles, export
 from app.config import settings
@@ -34,7 +35,7 @@ app.include_router(analyze.router, prefix="/api", tags=["analyze"])
 app.include_router(tiles.router, prefix="/api", tags=["tiles"])
 app.include_router(export.router, prefix="/api", tags=["export"])
 
-STATIC_DIR = settings.BASE_DIR / "backend" / "static"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 ASSETS_DIR = STATIC_DIR / "assets"
 
 if ASSETS_DIR.exists():
