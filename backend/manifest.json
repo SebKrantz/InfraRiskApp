@@ -2,11 +2,11 @@
   "version": 1,
   "locale": "en_US.UTF-8",
   "metadata": {
-    "appmode": "python-api",
+    "appmode": "python-fastapi",
     "entrypoint": "main:app"
   },
   "python": {
-    "version": "3.11.9",
+    "version": "3.13.2",
     "package_manager": {
       "name": "pip",
       "version": "25.3",
@@ -75,7 +75,7 @@
       "checksum": "6b8546e56b5490c817a60a431f161264"
     },
     "app/config.py": {
-      "checksum": "eebb3da4d3657983adbff78d63b7437a"
+      "checksum": "216aad91fa95608f37ee42a18f92045e"
     },
     "app/utils/__init__.py": {
       "checksum": "f473a7f6de01bfa43ca75626e6322134"
