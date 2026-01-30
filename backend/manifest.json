@@ -6,11 +6,16 @@
     "entrypoint": "main:app"
   },
   "python": {
-    "version": "3.13.2",
+    "version": "3.11.9",
     "package_manager": {
       "name": "pip",
       "version": "25.3",
       "package_file": "requirements.txt"
+    }
+  },
+  "environment": {
+    "python": {
+      "requires": "==3.11.9"
     }
   },
   "files": {
@@ -18,7 +23,7 @@
       "checksum": "8b2095b8dee5aa949224622a689f39bc"
     },
     ".DS_Store": {
-      "checksum": "56f8f4539764fa66f0258ba4b0e7a3b6"
+      "checksum": "b71b66ba22f40f8172a461aea3a394cf"
     },
     ".gitignore": {
       "checksum": "691bafdf7a1786bab9e514f9fb61ba19"
@@ -27,7 +32,7 @@
       "checksum": "3dfd239ab48b0105dd4aaded7c523f2e"
     },
     "app/.DS_Store": {
-      "checksum": "9a44d739ff74ad842e255bdcff9bcde2"
+      "checksum": "d62324f14ec21711c963b4fb3570ebcd"
     },
     "app/__init__.py": {
       "checksum": "a4336907e313874d186076af26167622"
