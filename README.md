@@ -194,6 +194,8 @@ For detailed API documentation, visit `http://localhost:8000/docs` when the back
 - `HOST`: Server host (default: `0.0.0.0`)
 - `PORT`: Server port (default: `8000`)
 - `DEBUG`: Debug mode (default: `False`)
+- `UPLOAD_DIR`: Upload directory (default: `backend/uploads`)
+- `DATA_DIR`: Data directory (default: `backend/data`)
 
 ### Data Format
 

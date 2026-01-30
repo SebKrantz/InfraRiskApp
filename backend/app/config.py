@@ -15,9 +15,9 @@ class Settings:
     DEBUG: bool = os.getenv("DEBUG", "False").lower() == "true"
     
     # Paths
-    BASE_DIR: Path = Path(__file__).parent.parent.parent
-    UPLOAD_DIR: Path = BASE_DIR / "uploads"
-    DATA_DIR: Path = BASE_DIR / "data"
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent
+    UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "uploads"))
+    DATA_DIR: Path = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
     HAZARD_LAYERS_CSV: Path = DATA_DIR / "hazard_layers.csv"
     
     # Ensure directories exist
