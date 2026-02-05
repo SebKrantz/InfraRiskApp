@@ -34,6 +34,39 @@ _tile_cache_lock = threading.Lock()
 _thread_local = threading.local()
 _WGS84 = CRS.from_epsg(4326)
 
+# Track hazard layer availability: check once per hazard when first tile is requested
+_available_hazard_ids: set = set()
+_unavailable_hazard_ids: set = set()
+_availability_lock = threading.Lock()
+
+
+def _check_hazard_available_sync(cog_url: str, hazard_id: str) -> bool:
+    """
+    Try to open the COG for the selected hazard; return True if available, False otherwise.
+    On failure, print a warning once for this hazard_id and cache the result.
+    """
+    with _availability_lock:
+        if hazard_id in _unavailable_hazard_ids:
+            return False
+        if hazard_id in _available_hazard_ids:
+            return True
+    try:
+        with rasterio.open(cog_url) as src:
+            src.read(1, window=((0, 1), (0, 1)))  # minimal read to confirm access
+    except Exception as e:
+        with _availability_lock:
+            if hazard_id not in _unavailable_hazard_ids:
+                _unavailable_hazard_ids.add(hazard_id)
+                print(
+                    f"Warning: Hazard layer '{hazard_id}' is not available "
+                    f"(dataset_url unreachable or unreadable): {e}",
+                    flush=True,
+                )
+        return False
+    with _availability_lock:
+        _available_hazard_ids.add(hazard_id)
+    return True
+
 
 def _get_thread_local_dataset(cog_url: str) -> rasterio.DatasetReader:
     """
@@ -208,7 +241,21 @@ async def get_tile(
     
     if not cog_url:
         raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
-    
+
+    # Check availability only for the selected hazard, once per hazard (when first tile requested)
+    with _availability_lock:
+        if hazard_id in _unavailable_hazard_ids:
+            return Response(content=_empty_tile(), media_type="image/png")
+    if hazard_id not in _available_hazard_ids:
+        available = await asyncio.get_event_loop().run_in_executor(
+            _tile_executor,
+            _check_hazard_available_sync,
+            cog_url,
+            hazard_id,
+        )
+        if not available:
+            return Response(content=_empty_tile(), media_type="image/png")
+
     # Get cached min/max values for consistent colormap scaling
     stats = get_hazard_stats_cached(hazard_id)
     if stats:
