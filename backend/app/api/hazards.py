@@ -245,37 +245,55 @@ async def get_hazard_stats(hazard_id: str):
         if not cog_url:
             raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
         
-        # Read raster statistics
+        # Read raster statistics; try overview first (fewer tiles), then fallback so broken TIFFs don't 500
+        def _stats_from_data(data: np.ndarray) -> Optional[Tuple[float, float]]:
+            valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
+            valid_data = data if np.all(valid_mask) else data[valid_mask]
+            if len(valid_data) == 0:
+                return None
+            return float(np.min(valid_data)), float(np.max(valid_data))
+
+        last_error: Optional[Exception] = None
         try:
             with rasterio.open(cog_url) as src:
-                # Read a sample to get statistics (for large rasters, use overviews or sampling)
-                # For efficiency, we'll sample or use overviews if available
-                data = src.read(1, out_shape=(1000, 1000)) if src.width > 1000 or src.height > 1000 else src.read(1)
-                
-                # Calculate statistics, ignoring NaN/NoData values
-                valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
-                valid_data = data if np.all(valid_mask) else data[valid_mask]
-                if len(valid_data) == 0:
-                    return JSONResponse(content={
-                        "min": 0,
-                        "max": 0
-                    })
-                
-                min_val = float(np.min(valid_data))
-                max_val = float(np.max(valid_data))
-                
-                # Cache the statistics as a tuple (min, max) for use in tile generation
-                _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
-                
-                return JSONResponse(content={
-                    "min": min_val,
-                    "max": max_val
-                })
+                # 1) Try reading from smallest overview (largest decimation) to avoid bad tiles
+                ov = src.overviews(1)
+                if ov:
+                    decim = max(ov)
+                    h, w = src.height // decim, src.width // decim
+                    if h > 0 and w > 0:
+                        try:
+                            data = src.read(1, out_shape=(h, w))
+                            stats = _stats_from_data(data)
+                            if stats is not None:
+                                min_val, max_val = stats
+                                _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
+                                return JSONResponse(content={"min": min_val, "max": max_val})
+                        except Exception as e:
+                            last_error = e
+                # 2) Try full-resolution sample (1000x1000 or full)
+                try:
+                    data = src.read(1, out_shape=(1000, 1000)) if (src.width > 1000 or src.height > 1000) else src.read(1)
+                    stats = _stats_from_data(data)
+                    if stats is not None:
+                        min_val, max_val = stats
+                        _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
+                        return JSONResponse(content={"min": min_val, "max": max_val})
+                except Exception as e:
+                    last_error = e
         except Exception as e:
-            detail = f"Error reading raster statistics: {e!s}"
-            if e.__cause__:
-                detail += f"; {e.__cause__!s}"
-            raise HTTPException(status_code=500, detail=detail)
+            # open() or directory read failed (e.g. corrupt TIFF directory)
+            last_error = e
+        # 3) Fallback so UI and tiles still load (colormap scale may be wrong)
+        _hazard_stats_cache[hazard_id] = (0.0, 1.0)
+        if last_error is not None:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Raster stats read failed, using fallback min=0 max=1: %s",
+                last_error,
+                exc_info=True,
+            )
+        return JSONResponse(content={"min": 0, "max": 1})
         
     except HTTPException:
         raise
