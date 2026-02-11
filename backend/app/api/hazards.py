@@ -272,10 +272,10 @@ async def get_hazard_stats(hazard_id: str):
                     "max": max_val
                 })
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error reading raster statistics: {str(e)}"
-            )
+            detail = f"Error reading raster statistics: {e!s}"
+            if e.__cause__:
+                detail += f"; {e.__cause__!s}"
+            raise HTTPException(status_code=500, detail=detail)
         
     except HTTPException:
         raise
