@@ -1,6 +1,6 @@
 import { Hazard, UploadedFile, AnalysisResult } from '../types'
 
-const API_BASE_URL = 'api'
+export const API_BASE_URL = 'api'
 
 /**
  * Upload a spatial file

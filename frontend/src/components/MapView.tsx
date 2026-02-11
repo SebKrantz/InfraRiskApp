@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
+import { API_BASE_URL } from '../services/api'
 import { Select } from './ui/select'
 
 interface MapViewProps {
@@ -640,7 +641,7 @@ export default function MapView({
     if (!selHazard) return
     const hazardLayerId = 'hazard-raster-layer'
     const hazardSourceId = 'hazard-raster-source'
-    const tileUrl = `/api/tiles/${selHazard.id}/{z}/{x}/{y}.png?palette=${props.colorPalette}`
+    const tileUrl = `${API_BASE_URL}/tiles/${selHazard.id}/{z}/{x}/{y}.png?palette=${props.colorPalette}`
     removeHazard()
     try {
       map.current.addSource(hazardSourceId, { type: 'raster', tiles: [tileUrl], tileSize: 256 })
@@ -818,7 +819,7 @@ export default function MapView({
         try {
           const hazardSourceId = 'hazard-raster-source'
           const hazardLayerId = 'hazard-raster-layer'
-          const tileUrl = `/api/tiles/${needsRestore.hazardId}/{z}/{x}/{y}.png?palette=${needsRestore.colorPalette}`
+          const tileUrl = `${API_BASE_URL}/tiles/${needsRestore.hazardId}/{z}/{x}/{y}.png?palette=${needsRestore.colorPalette}`
           
           // Remove if exists
           if (map.current.getLayer(hazardLayerId)) {
@@ -1106,7 +1107,7 @@ export default function MapView({
             
             // Update source if palette changed (remove and re-add source)
             const currentTiles = (existingSource as any).tiles
-            const newTileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
+            const newTileUrl = `${API_BASE_URL}/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
             if (currentTiles && currentTiles[0] !== newTileUrl) {
               map.current.removeLayer(hazardLayerId)
               map.current.removeSource(hazardSourceId)
@@ -1157,7 +1158,7 @@ export default function MapView({
         // Add hazard raster layer using backend tile service
         try {
           // Use backend tile endpoint
-          const tileUrl = `/api/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
+          const tileUrl = `${API_BASE_URL}/tiles/${selectedHazard.id}/{z}/{x}/{y}.png?palette=${colorPalette}`
           
           map.current.addSource(hazardSourceId, {
             type: 'raster',
