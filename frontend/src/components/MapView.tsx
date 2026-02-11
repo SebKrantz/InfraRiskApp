@@ -327,11 +327,11 @@ export default function MapView({
   selectedHazard,
   analysisResult,
   colorPalette,
-  intensityThreshold,
+  intensityThreshold: _intensityThreshold,
   hazardOpacity,
   basemap,
   onBasemapChange,
-  loadingAnalysis = false,
+  loadingAnalysis: _loadingAnalysis = false,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
