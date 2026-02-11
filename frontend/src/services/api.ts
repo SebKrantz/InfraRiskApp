@@ -126,7 +126,9 @@ export async function getHazardStats(hazardId: string): Promise<{ min: number; m
   const response = await fetch(`${API_BASE_URL}/hazards/${hazardId}/stats`)
 
   if (!response.ok) {
-    throw new Error('Failed to fetch hazard statistics')
+    const body = await response.json().catch(() => ({}))
+    const detail = typeof body?.detail === 'string' ? body.detail : 'Failed to fetch hazard statistics'
+    throw new Error(detail)
   }
 
   return response.json()

@@ -47,11 +47,10 @@ function App() {
       try {
         const stats = await getHazardStats(selectedHazard.id)
         setHazardStats({ min: stats.min, max: stats.max })
-        // Set threshold to min value initially
         setIntensityThreshold(stats.min)
       } catch (err) {
         console.error('Failed to fetch hazard statistics:', err)
-        // Fallback to default range if stats fail
+        setError(err instanceof Error ? err.message : 'Failed to load hazard layer')
         setHazardStats({ min: 0, max: 100 })
       }
     }

@@ -18,7 +18,12 @@ class Settings:
     BASE_DIR: Path = Path(__file__).resolve().parent.parent
     UPLOAD_DIR: Path = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "uploads"))
     DATA_DIR: Path = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
-    HAZARD_LAYERS_CSV: Path = DATA_DIR / "hazard_layers.csv"
+    # CSV path: allow override for deployment (e.g. Posit) where DATA_DIR may differ
+    HAZARD_LAYERS_CSV: Path = (
+        Path(os.environ["HAZARD_LAYERS_CSV"])
+        if os.getenv("HAZARD_LAYERS_CSV")
+        else DATA_DIR / "hazard_layers.csv"
+    )
     
     # Ensure directories exist
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
