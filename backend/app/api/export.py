@@ -281,8 +281,9 @@ def generate_map_png(
     ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
     ax.set_aspect('equal')
     
-    # Store colorbar position parameters for vulnerability mode (will be set if needed)
-    cbar_params = None
+    # Deferred colorbars for vulnerability mode (drawn after tight_layout for stable positioning)
+    hazard_sm = None
+    vuln_sm = None
     
     # Add basemap (should be at zorder 0, behind everything)
     try:
@@ -416,34 +417,9 @@ def generate_map_png(
                 sm = ScalarMappable(norm=norm, cmap=blue_cmap)
                 sm.set_array([])
                 
-                # Add colorbar - position depends on vulnerability mode
+                # Add colorbar - vulnerability mode defers to after tight_layout
                 if is_vulnerability_mode:
-                    # Position hazard colorbar lower to make room for vulnerability colorbar
-                    # Get the position of the main axes
-                    pos = ax.get_position()
-                    # Calculate shared x position for both colorbars (aligned)
-                    # Zero or negative horizontal spacing to bring colorbars close to plot
-                    cbar_width = 0.015
-                    cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
-                    # Use full vertical space with much larger gap between colorbars
-                    gap = 0.06  # Significantly increased gap between colorbars
-                    cbar_height = (pos.height - gap) / 2  # Each colorbar gets half minus gap
-                    hazard_y = pos.y0
-                    
-                    # Store parameters for vulnerability colorbar to use exact same x position
-                    cbar_params = {
-                        'x': cbar_x,
-                        'width': cbar_width,
-                        'height': cbar_height,
-                        'gap': gap,
-                        'y0': pos.y0,
-                        'y1': pos.y1
-                    }
-                    
-                    cax_hazard = fig.add_axes([cbar_x, hazard_y, cbar_width, cbar_height])
-                    cbar = plt.colorbar(sm, cax=cax_hazard, orientation='vertical')
-                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
-                    cbar.ax.tick_params(labelsize=9)
+                    hazard_sm = sm
                 else:
                     cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
                                        pad=0.02, shrink=0.6, aspect=20)
@@ -494,36 +470,12 @@ def generate_map_png(
                             linewidth=2, alpha=0.8, zorder=3,
                             vmin=0, vmax=1, legend=False)
         
-        # Add vulnerability colorbar above hazard colorbar
+        # Build ScalarMappable for deferred vulnerability colorbar
         from matplotlib.colors import Normalize
         from matplotlib.cm import ScalarMappable
         norm_vuln = Normalize(vmin=0, vmax=max_vulnerability_pct)
-        sm_vuln = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
-        sm_vuln.set_array([])
-        
-        # Create axes for vulnerability colorbar positioned above hazard colorbar
-        # Use the exact same parameters stored when creating hazard colorbar
-        if cbar_params is not None:
-            # Use stored parameters to ensure perfect alignment
-            vuln_y = cbar_params['y0'] + cbar_params['height'] + cbar_params['gap']
-            cax_vuln = fig.add_axes([
-                cbar_params['x'], 
-                vuln_y, 
-                cbar_params['width'], 
-                cbar_params['height']
-            ])
-        else:
-            # Fallback if parameters weren't set (shouldn't happen in vulnerability mode)
-            pos = ax.get_position()
-            cbar_width = 0.015
-            cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
-            gap = 0.06  # Significantly increased vertical gap
-            cbar_height = (pos.height - gap) / 2
-            vuln_y = pos.y0 + cbar_height + gap
-            cax_vuln = fig.add_axes([cbar_x, vuln_y, cbar_width, cbar_height])
-        cbar_vuln = plt.colorbar(sm_vuln, cax=cax_vuln, orientation='vertical')
-        cbar_vuln.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
-        cbar_vuln.ax.tick_params(labelsize=9)
+        vuln_sm = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
+        vuln_sm.set_array([])
         
     elif 'affected' in infrastructure_mercator.columns:
         # Standard exposure mode: red for affected, green for unaffected
@@ -569,6 +521,23 @@ def generate_map_png(
     
     ax.set_axis_off()
     plt.tight_layout()
+    
+    # Draw deferred vulnerability-mode colorbars using the post-tight_layout axes position
+    if is_vulnerability_mode and vuln_sm is not None:
+        pos = ax.get_position()
+        cbar_width = 0.015
+        cbar_x = pos.x1 + 0.01
+        gap = 0.06
+        cbar_height = (pos.height - gap) / 2
+        if hazard_sm is not None:
+            cax_h = fig.add_axes([cbar_x, pos.y0, cbar_width, cbar_height])
+            cb_h = plt.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
+            cb_h.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+            cb_h.ax.tick_params(labelsize=9)
+        cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])
+        cb_v = plt.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
+        cb_v.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
+        cb_v.ax.tick_params(labelsize=9)
     
     # Save to bytes buffer
     img_buffer = io.BytesIO()
