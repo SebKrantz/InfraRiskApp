@@ -6,18 +6,42 @@ interface BarChartProps {
 }
 
 // Custom tooltip component
-const CustomTooltip = ({ active, payload }: any) => {
+interface CustomTooltipProps {
+  active?: boolean
+  payload?: Array<{ name: string; value: number; dataKey: string; payload?: { unit?: string } }>
+  geometryType?: 'Point' | 'LineString'
+  isExposureMode?: boolean
+}
+
+const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
         {payload.map((entry: any, index: number) => {
           const name = entry.name
           const value = entry.value as number
-          
+
+          // Exposure bar (dataKey "value"): point = count only; line = meters
+          if (isExposureMode && geometryType && entry.dataKey === 'value') {
+            if (geometryType === 'Point') {
+              return (
+                <p key={index} className="text-white text-xs">
+                  {value.toLocaleString('en-US')}
+                </p>
+              )
+            }
+            // Line: value is already in km
+            return (
+              <p key={index} className="text-white text-xs">
+                {value.toLocaleString('en-US')} km
+              </p>
+            )
+          }
+
           let formatted: string
           if (name === 'Damage Cost') {
-            formatted = value.toLocaleString('en-US', { 
-              style: 'currency', 
+            formatted = value.toLocaleString('en-US', {
+              style: 'currency',
               currency: 'USD',
               minimumFractionDigits: 0,
               maximumFractionDigits: 0
@@ -27,7 +51,7 @@ const CustomTooltip = ({ active, payload }: any) => {
           } else {
             formatted = value.toLocaleString('en-US')
           }
-          
+
           return (
             <p key={index} className="text-white text-xs">
               {name}: {formatted}
@@ -189,7 +213,14 @@ export default function BarChart({ data }: BarChartProps) {
               tickFormatter={(value) => value.toLocaleString('en-US')}
             />
           )}
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip
+            content={
+              <CustomTooltip
+                geometryType={data.geometry_type}
+                isExposureMode={!isVulnerabilityMode}
+              />
+            }
+          />
           {isVulnerabilityMode ? (
             <>
               <Bar
