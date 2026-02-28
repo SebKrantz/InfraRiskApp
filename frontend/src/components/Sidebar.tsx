@@ -668,7 +668,7 @@ export default function Sidebar({
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
-                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point, LineString, and Polygon/MultiPolygon (converted to centroid points for analysis). Files should be homogeneous (all features of the same type).
+                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point, LineString, and Polygon/MultiPolygon (converted to centroid points for analysis – hazard layers have a resolution of 100m which is too coarse for most buildings). Files should be homogeneous (all features should be of the same type).
               </p>
             </div>
           </div>
