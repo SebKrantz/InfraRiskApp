@@ -146,6 +146,43 @@ def load_spatial_file(file_path: str) -> gpd.GeoDataFrame:
     return gdf
 
 
+def convert_polygons_to_centroids(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Convert Polygon/MultiPolygon geometries to their centroids (Point).
+
+    If the GeoDataFrame contains only Polygon and/or MultiPolygon, replaces
+    the geometry column with centroids so the dataset becomes a point layer.
+    Mixed geometry (e.g. Point + Polygon) is not supported and raises.
+
+    Args:
+        gdf: GeoDataFrame (any CRS; conversion happens before reprojection).
+
+    Returns:
+        GeoDataFrame with Point geometries if input was polygon-only;
+        otherwise unchanged.
+    """
+    if len(gdf) == 0:
+        return gdf
+
+    geom_types = gdf.geometry.geom_type.unique()
+    unique_types = set(geom_types)
+    polygon_types = {"Polygon", "MultiPolygon"}
+    point_line_types = {"Point", "MultiPoint", "LineString", "MultiLineString"}
+
+    if unique_types <= polygon_types:
+        gdf = gdf.copy()
+        gdf.geometry = gdf.geometry.centroid
+        return gdf
+
+    if unique_types & polygon_types and unique_types & point_line_types:
+        raise ValueError(
+            "Mixed geometry with polygons not supported. "
+            "Use only Point, LineString, or only Polygon/MultiPolygon."
+        )
+
+    return gdf
+
+
 def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
     """
     Validate that geometry type is Point or LineString

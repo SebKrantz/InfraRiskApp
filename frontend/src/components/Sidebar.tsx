@@ -643,7 +643,7 @@ export default function Sidebar({
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">GeoPackage (.gpkg)</p>
               <p className="text-sm text-gray-600">
-                Single-file geospatial database format. Supports both Point and LineString geometries.
+                Single-file geospatial database format.
               </p>
             </div>
             <div>
@@ -662,7 +662,7 @@ export default function Sidebar({
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
-                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point and LineString.
+                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point, LineString, and Polygon/MultiPolygon (converted to centroid points for analysis). Files should be homogeneous (all features of the same type).
               </p>
             </div>
           </div>

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from app.config import settings
-from app.utils.geospatial import load_spatial_file, load_csv_points, validate_geometry_type
+from app.utils.geospatial import load_spatial_file, load_csv_points, validate_geometry_type, convert_polygons_to_centroids
 
 router = APIRouter()
 
@@ -26,12 +26,15 @@ async def upload_file(
 ):
     """
     Upload a spatial file (Shapefile, GeoPackage, or CSV with coordinates)
-    
+
     Accepts:
     - .shp (zipped shapefile)
     - .gpkg (GeoPackage)
     - .csv (with lat/lon, lat/lng, latitude/longitude, or y/x columns)
-    
+
+    Shapefile and GeoPackage may contain Polygon or MultiPolygon geometries
+    (e.g. buildings); these are converted to centroid points for analysis.
+
     Returns file metadata including geometry type and feature count
     """
     # Validate file extension
@@ -96,7 +99,10 @@ async def upload_file(
                 gdf = load_spatial_file(tmp_path)
             finally:
                 os.unlink(tmp_path)
-        
+
+        # Convert Polygon/MultiPolygon to centroids (point dataset) before validation
+        gdf = convert_polygons_to_centroids(gdf)
+
         # Validate geometry type (points or lines)
         geometry_type = validate_geometry_type(gdf)
         
