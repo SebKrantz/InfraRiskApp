@@ -175,7 +175,7 @@ export default function Sidebar({
                     <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
                       <Input
                         type="file"
-                        accept=".shp,.gpkg,.csv,.zip"
+                        accept=".shp,.gpkg,.csv,.zip,.geojson"
                         onChange={handleFileChange}
                         disabled={loadingUpload}
                         className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed [&::file-selector-button]:mr-4"
@@ -644,6 +644,12 @@ export default function Sidebar({
               <p className="text-sm font-bold text-gray-700 mb-1">GeoPackage (.gpkg)</p>
               <p className="text-sm text-gray-600">
                 Single-file geospatial database format.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">GeoJSON (.geojson)</p>
+              <p className="text-sm text-gray-600">
+                GeoJSON format.
               </p>
             </div>
             <div>

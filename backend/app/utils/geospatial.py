@@ -124,11 +124,11 @@ def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
 
 def load_spatial_file(file_path: str) -> gpd.GeoDataFrame:
     """
-    Load a spatial file (Shapefile or GeoPackage)
-    
+    Load a spatial file (Shapefile, GeoPackage, or GeoJSON)
+
     Args:
-        file_path: Path to .shp or .gpkg file
-        
+        file_path: Path to .shp, .gpkg, or .geojson file
+
     Returns:
         GeoDataFrame
     """

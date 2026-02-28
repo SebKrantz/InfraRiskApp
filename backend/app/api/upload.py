@@ -25,11 +25,12 @@ async def upload_file(
     file_id: Optional[str] = None
 ):
     """
-    Upload a spatial file (Shapefile, GeoPackage, or CSV with coordinates)
+    Upload a spatial file (Shapefile, GeoPackage, GeoJSON, or CSV with coordinates)
 
     Accepts:
     - .shp (zipped shapefile)
     - .gpkg (GeoPackage)
+    - .geojson (GeoJSON)
     - .csv (with lat/lon, lat/lng, latitude/longitude, or y/x columns)
 
     Shapefile and GeoPackage may contain Polygon or MultiPolygon geometries
