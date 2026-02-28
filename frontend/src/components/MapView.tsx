@@ -725,7 +725,7 @@ export default function MapView({
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId)
   }
 
-  const getInfraColors = (isVulnerabilityMode: boolean): { unaffectedColor: any; affectedColor: any } => ({
+  const getInfraStyle = (isVulnerabilityMode: boolean): { unaffectedColor: any; affectedColor: any; unaffectedFilter: any; affectedFilter: any } => ({
     unaffectedColor: isVulnerabilityMode ? '#6b7280' : '#10b981',
     affectedColor: isVulnerabilityMode
       ? ['interpolate', ['linear'],
@@ -734,6 +734,12 @@ export default function MapView({
           0.5, '#f59e0b',
           1, '#ef4444']
       : '#ef4444',
+    unaffectedFilter: isVulnerabilityMode
+      ? ['<', ['coalesce', ['get', 'vulnerability'], 0], 0.01]
+      : ['==', ['get', 'affected'], false],
+    affectedFilter: isVulnerabilityMode
+      ? ['>=', ['coalesce', ['get', 'vulnerability'], 0], 0.01]
+      : ['==', ['get', 'affected'], true],
   })
 
   const addInfrastructure = () => {
@@ -747,23 +753,26 @@ export default function MapView({
     const geoJson: any = props.analysisResult?.infrastructure_features || file.geojson
     const isPoint = (props.analysisResult?.geometry_type || file.geometry_type) === 'Point'
     const hasAffected = !!props.analysisResult?.infrastructure_features
-    const colors = getInfraColors(!!props.vulnerabilityAnalysisEnabled && hasAffected)
+    const isVulnMode = !!props.vulnerabilityAnalysisEnabled && hasAffected
+    const style = getInfraStyle(isVulnMode)
     if (!geoJson) return
     removeInfrastructure()
     try {
       map.current.addSource(sourceId, { type: 'geojson', data: geoJson })
       if (hasAffected) {
+        const needsGradientLayer = isVulnMode
+          || (isPoint ? (props.analysisResult?.summary?.affected_count || 0) > 0 : (props.analysisResult?.summary?.affected_meters || 0) > 0)
         if (isPoint) {
-          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'circle-radius': 5, 'circle-color': colors.unaffectedColor, 'circle-opacity': 0.8 } })
-          if ((props.analysisResult?.summary?.affected_count || 0) > 0) {
-            map.current.addLayer({ id: affectedLayerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'circle-radius': 5, 'circle-color': colors.affectedColor, 'circle-opacity': 0.8 } })
+          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: style.unaffectedFilter, paint: { 'circle-radius': 5, 'circle-color': style.unaffectedColor, 'circle-opacity': 0.8 } })
+          if (needsGradientLayer) {
+            map.current.addLayer({ id: affectedLayerId, type: 'circle', source: sourceId, filter: style.affectedFilter, paint: { 'circle-radius': 5, 'circle-color': style.affectedColor, 'circle-opacity': 0.8 } })
             map.current.moveLayer(affectedLayerId)
           }
           map.current.moveLayer(layerId)
         } else {
-          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'line-color': colors.unaffectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
-          if ((props.analysisResult?.summary?.affected_meters || 0) > 0) {
-            map.current.addLayer({ id: affectedLayerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'line-color': colors.affectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
+          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: style.unaffectedFilter, paint: { 'line-color': style.unaffectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
+          if (needsGradientLayer) {
+            map.current.addLayer({ id: affectedLayerId, type: 'line', source: sourceId, filter: style.affectedFilter, paint: { 'line-color': style.affectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
             map.current.moveLayer(affectedLayerId)
           }
           map.current.moveLayer(layerId)
@@ -888,17 +897,22 @@ export default function MapView({
           })
           
           // Add layers based on whether we have affected status
-          const restoreColors = getInfraColors(needsRestore.vulnerabilityAnalysisEnabled && needsRestore.hasAffected)
+          const isRestoreVulnMode = needsRestore.vulnerabilityAnalysisEnabled && needsRestore.hasAffected
+          const restoreStyle = getInfraStyle(isRestoreVulnMode)
           if (needsRestore.hasAffected) {
+            const needsGradientLayer = isRestoreVulnMode
+              || (needsRestore.isPoint
+                ? (needsRestore.analysisResult?.summary?.affected_count || 0) > 0
+                : (needsRestore.analysisResult?.summary?.affected_meters || 0) > 0)
             if (needsRestore.isPoint) {
                 map.current.addLayer({
                   id: layerId,
                   type: 'circle',
                   source: sourceId,
-                  filter: ['==', ['get', 'affected'], false],
+                  filter: restoreStyle.unaffectedFilter,
                   paint: {
                     'circle-radius': 5,
-                    'circle-color': restoreColors.unaffectedColor,
+                    'circle-color': restoreStyle.unaffectedColor,
                     'circle-opacity': 0.8,
                   },
                 })
@@ -907,16 +921,15 @@ export default function MapView({
                   map.current.setLayoutProperty(layerId, 'visibility', 'none')
                 }
                 
-                const affectedCount = (needsRestore.analysisResult?.summary?.affected_count || 0)
-                if (affectedCount > 0) {
+                if (needsGradientLayer) {
                   map.current.addLayer({
                     id: affectedLayerId,
                     type: 'circle',
                     source: sourceId,
-                    filter: ['==', ['get', 'affected'], true],
+                    filter: restoreStyle.affectedFilter,
                     paint: {
                       'circle-radius': 5,
-                      'circle-color': restoreColors.affectedColor,
+                      'circle-color': restoreStyle.affectedColor,
                       'circle-opacity': 0.8,
                     },
                   })
@@ -930,9 +943,9 @@ export default function MapView({
                 id: layerId,
                 type: 'line',
                 source: sourceId,
-                filter: ['==', ['get', 'affected'], false],
+                filter: restoreStyle.unaffectedFilter,
                 paint: {
-                  'line-color': restoreColors.unaffectedColor,
+                  'line-color': restoreStyle.unaffectedColor,
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
@@ -942,15 +955,14 @@ export default function MapView({
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
               
-              const affectedMeters = (needsRestore.analysisResult?.summary?.affected_meters || 0)
-              if (affectedMeters > 0) {
+              if (needsGradientLayer) {
                 map.current.addLayer({
                   id: affectedLayerId,
                   type: 'line',
                   source: sourceId,
-                  filter: ['==', ['get', 'affected'], true],
+                  filter: restoreStyle.affectedFilter,
                   paint: {
-                    'line-color': restoreColors.affectedColor,
+                    'line-color': restoreStyle.affectedColor,
                     'line-width': 3,
                     'line-opacity': 0.8,
                   },
@@ -1365,16 +1377,20 @@ export default function MapView({
 
           // If we have analysis results, show affected/unaffected coloring
           if (analysisResult?.infrastructure_features) {
-            const mainColors = getInfraColors(vulnerabilityAnalysisEnabled)
+            const mainStyle = getInfraStyle(vulnerabilityAnalysisEnabled)
+            const needsGradientLayer = vulnerabilityAnalysisEnabled
+              || (isPoint
+                ? (analysisResult.summary.affected_count || 0) > 0
+                : (analysisResult.summary.affected_meters || 0) > 0)
             if (isPoint) {
               map.current.addLayer({
                 id: layerId,
                 type: 'circle',
                 source: sourceId,
-                filter: ['==', ['get', 'affected'], false],
+                filter: mainStyle.unaffectedFilter,
                 paint: {
                   'circle-radius': 5,
-                  'circle-color': mainColors.unaffectedColor,
+                  'circle-color': mainStyle.unaffectedColor,
                   'circle-opacity': 0.8,
                 },
               })
@@ -1386,9 +1402,9 @@ export default function MapView({
                 id: layerId,
                 type: 'line',
                 source: sourceId,
-                filter: ['==', ['get', 'affected'], false],
+                filter: mainStyle.unaffectedFilter,
                 paint: {
-                  'line-color': mainColors.unaffectedColor,
+                  'line-color': mainStyle.unaffectedColor,
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
@@ -1398,20 +1414,16 @@ export default function MapView({
               }
             }
 
-            const affectedCount = isPoint 
-              ? (analysisResult.summary.affected_count || 0)
-              : (analysisResult.summary.affected_meters || 0) > 0 ? 1 : 0
-            
-            if (affectedCount > 0) {
+            if (needsGradientLayer) {
               if (isPoint) {
                 map.current.addLayer({
                   id: affectedLayerId,
                   type: 'circle',
                   source: sourceId,
-                  filter: ['==', ['get', 'affected'], true],
+                  filter: mainStyle.affectedFilter,
                   paint: {
                     'circle-radius': 5,
-                    'circle-color': mainColors.affectedColor,
+                    'circle-color': mainStyle.affectedColor,
                     'circle-opacity': 0.8,
                   },
                 })
@@ -1424,9 +1436,9 @@ export default function MapView({
                   id: affectedLayerId,
                   type: 'line',
                   source: sourceId,
-                  filter: ['==', ['get', 'affected'], true],
+                  filter: mainStyle.affectedFilter,
                   paint: {
-                    'line-color': mainColors.affectedColor,
+                    'line-color': mainStyle.affectedColor,
                     'line-width': 3,
                     'line-opacity': 0.8,
                   },
