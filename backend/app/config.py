@@ -31,7 +31,7 @@ class Settings:
     
     # File upload settings
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
-    ALLOWED_EXTENSIONS: set = {".shp", ".gpkg", ".zip", ".csv"}
+    ALLOWED_EXTENSIONS: set = {".shp", ".gpkg", ".zip", ".csv", ".geojson"}
 
 settings = Settings()
 

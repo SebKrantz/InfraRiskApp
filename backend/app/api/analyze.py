@@ -14,6 +14,7 @@ import numpy as np
 
 from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve
 from app.api.upload import uploaded_files
+from app.api.hazards import load_hazards_dict
 
 router = APIRouter()
 
@@ -240,8 +241,14 @@ async def analyze_intersections(
                 display_gdf['affected'] = False
             
             # GeoDataFrame is already in WGS84 (EPSG:4326) and cleaned from upload
-            # Convert to GeoJSON
-            result["infrastructure_features"] = display_gdf.__geo_interface__
+            # Convert to GeoJSON, stripping per-feature bbox to avoid
+            # MapLibre geojson-vt tiler issues
+            geo_dict = display_gdf.__geo_interface__
+            if "bbox" in geo_dict:
+                del geo_dict["bbox"]
+            for feature in geo_dict.get("features", []):
+                feature.pop("bbox", None)
+            result["infrastructure_features"] = geo_dict
         except Exception as e:
             # If GeoJSON conversion fails, skip it
             print(f"Warning: Could not convert to GeoJSON: {e}")

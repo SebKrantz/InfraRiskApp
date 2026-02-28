@@ -42,15 +42,42 @@ class ExportMapRequest(BaseModel):
     file_id: str
     hazard_id: str
     color_palette: str = 'turbo'
-    hazard_opacity: float = 0.6
+    hazard_opacity: float = 0.6  # Not used: export always uses full opacity
     intensity_threshold: Optional[float] = None
+    basemap: str = 'positron'
+
+
+BASEMAP_TILE_URLS: dict[str, str] = {
+    'positron': 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    'dark-matter': 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    'osm': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'topo': 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    'esri-street': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    'esri-topo': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    'esri-terrain': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+    'esri-ocean': 'https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
+    'esri-imagery': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'google-maps': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'google-terrain': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+    'google-hybrid': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    'google-satellite': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+}
+
+
+def _threshold_labels(intensity_threshold: Optional[float]) -> tuple[str, str]:
+    """Return (affected_label, unaffected_label) based on the threshold."""
+    if intensity_threshold is not None:
+        t = f'{intensity_threshold:g}'
+        return f'Affected (\u2265 {t})', f'Unaffected (< {t})'
+    return 'Affected (> 0)', 'Unaffected (= 0)'
 
 
 def generate_barchart_png(
     analysis_result: dict,
     geometry_type: str,
     title: str,
-    full_gdf: Optional[gpd.GeoDataFrame] = None
+    full_gdf: Optional[gpd.GeoDataFrame] = None,
+    intensity_threshold: Optional[float] = None
 ) -> bytes:
     """
     Generate PNG barchart from analysis results.
@@ -65,6 +92,8 @@ def generate_barchart_png(
         Chart title
     full_gdf : GeoDataFrame, optional
         Full GeoDataFrame with vulnerability and damage_cost properties (for vulnerability mode)
+    intensity_threshold : float, optional
+        Hazard intensity threshold used for the analysis
     
     Returns:
     --------
@@ -180,8 +209,9 @@ def generate_barchart_png(
             unaffected = analysis_result.get('unaffected_meters', 0)
             ylabel = 'Length (meters)'
         
+        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
         plot_data = pd.DataFrame({
-            'Category': ['Affected', 'Unaffected'],
+            'Category': [affected_label, unaffected_label],
             'Value': [affected, unaffected]
         })
         
@@ -223,7 +253,9 @@ def generate_map_png(
     title: str,
     color_palette: str = 'turbo',
     hazard_opacity: float = 0.6,
-    is_vulnerability_mode: bool = False
+    is_vulnerability_mode: bool = False,
+    intensity_threshold: Optional[float] = None,
+    basemap: str = 'positron'
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -242,6 +274,10 @@ def generate_map_png(
         Color palette name for hazard visualization
     hazard_opacity : float
         Opacity for hazard layer (0-1)
+    intensity_threshold : float, optional
+        Hazard intensity threshold used for the analysis
+    basemap : str
+        Basemap tile provider name
     
     Returns:
     --------
@@ -281,26 +317,24 @@ def generate_map_png(
     ax.set_ylim(bbox_mercator[1], bbox_mercator[3])
     ax.set_aspect('equal')
     
-    # Store colorbar position parameters for vulnerability mode (will be set if needed)
-    cbar_params = None
+    # Deferred colorbars for vulnerability mode (drawn after tight_layout for stable positioning)
+    hazard_sm = None
+    vuln_sm = None
     
     # Add basemap (should be at zorder 0, behind everything)
     try:
         import contextily as ctx
-        # Add basemap in Web Mercator
-        # Note: contextily will automatically fetch tiles for the current axes extent
+        tile_url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
         ctx.add_basemap(
             ax,
             crs='EPSG:3857',
-            source=ctx.providers.CartoDB.Positron,  # Light basemap that works well with overlays
-            zoom='auto',  # Automatically determine zoom level
-            zorder=0  # Ensure basemap is behind all other layers
+            source=tile_url,
+            zoom='auto',
+            zorder=0
         )
     except ImportError:
-        # If contextily is not available, skip basemap
         print("Warning: contextily not available, skipping basemap")
     except Exception as e:
-        # If basemap fails for any reason, continue without it
         import traceback
         print(f"Warning: Could not add basemap: {e}")
         traceback.print_exc()
@@ -416,34 +450,9 @@ def generate_map_png(
                 sm = ScalarMappable(norm=norm, cmap=blue_cmap)
                 sm.set_array([])
                 
-                # Add colorbar - position depends on vulnerability mode
+                # Add colorbar - vulnerability mode defers to after tight_layout
                 if is_vulnerability_mode:
-                    # Position hazard colorbar lower to make room for vulnerability colorbar
-                    # Get the position of the main axes
-                    pos = ax.get_position()
-                    # Calculate shared x position for both colorbars (aligned)
-                    # Zero or negative horizontal spacing to bring colorbars close to plot
-                    cbar_width = 0.015
-                    cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
-                    # Use full vertical space with much larger gap between colorbars
-                    gap = 0.06  # Significantly increased gap between colorbars
-                    cbar_height = (pos.height - gap) / 2  # Each colorbar gets half minus gap
-                    hazard_y = pos.y0
-                    
-                    # Store parameters for vulnerability colorbar to use exact same x position
-                    cbar_params = {
-                        'x': cbar_x,
-                        'width': cbar_width,
-                        'height': cbar_height,
-                        'gap': gap,
-                        'y0': pos.y0,
-                        'y1': pos.y1
-                    }
-                    
-                    cax_hazard = fig.add_axes([cbar_x, hazard_y, cbar_width, cbar_height])
-                    cbar = plt.colorbar(sm, cax=cax_hazard, orientation='vertical')
-                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
-                    cbar.ax.tick_params(labelsize=9)
+                    hazard_sm = sm
                 else:
                     cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
                                        pad=0.02, shrink=0.6, aspect=20)
@@ -494,58 +503,35 @@ def generate_map_png(
                             linewidth=2, alpha=0.8, zorder=3,
                             vmin=0, vmax=1, legend=False)
         
-        # Add vulnerability colorbar above hazard colorbar
+        # Build ScalarMappable for deferred vulnerability colorbar
         from matplotlib.colors import Normalize
         from matplotlib.cm import ScalarMappable
         norm_vuln = Normalize(vmin=0, vmax=max_vulnerability_pct)
-        sm_vuln = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
-        sm_vuln.set_array([])
-        
-        # Create axes for vulnerability colorbar positioned above hazard colorbar
-        # Use the exact same parameters stored when creating hazard colorbar
-        if cbar_params is not None:
-            # Use stored parameters to ensure perfect alignment
-            vuln_y = cbar_params['y0'] + cbar_params['height'] + cbar_params['gap']
-            cax_vuln = fig.add_axes([
-                cbar_params['x'], 
-                vuln_y, 
-                cbar_params['width'], 
-                cbar_params['height']
-            ])
-        else:
-            # Fallback if parameters weren't set (shouldn't happen in vulnerability mode)
-            pos = ax.get_position()
-            cbar_width = 0.015
-            cbar_x = pos.x1 - 0.05  # More negative offset to bring colorbars very close to plot
-            gap = 0.06  # Significantly increased vertical gap
-            cbar_height = (pos.height - gap) / 2
-            vuln_y = pos.y0 + cbar_height + gap
-            cax_vuln = fig.add_axes([cbar_x, vuln_y, cbar_width, cbar_height])
-        cbar_vuln = plt.colorbar(sm_vuln, cax=cax_vuln, orientation='vertical')
-        cbar_vuln.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
-        cbar_vuln.ax.tick_params(labelsize=9)
+        vuln_sm = ScalarMappable(norm=norm_vuln, cmap=cmap_vuln)
+        vuln_sm.set_array([])
         
     elif 'affected' in infrastructure_mercator.columns:
         # Standard exposure mode: red for affected, green for unaffected
         affected_gdf = infrastructure_mercator[infrastructure_mercator['affected']]
         unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
+        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
         
         if geometry_type == 'Point':
             if len(unaffected_gdf) > 0:
                 unaffected_gdf.plot(ax=ax, color='#2ca02c', markersize=50, 
-                                  marker='o', label='Unaffected', alpha=0.8, 
+                                  marker='o', label=unaffected_label, alpha=0.8, 
                                   edgecolor='black', linewidth=0.5, zorder=3)
             if len(affected_gdf) > 0:
                 affected_gdf.plot(ax=ax, color='#d62728', markersize=50, 
-                                marker='o', label='Affected', alpha=0.8, 
+                                marker='o', label=affected_label, alpha=0.8, 
                                 edgecolor='black', linewidth=0.5, zorder=3)
         else:
             if len(unaffected_gdf) > 0:
                 unaffected_gdf.plot(ax=ax, color='#2ca02c', linewidth=2, 
-                                  label='Unaffected', alpha=0.8, zorder=3)
+                                  label=unaffected_label, alpha=0.8, zorder=3)
             if len(affected_gdf) > 0:
                 affected_gdf.plot(ax=ax, color='#d62728', linewidth=2, 
-                               label='Affected', alpha=0.8, zorder=3)
+                               label=affected_label, alpha=0.8, zorder=3)
     else:
         # No analysis - plot all in gray
         if geometry_type == 'Point':
@@ -569,6 +555,23 @@ def generate_map_png(
     
     ax.set_axis_off()
     plt.tight_layout()
+    
+    # Draw deferred vulnerability-mode colorbars using the post-tight_layout axes position
+    if is_vulnerability_mode and vuln_sm is not None:
+        pos = ax.get_position()
+        cbar_width = 0.015
+        cbar_x = pos.x1 + 0.01
+        gap = 0.06
+        cbar_height = (pos.height - gap) / 2
+        if hazard_sm is not None:
+            cax_h = fig.add_axes([cbar_x, pos.y0, cbar_width, cbar_height])
+            cb_h = plt.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
+            cb_h.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+            cb_h.ax.tick_params(labelsize=9)
+        cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])
+        cb_v = plt.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
+        cb_v.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
+        cb_v.ax.tick_params(labelsize=9)
     
     # Save to bytes buffer
     img_buffer = io.BytesIO()
@@ -658,7 +661,8 @@ async def export_barchart(request: ExportBarchartRequest):
             summary,
             geometry_type,
             title,
-            full_gdf
+            full_gdf,
+            request.intensity_threshold
         )
         
         # Generate filename
@@ -744,7 +748,7 @@ async def export_map(request: ExportMapRequest):
         else:
             title = f"{hazard_name} - Infrastructure Exposure Map"
         
-        # Generate PNG
+        # Generate PNG (always use full opacity for hazard layer in export)
         loop = asyncio.get_event_loop()
         png_bytes = await loop.run_in_executor(
             _export_executor,
@@ -754,8 +758,10 @@ async def export_map(request: ExportMapRequest):
             geometry_type,
             title,
             request.color_palette,
-            request.hazard_opacity,
-            is_vulnerability_mode
+            1.0,  # Full opacity for export
+            is_vulnerability_mode,
+            request.intensity_threshold,
+            request.basemap
         )
         
         # Generate filename

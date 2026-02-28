@@ -153,6 +153,7 @@ function App() {
         onVulnerabilityCurveFileChange={setVulnerabilityCurveFile}
         replacementValue={replacementValue}
         onReplacementValueChange={setReplacementValue}
+        basemap={basemap}
       />
       <MapView
         uploadedFile={uploadedFile}
@@ -164,6 +165,7 @@ function App() {
         basemap={basemap}
         onBasemapChange={setBasemap}
         loadingAnalysis={loadingAnalysis}
+        vulnerabilityAnalysisEnabled={vulnerabilityAnalysisEnabled}
       />
     </div>
   )

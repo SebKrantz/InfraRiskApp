@@ -124,11 +124,11 @@ def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
 
 def load_spatial_file(file_path: str) -> gpd.GeoDataFrame:
     """
-    Load a spatial file (Shapefile or GeoPackage)
-    
+    Load a spatial file (Shapefile, GeoPackage, or GeoJSON)
+
     Args:
-        file_path: Path to .shp or .gpkg file
-        
+        file_path: Path to .shp, .gpkg, or .geojson file
+
     Returns:
         GeoDataFrame
     """
@@ -143,6 +143,43 @@ def load_spatial_file(file_path: str) -> gpd.GeoDataFrame:
     if gdf.crs is None:
         gdf.set_crs("EPSG:4326", inplace=True)
     
+    return gdf
+
+
+def convert_polygons_to_centroids(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Convert Polygon/MultiPolygon geometries to their centroids (Point).
+
+    If the GeoDataFrame contains only Polygon and/or MultiPolygon, replaces
+    the geometry column with centroids so the dataset becomes a point layer.
+    Mixed geometry (e.g. Point + Polygon) is not supported and raises.
+
+    Args:
+        gdf: GeoDataFrame (any CRS; conversion happens before reprojection).
+
+    Returns:
+        GeoDataFrame with Point geometries if input was polygon-only;
+        otherwise unchanged.
+    """
+    if len(gdf) == 0:
+        return gdf
+
+    geom_types = gdf.geometry.geom_type.unique()
+    unique_types = set(geom_types)
+    polygon_types = {"Polygon", "MultiPolygon"}
+    point_line_types = {"Point", "MultiPoint", "LineString", "MultiLineString"}
+
+    if unique_types <= polygon_types:
+        gdf = gdf.copy()
+        gdf.geometry = gdf.geometry.centroid
+        return gdf
+
+    if unique_types & polygon_types and unique_types & point_line_types:
+        raise ValueError(
+            "Mixed geometry with polygons not supported. "
+            "Use only Point, LineString, or only Polygon/MultiPolygon."
+        )
+
     return gdf
 
 
@@ -263,16 +300,16 @@ def analyze_intersection(
 ) -> dict:
     """
     Analyze intersection between infrastructure and hazard raster
-    
+
     All hazard rasters use EPSG:4326 (WGS84) as their CRS.
-    
+
     Args:
         infrastructure_gdf: GeoDataFrame with infrastructure assets
         hazard_raster_path: Path or URL to hazard raster (assumed EPSG:4326)
         geometry_type: Geometry type ("Point" or "LineString") from stored metadata
         intensity_threshold: Optional threshold for filtering hazard intensity
         cached_raster_values: Optional pre-sampled raster values (for threshold changes)
-        
+
     Returns:
         Dictionary with analysis results:
         - affected_count/unaffected_count (for points)
@@ -343,23 +380,27 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-                            
+
+                            # Mask nodata values as NaN
+                            if tile_src.nodata is not None:
+                                data = np.where(data == tile_src.nodata, np.nan, data)
+
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
-                            
+
                             window_transform = tile_src.window_transform(window)
-                            
+
                             # Get coordinates of points in this tile
                             tile_x_coords = x_coords[point_indices]
                             tile_y_coords = y_coords[point_indices]
-                            
+
                             # Convert to pixel indices
                             rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
                             rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
                             cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-                            
+
                             return point_indices, data[rows, cols]
-                            
+
                     except Exception as e:
                         return point_indices, np.full(len(point_indices), np.nan)
                 
@@ -543,18 +584,22 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-                            
+
+                            # Mask nodata values as NaN
+                            if tile_src.nodata is not None:
+                                data = np.where(data == tile_src.nodata, np.nan, data)
+
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
-                            
+
                             window_transform = tile_src.window_transform(window)
                             tile_x_coords = x_coords[point_indices]
                             tile_y_coords = y_coords[point_indices]
-                            
+
                             rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
                             rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
                             cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-                            
+
                             return point_indices, data[rows, cols]
                     except Exception:
                         return point_indices, np.full(len(point_indices), np.nan)

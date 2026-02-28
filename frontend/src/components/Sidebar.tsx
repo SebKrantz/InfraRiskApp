@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown, Download } from 'lucide-react'
-import { Hazard, UploadedFile, AnalysisResult, ColorPalette } from '../types'
+import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Select } from './ui/select'
@@ -35,6 +35,7 @@ interface SidebarProps {
   onVulnerabilityCurveFileChange: (file: File | null) => void
   replacementValue: number | null
   onReplacementValueChange: (value: number | null) => void
+  basemap: Basemap
 }
 
 const colorPalettes: ColorPalette[] = ['viridis', 'magma', 'inferno', 'plasma', 'cividis', 'turbo']
@@ -65,6 +66,7 @@ export default function Sidebar({
   onVulnerabilityCurveFileChange,
   replacementValue,
   onReplacementValueChange,
+  basemap,
 }: SidebarProps) {
   const [infoOpen, setInfoOpen] = useState(false)
   const [uploadInfoOpen, setUploadInfoOpen] = useState(false)
@@ -173,7 +175,7 @@ export default function Sidebar({
                     <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
                       <Input
                         type="file"
-                        accept=".shp,.gpkg,.csv,.zip"
+                        accept=".shp,.gpkg,.csv,.zip,.geojson"
                         onChange={handleFileChange}
                         disabled={loadingUpload}
                         className="cursor-pointer border-0 bg-transparent px-0 py-0 h-auto text-gray-300 file:mr-4 file:py-1 file:px-3 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-600 file:text-white hover:file:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed [&::file-selector-button]:mr-4"
@@ -537,7 +539,8 @@ export default function Sidebar({
                           selectedHazard.id,
                           colorPalette,
                           hazardOpacity,
-                          threshold
+                          threshold,
+                          basemap
                         )
                       } catch (err) {
                         console.error('Failed to export map:', err)
@@ -640,7 +643,13 @@ export default function Sidebar({
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">GeoPackage (.gpkg)</p>
               <p className="text-sm text-gray-600">
-                Single-file geospatial database format. Supports both Point and LineString geometries.
+                Single-file geospatial database format.
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-700 mb-1">GeoJSON (.geojson)</p>
+              <p className="text-sm text-gray-600">
+                GeoJSON format.
               </p>
             </div>
             <div>
@@ -659,7 +668,7 @@ export default function Sidebar({
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
-                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point and LineString.
+                <strong>Note:</strong> Maximum file size is 100 MB. Supported geometry types are Point, LineString, and Polygon/MultiPolygon (converted to centroid points for analysis – hazard layers have a resolution of 100m which is too coarse for most buildings). Files should be homogeneous (all features should be of the same type).
               </p>
             </div>
           </div>
