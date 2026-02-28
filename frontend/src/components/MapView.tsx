@@ -13,6 +13,7 @@ interface MapViewProps {
   basemap: Basemap
   onBasemapChange: (basemap: Basemap) => void
   loadingAnalysis?: boolean
+  vulnerabilityAnalysisEnabled?: boolean
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -332,6 +333,7 @@ export default function MapView({
   basemap,
   onBasemapChange,
   loadingAnalysis = false,
+  vulnerabilityAnalysisEnabled = false,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
@@ -344,7 +346,7 @@ export default function MapView({
   const [hazardVisible, setHazardVisible] = useState(true)
   
   // Store current prop values for restoration
-  const currentProps = useRef({ uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette })
+  const currentProps = useRef({ uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled })
   
   // Track zoom level and bounds to prevent unnecessary reloads
   const lastZoomLevel = useRef<number | null>(null)
@@ -354,8 +356,8 @@ export default function MapView({
   
   // Update refs when props change
   useEffect(() => {
-    currentProps.current = { uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette }
-  }, [uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette])
+    currentProps.current = { uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled }
+  }, [uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled])
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return
@@ -723,6 +725,17 @@ export default function MapView({
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId)
   }
 
+  const getInfraColors = (isVulnerabilityMode: boolean): { unaffectedColor: any; affectedColor: any } => ({
+    unaffectedColor: isVulnerabilityMode ? '#6b7280' : '#10b981',
+    affectedColor: isVulnerabilityMode
+      ? ['interpolate', ['linear'],
+          ['coalesce', ['get', 'vulnerability'], 0],
+          0, '#10b981',
+          0.5, '#f59e0b',
+          1, '#ef4444']
+      : '#ef4444',
+  })
+
   const addInfrastructure = () => {
     if (!map.current) return
     const props = currentProps.current
@@ -734,28 +747,25 @@ export default function MapView({
     const geoJson: any = props.analysisResult?.infrastructure_features || file.geojson
     const isPoint = (props.analysisResult?.geometry_type || file.geometry_type) === 'Point'
     const hasAffected = !!props.analysisResult?.infrastructure_features
+    const colors = getInfraColors(!!props.vulnerabilityAnalysisEnabled && hasAffected)
     if (!geoJson) return
     removeInfrastructure()
     try {
       map.current.addSource(sourceId, { type: 'geojson', data: geoJson })
       if (hasAffected) {
         if (isPoint) {
-          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'circle-radius': 5, 'circle-color': '#10b981', 'circle-opacity': 0.8 } })
+          map.current.addLayer({ id: layerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'circle-radius': 5, 'circle-color': colors.unaffectedColor, 'circle-opacity': 0.8 } })
           if ((props.analysisResult?.summary?.affected_count || 0) > 0) {
-            map.current.addLayer({ id: affectedLayerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'circle-radius': 5, 'circle-color': '#ef4444', 'circle-opacity': 0.8 } })
-            // Move affected layer to top
+            map.current.addLayer({ id: affectedLayerId, type: 'circle', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'circle-radius': 5, 'circle-color': colors.affectedColor, 'circle-opacity': 0.8 } })
             map.current.moveLayer(affectedLayerId)
           }
-          // Move infrastructure layer to top to ensure it's above hazard
           map.current.moveLayer(layerId)
         } else {
-          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'line-color': '#10b981', 'line-width': 3, 'line-opacity': 0.8 } })
+          map.current.addLayer({ id: layerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], false], paint: { 'line-color': colors.unaffectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
           if ((props.analysisResult?.summary?.affected_meters || 0) > 0) {
-            map.current.addLayer({ id: affectedLayerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'line-color': '#ef4444', 'line-width': 3, 'line-opacity': 0.8 } })
-            // Move affected layer to top
+            map.current.addLayer({ id: affectedLayerId, type: 'line', source: sourceId, filter: ['==', ['get', 'affected'], true], paint: { 'line-color': colors.affectedColor, 'line-width': 3, 'line-opacity': 0.8 } })
             map.current.moveLayer(affectedLayerId)
           }
-          // Move infrastructure layer to top to ensure it's above hazard
           map.current.moveLayer(layerId)
         }
       } else {
@@ -796,14 +806,14 @@ export default function MapView({
     const needsRestore = {
       infrastructure: hasInfrastructure,
       hazard: hasHazard,
-      // Store the GeoJSON to use - make sure we have a reference
       geoJson: props.analysisResult?.infrastructure_features || props.uploadedFile?.geojson || null,
       isPoint: props.analysisResult?.geometry_type === 'Point' || props.uploadedFile?.geometry_type === 'Point',
       hasAffected: !!(props.analysisResult?.infrastructure_features),
       hazardId: props.selectedHazard?.id,
       hazardOpacity: props.hazardOpacity,
       colorPalette: props.colorPalette,
-      analysisResult: props.analysisResult
+      analysisResult: props.analysisResult,
+      vulnerabilityAnalysisEnabled: !!props.vulnerabilityAnalysisEnabled,
     }
     
     // Function to restore layers
@@ -878,8 +888,8 @@ export default function MapView({
           })
           
           // Add layers based on whether we have affected status
+          const restoreColors = getInfraColors(needsRestore.vulnerabilityAnalysisEnabled && needsRestore.hasAffected)
           if (needsRestore.hasAffected) {
-            // Show affected/unaffected coloring
             if (needsRestore.isPoint) {
                 map.current.addLayer({
                   id: layerId,
@@ -888,17 +898,15 @@ export default function MapView({
                   filter: ['==', ['get', 'affected'], false],
                   paint: {
                     'circle-radius': 5,
-                    'circle-color': '#10b981',
+                    'circle-color': restoreColors.unaffectedColor,
                     'circle-opacity': 0.8,
                   },
                 })
                 
-                // Apply visibility state
                 if (!infrastructureVisible) {
                   map.current.setLayoutProperty(layerId, 'visibility', 'none')
                 }
                 
-                // Check if there are affected features
                 const affectedCount = (needsRestore.analysisResult?.summary?.affected_count || 0)
                 if (affectedCount > 0) {
                   map.current.addLayer({
@@ -908,12 +916,11 @@ export default function MapView({
                     filter: ['==', ['get', 'affected'], true],
                     paint: {
                       'circle-radius': 5,
-                      'circle-color': '#ef4444',
+                      'circle-color': restoreColors.affectedColor,
                       'circle-opacity': 0.8,
                     },
                   })
                   
-                  // Apply visibility state
                   if (!infrastructureVisible) {
                     map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                   }
@@ -925,13 +932,12 @@ export default function MapView({
                 source: sourceId,
                 filter: ['==', ['get', 'affected'], false],
                 paint: {
-                  'line-color': '#10b981',
+                  'line-color': restoreColors.unaffectedColor,
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
               })
               
-              // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
@@ -944,19 +950,17 @@ export default function MapView({
                   source: sourceId,
                   filter: ['==', ['get', 'affected'], true],
                   paint: {
-                    'line-color': '#ef4444',
+                    'line-color': restoreColors.affectedColor,
                     'line-width': 3,
                     'line-opacity': 0.8,
                   },
                 })
                 
-                // Apply visibility state
                 if (!infrastructureVisible) {
                   map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                 }
               }
               
-              // Add popup handlers
               addPopupHandlers(layerId)
               if (map.current.getLayer(affectedLayerId)) {
                 addPopupHandlers(affectedLayerId)
@@ -1361,9 +1365,8 @@ export default function MapView({
 
           // If we have analysis results, show affected/unaffected coloring
           if (analysisResult?.infrastructure_features) {
-            // Add unaffected features layer (green) - always above hazard layer
+            const mainColors = getInfraColors(vulnerabilityAnalysisEnabled)
             if (isPoint) {
-              // Add layer without beforeId so it goes on top, then move it after hazard if hazard exists
               map.current.addLayer({
                 id: layerId,
                 type: 'circle',
@@ -1371,11 +1374,10 @@ export default function MapView({
                 filter: ['==', ['get', 'affected'], false],
                 paint: {
                   'circle-radius': 5,
-                  'circle-color': '#10b981', // green for unaffected
+                  'circle-color': mainColors.unaffectedColor,
                   'circle-opacity': 0.8,
                 },
               })
-              // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
@@ -1386,18 +1388,16 @@ export default function MapView({
                 source: sourceId,
                 filter: ['==', ['get', 'affected'], false],
                 paint: {
-                  'line-color': '#10b981',
+                  'line-color': mainColors.unaffectedColor,
                   'line-width': 3,
                   'line-opacity': 0.8,
                 },
               })
-              // Apply visibility state
               if (!infrastructureVisible) {
                 map.current.setLayoutProperty(layerId, 'visibility', 'none')
               }
             }
 
-            // Add affected features layer (red)
             const affectedCount = isPoint 
               ? (analysisResult.summary.affected_count || 0)
               : (analysisResult.summary.affected_meters || 0) > 0 ? 1 : 0
@@ -1411,12 +1411,11 @@ export default function MapView({
                   filter: ['==', ['get', 'affected'], true],
                   paint: {
                     'circle-radius': 5,
-                    'circle-color': '#ef4444', // red for affected
+                    'circle-color': mainColors.affectedColor,
                     'circle-opacity': 0.8,
                   },
                 })
                 
-                // Apply visibility state
                 if (!infrastructureVisible) {
                   map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                 }
@@ -1427,30 +1426,24 @@ export default function MapView({
                   source: sourceId,
                   filter: ['==', ['get', 'affected'], true],
                   paint: {
-                    'line-color': '#ef4444',
+                    'line-color': mainColors.affectedColor,
                     'line-width': 3,
                     'line-opacity': 0.8,
                   },
                 })
                 
-                // Apply visibility state
                 if (!infrastructureVisible) {
                   map.current.setLayoutProperty(affectedLayerId, 'visibility', 'none')
                 }
               }
               
-              // Add popup handlers
               addPopupHandlers(layerId)
               if (map.current.getLayer(affectedLayerId)) {
                 addPopupHandlers(affectedLayerId)
               }
             }
             
-            // Ensure correct layer order after all layers are added:
-            // hazard < infrastructure (green/unaffected) < affected (red)
-            // Move infrastructure (green) above hazard first
             map.current.moveLayer(layerId)
-            // If affected layer exists, move it to top (above infrastructure)
             if (map.current.getLayer(affectedLayerId)) {
               map.current.moveLayer(affectedLayerId)
             }
@@ -1584,7 +1577,7 @@ export default function MapView({
         clearTimeout(debounceTimer.current)
       }
     }
-  }, [uploadedFile, analysisResult, mapLoaded, infrastructureVisible])
+  }, [uploadedFile, analysisResult, mapLoaded, infrastructureVisible, vulnerabilityAnalysisEnabled])
 
   // Basemap style switcher (always on)
   useEffect(() => {
