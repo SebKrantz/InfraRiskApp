@@ -42,7 +42,7 @@ class ExportMapRequest(BaseModel):
     file_id: str
     hazard_id: str
     color_palette: str = 'turbo'
-    hazard_opacity: float = 0.6
+    hazard_opacity: float = 0.6  # Not used: export always uses full opacity
     intensity_threshold: Optional[float] = None
 
 
@@ -744,7 +744,7 @@ async def export_map(request: ExportMapRequest):
         else:
             title = f"{hazard_name} - Infrastructure Exposure Map"
         
-        # Generate PNG
+        # Generate PNG (always use full opacity for hazard layer in export)
         loop = asyncio.get_event_loop()
         png_bytes = await loop.run_in_executor(
             _export_executor,
@@ -754,7 +754,7 @@ async def export_map(request: ExportMapRequest):
             geometry_type,
             title,
             request.color_palette,
-            request.hazard_opacity,
+            1.0, # previously request.hazard_opacity  # Full opacity for export; ignore app hazard_opacity
             is_vulnerability_mode
         )
         
