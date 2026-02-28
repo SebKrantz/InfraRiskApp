@@ -130,8 +130,13 @@ async def upload_file(
         }
         
         # Convert to GeoJSON for display (gdf is already in WGS84 and cleaned)
+        # Strip per-feature bbox to avoid MapLibre geojson-vt tiler issues
         try:
             geo_json = gdf.__geo_interface__
+            if "bbox" in geo_json:
+                del geo_json["bbox"]
+            for feature in geo_json.get("features", []):
+                feature.pop("bbox", None)
         except Exception as e:
             print(f"Warning: Could not convert to GeoJSON for upload response: {e}")
             geo_json = None

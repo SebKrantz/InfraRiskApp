@@ -263,16 +263,16 @@ def analyze_intersection(
 ) -> dict:
     """
     Analyze intersection between infrastructure and hazard raster
-    
+
     All hazard rasters use EPSG:4326 (WGS84) as their CRS.
-    
+
     Args:
         infrastructure_gdf: GeoDataFrame with infrastructure assets
         hazard_raster_path: Path or URL to hazard raster (assumed EPSG:4326)
         geometry_type: Geometry type ("Point" or "LineString") from stored metadata
         intensity_threshold: Optional threshold for filtering hazard intensity
         cached_raster_values: Optional pre-sampled raster values (for threshold changes)
-        
+
     Returns:
         Dictionary with analysis results:
         - affected_count/unaffected_count (for points)
@@ -343,23 +343,27 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-                            
+
+                            # Mask nodata values as NaN
+                            if tile_src.nodata is not None:
+                                data = np.where(data == tile_src.nodata, np.nan, data)
+
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
-                            
+
                             window_transform = tile_src.window_transform(window)
-                            
+
                             # Get coordinates of points in this tile
                             tile_x_coords = x_coords[point_indices]
                             tile_y_coords = y_coords[point_indices]
-                            
+
                             # Convert to pixel indices
                             rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
                             rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
                             cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-                            
+
                             return point_indices, data[rows, cols]
-                            
+
                     except Exception as e:
                         return point_indices, np.full(len(point_indices), np.nan)
                 
@@ -543,18 +547,22 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-                            
+
+                            # Mask nodata values as NaN
+                            if tile_src.nodata is not None:
+                                data = np.where(data == tile_src.nodata, np.nan, data)
+
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
-                            
+
                             window_transform = tile_src.window_transform(window)
                             tile_x_coords = x_coords[point_indices]
                             tile_y_coords = y_coords[point_indices]
-                            
+
                             rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
                             rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
                             cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-                            
+
                             return point_indices, data[rows, cols]
                     except Exception:
                         return point_indices, np.full(len(point_indices), np.nan)
