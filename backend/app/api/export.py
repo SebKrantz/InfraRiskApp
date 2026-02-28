@@ -44,6 +44,24 @@ class ExportMapRequest(BaseModel):
     color_palette: str = 'turbo'
     hazard_opacity: float = 0.6  # Not used: export always uses full opacity
     intensity_threshold: Optional[float] = None
+    basemap: str = 'positron'
+
+
+BASEMAP_TILE_URLS: dict[str, str] = {
+    'positron': 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
+    'dark-matter': 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    'osm': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    'topo': 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    'esri-street': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    'esri-topo': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    'esri-terrain': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Terrain_Base/MapServer/tile/{z}/{y}/{x}',
+    'esri-ocean': 'https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer/tile/{z}/{y}/{x}',
+    'esri-imagery': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    'google-maps': 'https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    'google-terrain': 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}',
+    'google-hybrid': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    'google-satellite': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+}
 
 
 def _threshold_labels(intensity_threshold: Optional[float]) -> tuple[str, str]:
@@ -236,7 +254,8 @@ def generate_map_png(
     color_palette: str = 'turbo',
     hazard_opacity: float = 0.6,
     is_vulnerability_mode: bool = False,
-    intensity_threshold: Optional[float] = None
+    intensity_threshold: Optional[float] = None,
+    basemap: str = 'positron'
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -257,6 +276,8 @@ def generate_map_png(
         Opacity for hazard layer (0-1)
     intensity_threshold : float, optional
         Hazard intensity threshold used for the analysis
+    basemap : str
+        Basemap tile provider name
     
     Returns:
     --------
@@ -303,20 +324,17 @@ def generate_map_png(
     # Add basemap (should be at zorder 0, behind everything)
     try:
         import contextily as ctx
-        # Add basemap in Web Mercator
-        # Note: contextily will automatically fetch tiles for the current axes extent
+        tile_url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
         ctx.add_basemap(
             ax,
             crs='EPSG:3857',
-            source=ctx.providers.CartoDB.Positron,  # Light basemap that works well with overlays
-            zoom='auto',  # Automatically determine zoom level
-            zorder=0  # Ensure basemap is behind all other layers
+            source=tile_url,
+            zoom='auto',
+            zorder=0
         )
     except ImportError:
-        # If contextily is not available, skip basemap
         print("Warning: contextily not available, skipping basemap")
     except Exception as e:
-        # If basemap fails for any reason, continue without it
         import traceback
         print(f"Warning: Could not add basemap: {e}")
         traceback.print_exc()
@@ -742,7 +760,8 @@ async def export_map(request: ExportMapRequest):
             request.color_palette,
             1.0,  # Full opacity for export
             is_vulnerability_mode,
-            request.intensity_threshold
+            request.intensity_threshold,
+            request.basemap
         )
         
         # Generate filename
