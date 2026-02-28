@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown, Download } from 'lucide-react'
-import { Hazard, UploadedFile, AnalysisResult, ColorPalette } from '../types'
+import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Select } from './ui/select'
@@ -35,6 +35,7 @@ interface SidebarProps {
   onVulnerabilityCurveFileChange: (file: File | null) => void
   replacementValue: number | null
   onReplacementValueChange: (value: number | null) => void
+  basemap: Basemap
 }
 
 const colorPalettes: ColorPalette[] = ['viridis', 'magma', 'inferno', 'plasma', 'cividis', 'turbo']
@@ -65,6 +66,7 @@ export default function Sidebar({
   onVulnerabilityCurveFileChange,
   replacementValue,
   onReplacementValueChange,
+  basemap,
 }: SidebarProps) {
   const [infoOpen, setInfoOpen] = useState(false)
   const [uploadInfoOpen, setUploadInfoOpen] = useState(false)
@@ -537,7 +539,8 @@ export default function Sidebar({
                           selectedHazard.id,
                           colorPalette,
                           hazardOpacity,
-                          threshold
+                          threshold,
+                          basemap
                         )
                       } catch (err) {
                         console.error('Failed to export map:', err)

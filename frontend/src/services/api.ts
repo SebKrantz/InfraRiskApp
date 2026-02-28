@@ -187,7 +187,8 @@ export async function exportMap(
   hazardId: string,
   colorPalette: string,
   hazardOpacity: number,
-  intensityThreshold?: number
+  intensityThreshold?: number,
+  basemap?: string
 ): Promise<void> {
   const response = await fetch(`${API_BASE_URL}/export/map`, {
     method: 'POST',
@@ -198,8 +199,9 @@ export async function exportMap(
       file_id: fileId,
       hazard_id: hazardId,
       color_palette: colorPalette,
-      hazard_opacity: hazardOpacity / 100, // Convert percentage to 0-1
+      hazard_opacity: hazardOpacity / 100,
       intensity_threshold: intensityThreshold,
+      basemap: basemap,
     }),
   })
 
