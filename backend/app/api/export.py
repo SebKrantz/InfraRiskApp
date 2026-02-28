@@ -46,11 +46,20 @@ class ExportMapRequest(BaseModel):
     intensity_threshold: Optional[float] = None
 
 
+def _threshold_labels(intensity_threshold: Optional[float]) -> tuple[str, str]:
+    """Return (affected_label, unaffected_label) based on the threshold."""
+    if intensity_threshold is not None:
+        t = f'{intensity_threshold:g}'
+        return f'Affected (\u2265 {t})', f'Unaffected (< {t})'
+    return 'Affected (> 0)', 'Unaffected (= 0)'
+
+
 def generate_barchart_png(
     analysis_result: dict,
     geometry_type: str,
     title: str,
-    full_gdf: Optional[gpd.GeoDataFrame] = None
+    full_gdf: Optional[gpd.GeoDataFrame] = None,
+    intensity_threshold: Optional[float] = None
 ) -> bytes:
     """
     Generate PNG barchart from analysis results.
@@ -65,6 +74,8 @@ def generate_barchart_png(
         Chart title
     full_gdf : GeoDataFrame, optional
         Full GeoDataFrame with vulnerability and damage_cost properties (for vulnerability mode)
+    intensity_threshold : float, optional
+        Hazard intensity threshold used for the analysis
     
     Returns:
     --------
@@ -180,8 +191,9 @@ def generate_barchart_png(
             unaffected = analysis_result.get('unaffected_meters', 0)
             ylabel = 'Length (meters)'
         
+        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
         plot_data = pd.DataFrame({
-            'Category': ['Affected', 'Unaffected'],
+            'Category': [affected_label, unaffected_label],
             'Value': [affected, unaffected]
         })
         
@@ -223,7 +235,8 @@ def generate_map_png(
     title: str,
     color_palette: str = 'turbo',
     hazard_opacity: float = 0.6,
-    is_vulnerability_mode: bool = False
+    is_vulnerability_mode: bool = False,
+    intensity_threshold: Optional[float] = None
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -242,6 +255,8 @@ def generate_map_png(
         Color palette name for hazard visualization
     hazard_opacity : float
         Opacity for hazard layer (0-1)
+    intensity_threshold : float, optional
+        Hazard intensity threshold used for the analysis
     
     Returns:
     --------
@@ -481,23 +496,24 @@ def generate_map_png(
         # Standard exposure mode: red for affected, green for unaffected
         affected_gdf = infrastructure_mercator[infrastructure_mercator['affected']]
         unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
+        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
         
         if geometry_type == 'Point':
             if len(unaffected_gdf) > 0:
                 unaffected_gdf.plot(ax=ax, color='#2ca02c', markersize=50, 
-                                  marker='o', label='Unaffected', alpha=0.8, 
+                                  marker='o', label=unaffected_label, alpha=0.8, 
                                   edgecolor='black', linewidth=0.5, zorder=3)
             if len(affected_gdf) > 0:
                 affected_gdf.plot(ax=ax, color='#d62728', markersize=50, 
-                                marker='o', label='Affected', alpha=0.8, 
+                                marker='o', label=affected_label, alpha=0.8, 
                                 edgecolor='black', linewidth=0.5, zorder=3)
         else:
             if len(unaffected_gdf) > 0:
                 unaffected_gdf.plot(ax=ax, color='#2ca02c', linewidth=2, 
-                                  label='Unaffected', alpha=0.8, zorder=3)
+                                  label=unaffected_label, alpha=0.8, zorder=3)
             if len(affected_gdf) > 0:
                 affected_gdf.plot(ax=ax, color='#d62728', linewidth=2, 
-                               label='Affected', alpha=0.8, zorder=3)
+                               label=affected_label, alpha=0.8, zorder=3)
     else:
         # No analysis - plot all in gray
         if geometry_type == 'Point':
@@ -627,7 +643,8 @@ async def export_barchart(request: ExportBarchartRequest):
             summary,
             geometry_type,
             title,
-            full_gdf
+            full_gdf,
+            request.intensity_threshold
         )
         
         # Generate filename
@@ -723,8 +740,9 @@ async def export_map(request: ExportMapRequest):
             geometry_type,
             title,
             request.color_palette,
-            1.0, # previously request.hazard_opacity  # Full opacity for export; ignore app hazard_opacity
-            is_vulnerability_mode
+            1.0,  # Full opacity for export
+            is_vulnerability_mode,
+            request.intensity_threshold
         )
         
         # Generate filename
