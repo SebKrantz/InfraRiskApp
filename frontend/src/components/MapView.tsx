@@ -729,7 +729,7 @@ export default function MapView({
     unaffectedColor: isVulnerabilityMode ? '#6b7280' : '#10b981',
     affectedColor: isVulnerabilityMode
       ? ['interpolate', ['linear'],
-          ['coalesce', ['get', 'vulnerability'], 0],
+          ['sqrt', ['coalesce', ['get', 'vulnerability'], 0]],
           0, '#10b981',
           0.5, '#f59e0b',
           1, '#ef4444']
