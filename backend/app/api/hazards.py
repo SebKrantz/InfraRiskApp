@@ -12,6 +12,7 @@ import re
 import csv
 
 from app.config import settings
+from app.utils.geospatial import _mask_raster_nodata
 
 router = APIRouter()
 
@@ -249,9 +250,9 @@ async def get_hazard_stats(hazard_id: str):
         try:
             with rasterio.open(cog_url) as src:
                 # Read a sample to get statistics (for large rasters, use overviews or sampling)
-                # For efficiency, we'll sample or use overviews if available
                 data = src.read(1, out_shape=(1000, 1000)) if src.width > 1000 or src.height > 1000 else src.read(1)
-                
+                data = _mask_raster_nodata(data, src.nodata)
+
                 # Calculate statistics, ignoring NaN/NoData values
                 valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
                 valid_data = data if np.all(valid_mask) else data[valid_mask]

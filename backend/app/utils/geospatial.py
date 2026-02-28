@@ -10,6 +10,29 @@ from shapely.geometry import Point, LineString
 from typing import Optional, Callable
 from pyproj import Geod
 import csv
+import threading
+
+# Thread-local buffer for nodata mask to avoid allocating a new boolean array every call
+_nodata_mask_thread_local = threading.local()
+
+
+def _mask_raster_nodata(data: np.ndarray, nodata: Optional[float]) -> np.ndarray:
+    """
+    Replace raster nodata values with NaN. Returns the array to use (same or float copy).
+    No-op if nodata is None. Uses a reusable thread-local boolean buffer for the
+    comparison so we don't allocate data.size bytes on every call (np.equal(..., out=buf)).
+    """
+    if nodata is None:
+        return data
+    if data.dtype.kind != "f":
+        data = data.astype(np.float64)
+    buf = getattr(_nodata_mask_thread_local, "mask_buf", None)
+    if buf is None or buf.shape != data.shape:
+        buf = np.empty(data.shape, dtype=np.bool_)
+        _nodata_mask_thread_local.mask_buf = buf
+    np.equal(data, nodata, out=buf)
+    np.putmask(data, buf, np.nan)
+    return data
 
 def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     """
@@ -343,10 +366,7 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-
-                            # Mask nodata values as NaN
-                            if tile_src.nodata is not None:
-                                data = np.where(data == tile_src.nodata, np.nan, data)
+                            data = _mask_raster_nodata(data, tile_src.nodata)
 
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
@@ -547,10 +567,7 @@ def analyze_intersection(
                         with rasterio.open(raster_url) as tile_src:
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-
-                            # Mask nodata values as NaN
-                            if tile_src.nodata is not None:
-                                data = np.where(data == tile_src.nodata, np.nan, data)
+                            data = _mask_raster_nodata(data, tile_src.nodata)
 
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)

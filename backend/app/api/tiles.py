@@ -19,6 +19,8 @@ from PIL import Image
 import matplotlib.cm as cm
 from cachetools import TTLCache
 
+from app.utils.geospatial import _mask_raster_nodata
+
 router = APIRouter()
 
 # Thread pool for blocking I/O operations
@@ -128,7 +130,8 @@ def _generate_tile_sync(
         bounds = _bounds_in_dataset_crs(bounds_wgs84, src)
         window = from_bounds(*bounds, src.transform)
         data = src.read(1, window=window, out_shape=(tile_size, tile_size))
-        
+        data = _mask_raster_nodata(data, src.nodata)
+
         colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
         
         img = Image.fromarray(colored, 'RGB')
@@ -151,7 +154,8 @@ def _generate_tile_sync(
             bounds = _bounds_in_dataset_crs(bounds_wgs84, src)
             window = from_bounds(*bounds, src.transform)
             data = src.read(1, window=window, out_shape=(tile_size, tile_size))
-            
+            data = _mask_raster_nodata(data, src.nodata)
+
             colored = apply_colormap(data, palette=palette, vmin=vmin, vmax=vmax)
             
             img = Image.fromarray(colored, 'RGB')

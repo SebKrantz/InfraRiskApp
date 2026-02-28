@@ -18,7 +18,7 @@ import numpy as np
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 from app.api.analyze import get_cached_raster_values, get_cached_analysis_result
-from app.utils.geospatial import analyze_intersection
+from app.utils.geospatial import analyze_intersection, _mask_raster_nodata
 
 router = APIRouter()
 
@@ -329,7 +329,8 @@ def generate_map_png(
             
             # Read only the windowed, downsampled data
             hazard_data = src.read(1, window=window, out_shape=out_shape, boundless=True, fill_value=np.nan)
-            
+            hazard_data = _mask_raster_nodata(hazard_data, src.nodata)
+
             # Get transform for the downsampled window
             window_transform = src.window_transform(window)
             
