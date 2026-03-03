@@ -812,7 +812,7 @@ export default function Sidebar({
           <div className="space-y-3">
             <div>
               <p className="text-sm text-gray-700">
-                Enter the monetary cost of replacing the infrastructure asset. This value is unitless and can be in any currency.
+                Enter the monetary cost of replacing the infrastructure asset. This value is unitless and can be in any currency. The barchart export however will dispay the total damage cost in USD.
               </p>
             </div>
             <div>
