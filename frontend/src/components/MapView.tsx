@@ -1804,6 +1804,36 @@ export default function MapView({
         )
       })()}
 
+      {/* Vulnerability Color Bar Legend */}
+      {vulnerabilityAnalysisEnabled && analysisResult?.infrastructure_features && (() => {
+        const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
+          const pct = Math.pow(p, 2) * 100
+          return { position: p * 100, label: pct >= 10 ? `${Math.round(pct)}%` : pct >= 1 ? `${pct.toFixed(1)}%` : `${pct.toFixed(1)}%` }
+        })
+        const gradient = 'linear-gradient(to right, #10b981 0%, #f59e0b 50%, #ef4444 100%)'
+        return (
+          <div className="absolute bottom-4 left-4 z-10 bg-white/60 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-gray-600 mb-1">Vulnerability</div>
+            <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
+            <div className="relative" style={{ width: 220, height: 16 }}>
+              {ticks.map((t, i) => (
+                <span
+                  key={i}
+                  className="absolute text-[10px] text-gray-600"
+                  style={{
+                    left: `${t.position}%`,
+                    transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
+                    top: 2,
+                  }}
+                >
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* Map Container */}
       <div 
         ref={mapContainer} 
