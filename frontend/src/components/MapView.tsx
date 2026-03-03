@@ -541,7 +541,7 @@ export default function MapView({
       computedFeatures.push({ label: 'Length:', value: formatLength(lengthM) })
     }
     
-    if (affected !== undefined) {
+    if (affected !== undefined && !vulnerabilityAnalysisEnabled) {
       const affectedValue = typeof affected === 'boolean' ? (affected ? 'Yes' : 'No') : formatValue(affected)
       computedFeatures.push({ label: 'Affected:', value: affectedValue })
     }
@@ -735,10 +735,10 @@ export default function MapView({
           1, '#ef4444']
       : '#ef4444',
     unaffectedFilter: isVulnerabilityMode
-      ? ['<', ['coalesce', ['get', 'vulnerability'], 0], 0.01]
+      ? ['boolean', false]
       : ['==', ['get', 'affected'], false],
     affectedFilter: isVulnerabilityMode
-      ? ['>=', ['coalesce', ['get', 'vulnerability'], 0], 0.01]
+      ? ['boolean', true]
       : ['==', ['get', 'affected'], true],
   })
 

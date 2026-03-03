@@ -294,8 +294,8 @@ export default function Sidebar({
                 </div>
               </div>
 
-              {/* Intensity Slider */}
-              {selectedHazard && hazardStats && (
+              {/* Intensity Slider (hidden in vulnerability mode) */}
+              {selectedHazard && hazardStats && !vulnerabilityAnalysisEnabled && (
                 <div className="mb-3">
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-sm font-medium text-gray-300">
@@ -332,7 +332,7 @@ export default function Sidebar({
               )}
 
               {/* Horizontal Separator */}
-              <hr className="my-4 border-gray-700" />
+              <hr className={`border-gray-700 ${selectedHazard && hazardStats && !vulnerabilityAnalysisEnabled ? 'my-4' : 'mt-1 mb-4'}`} />
 
               {/* Vulnerability Analysis Section */}
               <div className={vulnerabilityAnalysisEnabled ? "mb-2" : "mb-1"}>
