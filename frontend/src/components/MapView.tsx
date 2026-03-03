@@ -1783,7 +1783,8 @@ export default function MapView({
         const stops = COLORMAP_STOPS[colorPalette]
         const gradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1) * 100).toFixed(0)}%`).join(', ')})`
         return (
-          <div className="absolute top-4 left-4 z-10 bg-white/60 rounded-lg px-3 py-2">
+          <div className="absolute top-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-gray-800 mb-1">Hazard Intensity</div>
             <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
             <div className="relative" style={{ width: 220, height: 16 }}>
               {ticks.map((t, i) => (
@@ -1812,14 +1813,14 @@ export default function MapView({
         })
         const gradient = 'linear-gradient(to right, #10b981 0%, #f59e0b 50%, #ef4444 100%)'
         return (
-          <div className="absolute bottom-4 left-4 z-10 bg-white/60 rounded-lg px-3 py-2">
-            <div className="text-[10px] text-gray-600 mb-1">Vulnerability</div>
+          <div className="absolute bottom-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-gray-800 mb-1">Vulnerability</div>
             <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
             <div className="relative" style={{ width: 220, height: 16 }}>
               {ticks.map((t, i) => (
                 <span
                   key={i}
-                  className="absolute text-[10px] text-gray-600"
+                  className="absolute text-[10px] text-gray-800"
                   style={{
                     left: `${t.position}%`,
                     transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
