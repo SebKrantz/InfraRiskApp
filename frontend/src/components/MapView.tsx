@@ -14,6 +14,7 @@ interface MapViewProps {
   onBasemapChange: (basemap: Basemap) => void
   loadingAnalysis?: boolean
   vulnerabilityAnalysisEnabled?: boolean
+  hazardStats?: { min: number; max: number } | null
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -323,6 +324,15 @@ const basemapStyles: Record<Basemap, any> = {
   }
 }
 
+const COLORMAP_STOPS: Record<ColorPalette, string[]> = {
+  viridis: ['#440154', '#472777', '#3e4989', '#30678d', '#25828e', '#1e9d88', '#35b778', '#6dce58', '#b5dd2b', '#fde724'],
+  magma: ['#000003', '#170f3c', '#430f75', '#711f81', '#9e2e7e', '#cd3f70', '#f0605d', '#fd9567', '#fec98d', '#fbfcbf'],
+  inferno: ['#000003', '#1a0b40', '#4a0b6a', '#781c6d', '#a42c60', '#cf4446', '#ed6825', '#fb9b06', '#f7d13c', '#fcfea4'],
+  plasma: ['#0c0786', '#45039e', '#7200a8', '#9b179e', '#bc3685', '#d7576b', '#ec7853', '#fa9f3a', '#fcc926', '#eff821'],
+  cividis: ['#00224d', '#11356f', '#3a486b', '#575d6d', '#6f7073', '#898678', '#a59b73', '#c3b368', '#e1cc54', '#fde737'],
+  turbo: ['#30123b', '#4560d6', '#36a8f9', '#1ae4b6', '#71fd5f', '#c8ee33', '#f9ba38', '#f56817', '#c92903', '#7a0402'],
+}
+
 export default function MapView({
   uploadedFile,
   selectedHazard,
@@ -334,6 +344,7 @@ export default function MapView({
   onBasemapChange,
   loadingAnalysis = false,
   vulnerabilityAnalysisEnabled = false,
+  hazardStats = null,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
@@ -1760,6 +1771,38 @@ export default function MapView({
           )}
         </div>
       )}
+
+      {/* Hazard Color Bar Legend */}
+      {selectedHazard && hazardStats && hazardVisible && (() => {
+        const sqrtMin = Math.sqrt(hazardStats.min)
+        const sqrtMax = Math.sqrt(hazardStats.max)
+        const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
+          const val = Math.pow(p * (sqrtMax - sqrtMin) + sqrtMin, 2)
+          return { position: p * 100, label: val >= 100 ? Math.round(val).toLocaleString() : val >= 1 ? val.toFixed(1) : val.toFixed(2) }
+        })
+        const stops = COLORMAP_STOPS[colorPalette]
+        const gradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1) * 100).toFixed(0)}%`).join(', ')})`
+        return (
+          <div className="absolute top-4 left-4 z-10 bg-white/80 rounded-lg px-3 py-2">
+            <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
+            <div className="relative" style={{ width: 220, height: 16 }}>
+              {ticks.map((t, i) => (
+                <span
+                  key={i}
+                  className="absolute text-[10px] text-gray-600"
+                  style={{
+                    left: `${t.position}%`,
+                    transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
+                    top: 2,
+                  }}
+                >
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Map Container */}
       <div 
