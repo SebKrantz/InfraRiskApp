@@ -1783,13 +1783,13 @@ export default function MapView({
         const stops = COLORMAP_STOPS[colorPalette]
         const gradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1) * 100).toFixed(0)}%`).join(', ')})`
         return (
-          <div className="absolute top-4 left-4 z-10 bg-white/80 rounded-lg px-3 py-2">
+          <div className="absolute top-4 left-4 z-10 bg-white/60 rounded-lg px-3 py-2">
             <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
             <div className="relative" style={{ width: 220, height: 16 }}>
               {ticks.map((t, i) => (
                 <span
                   key={i}
-                  className="absolute text-[10px] text-gray-600"
+                  className="absolute text-[10px] text-gray-800"
                   style={{
                     left: `${t.position}%`,
                     transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
