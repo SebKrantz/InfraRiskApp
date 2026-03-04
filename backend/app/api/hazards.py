@@ -167,6 +167,10 @@ async def get_hazards():
             
             if hazard_data.get("background_paper"):
                 hazard["metadata"] = hazard_data["background_paper"]
+
+            # Surface unit from CSV if present (used by frontend for labels)
+            if hazard_data.get("unit"):
+                hazard["unit"] = hazard_data["unit"]
             
             hazards.append(hazard)
         
@@ -210,6 +214,10 @@ async def get_hazard_info(hazard_id: str):
         
         if hazard_data.get("background_paper"):
             hazard_info["metadata"] = hazard_data["background_paper"]
+
+        # Include unit field for detailed hazard info as well
+        if hazard_data.get("unit"):
+            hazard_info["unit"] = hazard_data["unit"]
         
         return JSONResponse(content=hazard_info)
         

@@ -4,6 +4,7 @@ export interface Hazard {
   url: string
   description?: string
   metadata?: string
+  unit?: string
 }
 
 export interface UploadedFile {
