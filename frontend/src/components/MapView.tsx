@@ -1799,9 +1799,21 @@ export default function MapView({
         })
         const stops = COLORMAP_STOPS[colorPalette]
         const gradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1) * 100).toFixed(0)}%`).join(', ')})`
+
+        // Build legend title with hazard unit, avoiding double parentheses like ((index))
+        let unitLabel: string | null = null
+        if (selectedHazard.unit) {
+          let u = selectedHazard.unit.trim()
+          if (u.startsWith('(') && u.endsWith(')') && u.length > 2) {
+            u = u.slice(1, -1).trim()
+          }
+          unitLabel = u || null
+        }
+        const legendTitle = unitLabel ? `Hazard Intensity (${unitLabel})` : 'Hazard Intensity'
+
         return (
           <div className="absolute top-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
-            <div className="text-[10px] text-gray-800 mb-1">Hazard Intensity</div>
+            <div className="text-[10px] text-gray-800 mb-1">{legendTitle}</div>
             <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
             <div className="relative" style={{ width: 220, height: 16 }}>
               {ticks.map((t, i) => (
@@ -1823,7 +1835,7 @@ export default function MapView({
       })()}
 
       {/* Vulnerability Color Bar Legend */}
-      {vulnerabilityAnalysisEnabled && analysisResult?.infrastructure_features && (() => {
+      {vulnerabilityAnalysisEnabled && infrastructureVisible && analysisResult?.infrastructure_features && (() => {
         const maxPct = maxVulnerability * 100
         const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
           const pct = Math.pow(p, 2) * maxPct
