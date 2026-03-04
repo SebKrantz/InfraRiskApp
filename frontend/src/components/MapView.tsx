@@ -1822,7 +1822,7 @@ export default function MapView({
       })()}
 
       {/* Vulnerability Color Bar Legend */}
-      {vulnerabilityAnalysisEnabled && analysisResult?.infrastructure_features && (() => {
+      {vulnerabilityAnalysisEnabled && infrastructureVisible && analysisResult?.infrastructure_features && (() => {
         const maxPct = maxVulnerability * 100
         const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
           const pct = Math.pow(p, 2) * maxPct
