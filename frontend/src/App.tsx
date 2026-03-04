@@ -167,6 +167,7 @@ function App() {
         onBasemapChange={setBasemap}
         loadingAnalysis={loadingAnalysis}
         vulnerabilityAnalysisEnabled={vulnerabilityAnalysisEnabled}
+        hazardStats={hazardStats}
       />
     </div>
   )

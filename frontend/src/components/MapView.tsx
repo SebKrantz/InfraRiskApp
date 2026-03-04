@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import maplibregl from 'maplibre-gl'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Select } from './ui/select'
@@ -14,6 +14,7 @@ interface MapViewProps {
   onBasemapChange: (basemap: Basemap) => void
   loadingAnalysis?: boolean
   vulnerabilityAnalysisEnabled?: boolean
+  hazardStats?: { min: number; max: number } | null
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -323,6 +324,15 @@ const basemapStyles: Record<Basemap, any> = {
   }
 }
 
+const COLORMAP_STOPS: Record<ColorPalette, string[]> = {
+  viridis: ['#440154', '#472777', '#3e4989', '#30678d', '#25828e', '#1e9d88', '#35b778', '#6dce58', '#b5dd2b', '#fde724'],
+  magma: ['#000003', '#170f3c', '#430f75', '#711f81', '#9e2e7e', '#cd3f70', '#f0605d', '#fd9567', '#fec98d', '#fbfcbf'],
+  inferno: ['#000003', '#1a0b40', '#4a0b6a', '#781c6d', '#a42c60', '#cf4446', '#ed6825', '#fb9b06', '#f7d13c', '#fcfea4'],
+  plasma: ['#0c0786', '#45039e', '#7200a8', '#9b179e', '#bc3685', '#d7576b', '#ec7853', '#fa9f3a', '#fcc926', '#eff821'],
+  cividis: ['#00224d', '#11356f', '#3a486b', '#575d6d', '#6f7073', '#898678', '#a59b73', '#c3b368', '#e1cc54', '#fde737'],
+  turbo: ['#30123b', '#4560d6', '#36a8f9', '#1ae4b6', '#71fd5f', '#c8ee33', '#f9ba38', '#f56817', '#c92903', '#7a0402'],
+}
+
 export default function MapView({
   uploadedFile,
   selectedHazard,
@@ -334,6 +344,7 @@ export default function MapView({
   onBasemapChange,
   loadingAnalysis = false,
   vulnerabilityAnalysisEnabled = false,
+  hazardStats = null,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
@@ -344,9 +355,20 @@ export default function MapView({
   // Layer visibility state (basemap always on)
   const [infrastructureVisible, setInfrastructureVisible] = useState(true)
   const [hazardVisible, setHazardVisible] = useState(true)
+
+  // Observed max vulnerability across all features (0-1 scale)
+  const maxVulnerability = useMemo(() => {
+    if (!vulnerabilityAnalysisEnabled || !analysisResult?.infrastructure_features?.features) return 1
+    let max = 0
+    for (const f of analysisResult.infrastructure_features.features) {
+      const v = f.properties?.vulnerability ?? 0
+      if (v > max) max = v
+    }
+    return max || 1
+  }, [vulnerabilityAnalysisEnabled, analysisResult])
   
   // Store current prop values for restoration
-  const currentProps = useRef({ uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled })
+  const currentProps = useRef({ uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled, maxVulnerability })
   
   // Track zoom level and bounds to prevent unnecessary reloads
   const lastZoomLevel = useRef<number | null>(null)
@@ -356,8 +378,8 @@ export default function MapView({
   
   // Update refs when props change
   useEffect(() => {
-    currentProps.current = { uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled }
-  }, [uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled])
+    currentProps.current = { uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled, maxVulnerability }
+  }, [uploadedFile, selectedHazard, analysisResult, hazardOpacity, colorPalette, vulnerabilityAnalysisEnabled, maxVulnerability])
 
   useEffect(() => {
     if (!mapContainer.current || map.current) return
@@ -726,22 +748,25 @@ export default function MapView({
     if (map.current.getSource(sourceId)) map.current.removeSource(sourceId)
   }
 
-  const getInfraStyle = (isVulnerabilityMode: boolean): { unaffectedColor: any; affectedColor: any; unaffectedFilter: any; affectedFilter: any } => ({
-    unaffectedColor: isVulnerabilityMode ? '#6b7280' : '#10b981',
-    affectedColor: isVulnerabilityMode
-      ? ['interpolate', ['linear'],
-          ['sqrt', ['coalesce', ['get', 'vulnerability'], 0]],
-          0, '#10b981',
-          0.5, '#f59e0b',
-          1, '#ef4444']
-      : '#ef4444',
-    unaffectedFilter: isVulnerabilityMode
-      ? ['boolean', false]
-      : ['==', ['get', 'affected'], false],
-    affectedFilter: isVulnerabilityMode
-      ? ['boolean', true]
-      : ['==', ['get', 'affected'], true],
-  })
+  const getInfraStyle = (isVulnerabilityMode: boolean, maxVuln = 1): { unaffectedColor: any; affectedColor: any; unaffectedFilter: any; affectedFilter: any } => {
+    const sqrtMax = Math.sqrt(maxVuln)
+    return {
+      unaffectedColor: isVulnerabilityMode ? '#6b7280' : '#10b981',
+      affectedColor: isVulnerabilityMode
+        ? ['interpolate', ['linear'],
+            ['sqrt', ['coalesce', ['get', 'vulnerability'], 0]],
+            0, '#10b981',
+            sqrtMax * 0.5, '#f59e0b',
+            sqrtMax, '#ef4444']
+        : '#ef4444',
+      unaffectedFilter: isVulnerabilityMode
+        ? ['boolean', false]
+        : ['==', ['get', 'affected'], false],
+      affectedFilter: isVulnerabilityMode
+        ? ['boolean', true]
+        : ['==', ['get', 'affected'], true],
+    }
+  }
 
   const addInfrastructure = () => {
     if (!map.current) return
@@ -755,7 +780,7 @@ export default function MapView({
     const isPoint = (props.analysisResult?.geometry_type || file.geometry_type) === 'Point'
     const hasAffected = !!props.analysisResult?.infrastructure_features
     const isVulnMode = !!props.vulnerabilityAnalysisEnabled && hasAffected
-    const style = getInfraStyle(isVulnMode)
+    const style = getInfraStyle(isVulnMode, props.maxVulnerability)
     if (!geoJson) return
     removeInfrastructure()
     try {
@@ -824,6 +849,7 @@ export default function MapView({
       colorPalette: props.colorPalette,
       analysisResult: props.analysisResult,
       vulnerabilityAnalysisEnabled: !!props.vulnerabilityAnalysisEnabled,
+      maxVulnerability: props.maxVulnerability,
     }
     
     // Function to restore layers
@@ -899,7 +925,7 @@ export default function MapView({
           
           // Add layers based on whether we have affected status
           const isRestoreVulnMode = needsRestore.vulnerabilityAnalysisEnabled && needsRestore.hasAffected
-          const restoreStyle = getInfraStyle(isRestoreVulnMode)
+          const restoreStyle = getInfraStyle(isRestoreVulnMode, needsRestore.maxVulnerability)
           if (needsRestore.hasAffected) {
             const needsGradientLayer = isRestoreVulnMode
               || (needsRestore.isPoint
@@ -1378,7 +1404,7 @@ export default function MapView({
 
           // If we have analysis results, show affected/unaffected coloring
           if (analysisResult?.infrastructure_features) {
-            const mainStyle = getInfraStyle(vulnerabilityAnalysisEnabled)
+            const mainStyle = getInfraStyle(vulnerabilityAnalysisEnabled, maxVulnerability)
             const needsGradientLayer = vulnerabilityAnalysisEnabled
               || (isPoint
                 ? (analysisResult.summary.affected_count || 0) > 0
@@ -1590,7 +1616,7 @@ export default function MapView({
         clearTimeout(debounceTimer.current)
       }
     }
-  }, [uploadedFile, analysisResult, mapLoaded, infrastructureVisible, vulnerabilityAnalysisEnabled])
+  }, [uploadedFile, analysisResult, mapLoaded, infrastructureVisible, vulnerabilityAnalysisEnabled, maxVulnerability])
 
   // Basemap style switcher (always on)
   useEffect(() => {
@@ -1761,6 +1787,70 @@ export default function MapView({
           )}
         </div>
       )}
+
+      {/* Hazard Color Bar Legend */}
+      {selectedHazard && hazardStats && hazardVisible && (() => {
+        const sqrtMin = Math.sqrt(hazardStats.min)
+        const sqrtMax = Math.sqrt(hazardStats.max)
+        const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
+          const val = Math.pow(p * (sqrtMax - sqrtMin) + sqrtMin, 2)
+          return { position: p * 100, label: val >= 100 ? Math.round(val).toLocaleString() : val >= 1 ? val.toFixed(1) : val.toFixed(2) }
+        })
+        const stops = COLORMAP_STOPS[colorPalette]
+        const gradient = `linear-gradient(to right, ${stops.map((c, i) => `${c} ${(i / (stops.length - 1) * 100).toFixed(0)}%`).join(', ')})`
+        return (
+          <div className="absolute top-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-gray-800 mb-1">Hazard Intensity</div>
+            <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
+            <div className="relative" style={{ width: 220, height: 16 }}>
+              {ticks.map((t, i) => (
+                <span
+                  key={i}
+                  className="absolute text-[10px] text-gray-800"
+                  style={{
+                    left: `${t.position}%`,
+                    transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
+                    top: 2,
+                  }}
+                >
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Vulnerability Color Bar Legend */}
+      {vulnerabilityAnalysisEnabled && analysisResult?.infrastructure_features && (() => {
+        const maxPct = maxVulnerability * 100
+        const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
+          const pct = Math.pow(p, 2) * maxPct
+          return { position: p * 100, label: pct >= 10 ? `${Math.round(pct)}%` : pct >= 0.1 ? `${pct.toFixed(1)}%` : `${pct.toFixed(2)}%` }
+        })
+        const gradient = 'linear-gradient(to right, #10b981 0%, #f59e0b 50%, #ef4444 100%)'
+        return (
+          <div className="absolute bottom-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
+            <div className="text-[10px] text-gray-800 mb-1">Vulnerability</div>
+            <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
+            <div className="relative" style={{ width: 220, height: 16 }}>
+              {ticks.map((t, i) => (
+                <span
+                  key={i}
+                  className="absolute text-[10px] text-gray-800"
+                  style={{
+                    left: `${t.position}%`,
+                    transform: i === ticks.length - 1 ? 'translateX(-100%)' : i === 0 ? 'none' : 'translateX(-50%)',
+                    top: 2,
+                  }}
+                >
+                  {t.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Map Container */}
       <div 
