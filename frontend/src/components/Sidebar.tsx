@@ -125,7 +125,7 @@ export default function Sidebar({
           <div className="flex flex-col h-full overflow-y-auto p-4">
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
-              <h1 className="text-xl font-bold text-white">Infrastructure Risk Analyzer</h1>
+              <h1 className="text-xl font-bold text-white">Infrastructure Risk Analyzer (Beta Version)</h1>
               <Button variant="ghost" size="sm" onClick={onToggle} className="text-gray-300 hover:text-white hover:bg-gray-800">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
