@@ -323,12 +323,12 @@ export default function Sidebar({
                       step={0.001}
                     />
                     <div className="flex justify-between text-xs text-gray-400">
-                      <span>{hazardStats.min.toFixed(2)}</span>
+                      <span>{hazardStats.min.toFixed(1)}</span>
                       <span>
-                        Current: {intensityThreshold.toFixed(2)}
+                        Current: {intensityThreshold.toFixed(1)}
                         {selectedHazard?.unit ? ` ${selectedHazard.unit}` : ''}
                       </span>
-                      <span>{hazardStats.max.toFixed(2)}</span>
+                      <span>{hazardStats.max.toFixed(1)}</span>
                     </div>
                   </div>
                 </div>
