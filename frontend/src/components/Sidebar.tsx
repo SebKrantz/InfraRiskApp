@@ -324,7 +324,10 @@ export default function Sidebar({
                     />
                     <div className="flex justify-between text-xs text-gray-400">
                       <span>{hazardStats.min.toFixed(2)}</span>
-                      <span>Current: {intensityThreshold.toFixed(2)}</span>
+                      <span>
+                        Current: {intensityThreshold.toFixed(2)}
+                        {selectedHazard?.unit ? ` ${selectedHazard.unit}` : ''}
+                      </span>
                       <span>{hazardStats.max.toFixed(2)}</span>
                     </div>
                   </div>

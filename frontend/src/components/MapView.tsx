@@ -484,7 +484,7 @@ export default function MapView({
       return String(value)
     }
 
-    const formatExposureLevel = (value: any): string => {
+    const formatExposureLevel = (value: any, unit?: string): string => {
       if (value === null || value === undefined) {
         return '<span class="text-gray-400 italic">N/A</span>'
       }
@@ -492,10 +492,11 @@ export default function MapView({
         // Format exposure levels with 2-4 decimal places
         // Show 4 decimal places, but remove trailing zeros
         const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-        return parseFloat(formatted).toLocaleString('en-US', {
+        const base = parseFloat(formatted).toLocaleString('en-US', {
           minimumFractionDigits: 0,
           maximumFractionDigits: 4
         })
+        return unit ? `${base} ${unit}` : base
       }
       return String(value)
     }
@@ -551,14 +552,14 @@ export default function MapView({
     if (exposureLevelMax !== undefined || exposureLevelAvg !== undefined) {
       // LineString segment feature - show max and avg exposure levels
       if (exposureLevelMax !== undefined && exposureLevelMax !== null) {
-        computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax) })
+        computedFeatures.push({ label: 'Max Exposure Level:', value: formatExposureLevel(exposureLevelMax, selectedHazard?.unit) })
       }
       if (exposureLevelAvg !== undefined && exposureLevelAvg !== null) {
-        computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg) })
+        computedFeatures.push({ label: 'Avg Exposure Level:', value: formatExposureLevel(exposureLevelAvg, selectedHazard?.unit) })
       }
     } else if (exposureLevel !== undefined && exposureLevel !== null) {
       // Point feature - show single exposure level
-      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel) })
+      computedFeatures.push({ label: 'Exposure Level:', value: formatExposureLevel(exposureLevel, selectedHazard?.unit) })
     }
     
     // Add vulnerability and damage cost if available
