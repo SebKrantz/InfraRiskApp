@@ -9,6 +9,11 @@ export interface SliderProps
 
 const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
   ({ className, value, onValueChange, min = 0, max = 100, step = 1, ...props }, ref) => {
+    const minN = Number(min)
+    const maxN = Number(max)
+    const valueN = Number(value ?? 0)
+    const range = maxN - minN
+    const fillPct = range === 0 ? 0 : ((valueN - minN) / range) * 100
     return (
       <input
         type="range"
@@ -25,7 +30,7 @@ const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
           className
         )}
         style={{
-          background: `linear-gradient(to right, rgb(37, 99, 235) 0%, rgb(37, 99, 235) ${((value || 0) - (min || 0)) / ((max || 100) - (min || 0)) * 100}%, rgb(229, 231, 235) ${((value || 0) - (min || 0)) / ((max || 100) - (min || 0)) * 100}%, rgb(229, 231, 235) 100%)`
+          background: `linear-gradient(to right, rgb(37, 99, 235) 0%, rgb(37, 99, 235) ${fillPct}%, rgb(229, 231, 235) ${fillPct}%, rgb(229, 231, 235) 100%)`,
         }}
         {...props}
       />
