@@ -64,12 +64,26 @@ BASEMAP_TILE_URLS: dict[str, str] = {
 }
 
 
-def _threshold_labels(intensity_threshold: Optional[float]) -> tuple[str, str]:
-    """Return (affected_label, unaffected_label) based on the threshold."""
+def _hazard_intensity_cbar_label(unit: Optional[str]) -> str:
+    """Legend text for hazard colorbar; strip one pair of outer parentheses from unit (e.g. (index))."""
+    if not unit or not str(unit).strip():
+        return "Hazard Intensity"
+    u = str(unit).strip()
+    if u.startswith("(") and u.endswith(")") and len(u) > 2:
+        u = u[1:-1].strip()
+    return f"Hazard Intensity ({u})" if u else "Hazard Intensity"
+
+
+def _threshold_labels(
+    intensity_threshold: Optional[float],
+    hazard_unit: Optional[str] = None,
+) -> tuple[str, str]:
+    """Return (affected_label, unaffected_label); append hazard unit as-is when present."""
+    suffix = f" {hazard_unit}" if hazard_unit and str(hazard_unit).strip() else ""
     if intensity_threshold is not None:
         t = f'{intensity_threshold:g}'
-        return f'Affected (\u2265 {t})', f'Unaffected (< {t})'
-    return 'Affected (> 0)', 'Unaffected (= 0)'
+        return f'Affected (\u2265 {t}){suffix}', f'Unaffected (< {t}){suffix}'
+    return f'Affected (> 0){suffix}', f'Unaffected (= 0){suffix}'
 
 
 def generate_barchart_png(
@@ -77,7 +91,8 @@ def generate_barchart_png(
     geometry_type: str,
     title: str,
     full_gdf: Optional[gpd.GeoDataFrame] = None,
-    intensity_threshold: Optional[float] = None
+    intensity_threshold: Optional[float] = None,
+    hazard_unit: Optional[str] = None,
 ) -> bytes:
     """
     Generate PNG barchart from analysis results.
@@ -94,6 +109,8 @@ def generate_barchart_png(
         Full GeoDataFrame with vulnerability and damage_cost properties (for vulnerability mode)
     intensity_threshold : float, optional
         Hazard intensity threshold used for the analysis
+    hazard_unit : str, optional
+        Unit string from hazard metadata for category labels (exposure mode)
     
     Returns:
     --------
@@ -209,7 +226,9 @@ def generate_barchart_png(
             unaffected = analysis_result.get('unaffected_meters', 0)
             ylabel = 'Length (meters)'
         
-        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
+        affected_label, unaffected_label = _threshold_labels(
+            intensity_threshold, hazard_unit
+        )
         plot_data = pd.DataFrame({
             'Category': [affected_label, unaffected_label],
             'Value': [affected, unaffected]
@@ -255,7 +274,8 @@ def generate_map_png(
     hazard_opacity: float = 0.6,
     is_vulnerability_mode: bool = False,
     intensity_threshold: Optional[float] = None,
-    basemap: str = 'positron'
+    basemap: str = 'positron',
+    hazard_unit: Optional[str] = None,
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -278,6 +298,8 @@ def generate_map_png(
         Hazard intensity threshold used for the analysis
     basemap : str
         Basemap tile provider name
+    hazard_unit : str, optional
+        Unit string from hazard metadata for colorbar and legend labels
     
     Returns:
     --------
@@ -320,6 +342,7 @@ def generate_map_png(
     # Deferred colorbars for vulnerability mode (drawn after tight_layout for stable positioning)
     hazard_sm = None
     vuln_sm = None
+    hazard_cbar_label = _hazard_intensity_cbar_label(hazard_unit)
     
     # Add basemap (should be at zorder 0, behind everything)
     try:
@@ -456,7 +479,7 @@ def generate_map_png(
                 else:
                     cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
                                        pad=0.02, shrink=0.6, aspect=20)
-                    cbar.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+                    cbar.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
                     cbar.ax.tick_params(labelsize=9)
     except Exception as e:
         print(f"Warning: Could not load hazard raster: {e}")
@@ -514,7 +537,9 @@ def generate_map_png(
         # Standard exposure mode: red for affected, green for unaffected
         affected_gdf = infrastructure_mercator[infrastructure_mercator['affected']]
         unaffected_gdf = infrastructure_mercator[~infrastructure_mercator['affected']]
-        affected_label, unaffected_label = _threshold_labels(intensity_threshold)
+        affected_label, unaffected_label = _threshold_labels(
+            intensity_threshold, hazard_unit
+        )
         
         if geometry_type == 'Point':
             if len(unaffected_gdf) > 0:
@@ -566,7 +591,7 @@ def generate_map_png(
         if hazard_sm is not None:
             cax_h = fig.add_axes([cbar_x, pos.y0, cbar_width, cbar_height])
             cb_h = plt.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
-            cb_h.set_label('Hazard Intensity', rotation=270, labelpad=15, fontsize=10)
+            cb_h.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
             cb_h.ax.tick_params(labelsize=9)
         cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])
         cb_v = plt.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
@@ -648,6 +673,7 @@ async def export_barchart(request: ExportBarchartRequest):
         
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
+        hazard_unit = hazard_data.get("unit")
         if summary.get("total_damage_cost") is not None:
             title = f"{hazard_name} - Vulnerability Analysis"
         else:
@@ -662,7 +688,8 @@ async def export_barchart(request: ExportBarchartRequest):
             geometry_type,
             title,
             full_gdf,
-            request.intensity_threshold
+            request.intensity_threshold,
+            hazard_unit,
         )
         
         # Generate filename
@@ -743,6 +770,7 @@ async def export_map(request: ExportMapRequest):
         
         # Generate title
         hazard_name = hazard_data.get("hazard", request.hazard_id)
+        hazard_unit = hazard_data.get("unit")
         if is_vulnerability_mode:
             title = f"{hazard_name} - Vulnerability Analysis Map"
         else:
@@ -761,7 +789,8 @@ async def export_map(request: ExportMapRequest):
             1.0,  # Full opacity for export
             is_vulnerability_mode,
             request.intensity_threshold,
-            request.basemap
+            request.basemap,
+            hazard_unit,
         )
         
         # Generate filename
