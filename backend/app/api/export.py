@@ -345,22 +345,55 @@ def generate_map_png(
     hazard_cbar_label = _hazard_intensity_cbar_label(hazard_unit)
     
     # Add basemap (should be at zorder 0, behind everything)
+    # Use bounds2img with a short per-tile wait to reduce bursty requests on restricted networks.
     try:
+        import inspect
         import contextily as ctx
+
         tile_url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
-        ctx.add_basemap(
-            ax,
-            crs='EPSG:3857',
-            source=tile_url,
-            zoom='auto',
-            zorder=0
+
+        bounds2img_kwargs = {
+            "zoom": "auto",
+            "source": tile_url,
+            "ll": False,  # Bounds are already in EPSG:3857 (Web Mercator)
+        }
+        bounds2img_params = inspect.signature(ctx.bounds2img).parameters
+        if "wait" in bounds2img_params:
+            bounds2img_kwargs["wait"] = 0.1  # 100ms between tile fetch retries/requests
+        if "n_connections" in bounds2img_params:
+            bounds2img_kwargs["n_connections"] = 1
+
+        basemap_img, basemap_extent = ctx.bounds2img(
+            bbox_mercator[0],
+            bbox_mercator[1],
+            bbox_mercator[2],
+            bbox_mercator[3],
+            **bounds2img_kwargs,
+        )
+        ax.imshow(
+            basemap_img,
+            extent=basemap_extent,
+            interpolation="bilinear",
+            zorder=0,
         )
     except ImportError:
         print("Warning: contextily not available, skipping basemap")
     except Exception as e:
-        import traceback
-        print(f"Warning: Could not add basemap: {e}")
-        traceback.print_exc()
+        # Fallback to add_basemap for compatibility with contextily variants.
+        try:
+            import contextily as ctx
+            tile_url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS["positron"])
+            ctx.add_basemap(
+                ax,
+                crs="EPSG:3857",
+                source=tile_url,
+                zoom="auto",
+                zorder=0,
+            )
+        except Exception as fallback_e:
+            import traceback
+            print(f"Warning: Could not add basemap (throttled path failed: {e}; fallback failed: {fallback_e})")
+            traceback.print_exc()
     
     # Load and clip hazard raster using rasterio (much faster than xarray)
     try:
