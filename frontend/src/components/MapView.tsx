@@ -1733,61 +1733,109 @@ export default function MapView({
     }
   }, [selectedHazard])
 
+  const [zoomUi, setZoomUi] = useState<{ z: number; min: number; max: number } | null>(null)
+
+  useEffect(() => {
+    if (!map.current || !mapLoaded) {
+      setZoomUi(null)
+      return
+    }
+    const m = map.current
+    const sync = () => {
+      setZoomUi({ z: m.getZoom(), min: m.getMinZoom(), max: m.getMaxZoom() })
+    }
+    sync()
+    m.on('zoom', sync)
+    m.on('zoomend', sync)
+    m.on('style.load', sync)
+    return () => {
+      m.off('zoom', sync)
+      m.off('zoomend', sync)
+      m.off('style.load', sync)
+    }
+  }, [mapLoaded])
+
+  const mapReady = mapLoaded && map.current != null
+  const atMaxZoom = zoomUi != null && zoomUi.z >= zoomUi.max - 1e-6
+  const atMinZoom = zoomUi != null && zoomUi.z <= zoomUi.min + 1e-6
+
   return (
     <div className="relative flex-1 h-full m-0 p-0">
-      {/* Basemap Selector */}
-      <div className="absolute top-4 right-4 z-10 bg-white/80 rounded-lg px-1">
-        <Select
-          value={basemap}
-          onChange={(e) => onBasemapChange(e.target.value as Basemap)}
-          className="w-40 border-0 bg-transparent"
-        >
-          <option value="positron">CartoDB Positron</option>
-          <option value="dark-matter">CartoDB Dark Matter</option>
-          <option value="osm">OpenStreetMap</option>
-          <option value="topo">OpenTopoMap</option>
-          <option value="esri-street">Esri World Street Map</option>
-          <option value="esri-topo">Esri World Topo Map</option>
-          <option value="esri-terrain">Esri World Terrain</option>
-          <option value="esri-ocean">Esri Ocean Basemap</option>
-          <option value="esri-imagery">Esri World Imagery</option>
-          <option value="google-maps">Google Maps</option>
-          <option value="google-terrain">Google Terrain</option>
-          <option value="google-hybrid">Google Hybrid</option>
-          <option value="google-satellite">Google Satellite</option>
-        </Select>
-      </div>
-
-      {/* Layer Control Panel (only show if at least one layer is available) */}
-      {(uploadedFile || selectedHazard) && (
-        <div className="absolute top-16 right-4 z-10 bg-white/80 rounded-lg px-3 py-2 space-y-2">
-          {/* Infrastructure checkbox - only if infrastructure is uploaded */}
-          {uploadedFile && (
-            <label className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={infrastructureVisible}
-                onChange={(e) => setInfrastructureVisible(e.target.checked)}
-                className="w-4 h-4 text-gray-600 rounded"
-              />
-              <span className="text-sm text-gray-700">Infrastructure</span>
-            </label>
-          )}
-
-          {/* Hazard layer checkbox - only if hazard is selected */}
-          {selectedHazard && (
-            <label className="flex items-center space-x-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={hazardVisible}
-                onChange={(e) => setHazardVisible(e.target.checked)}
-                className="w-4 h-4 text-gray-600 rounded"
-              />
-              <span className="text-sm text-gray-700">Hazard Layer</span>
-            </label>
-          )}
+      <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
+        {/* Basemap Selector */}
+        <div className="bg-white/80 rounded-lg px-1">
+          <Select
+            value={basemap}
+            onChange={(e) => onBasemapChange(e.target.value as Basemap)}
+            className="w-40 border-0 bg-transparent"
+          >
+            <option value="positron">CartoDB Positron</option>
+            <option value="dark-matter">CartoDB Dark Matter</option>
+            <option value="osm">OpenStreetMap</option>
+            <option value="topo">OpenTopoMap</option>
+            <option value="esri-street">Esri World Street Map</option>
+            <option value="esri-topo">Esri World Topo Map</option>
+            <option value="esri-terrain">Esri World Terrain</option>
+            <option value="esri-ocean">Esri Ocean Basemap</option>
+            <option value="esri-imagery">Esri World Imagery</option>
+            <option value="google-maps">Google Maps</option>
+            <option value="google-terrain">Google Terrain</option>
+            <option value="google-hybrid">Google Hybrid</option>
+            <option value="google-satellite">Google Satellite</option>
+          </Select>
         </div>
-      )}
+
+        {/* Layer Control Panel (only show if at least one layer is available) */}
+        {(uploadedFile || selectedHazard) && (
+          <div className="bg-white/80 rounded-lg px-3 py-2 space-y-2">
+            {uploadedFile && (
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={infrastructureVisible}
+                  onChange={(e) => setInfrastructureVisible(e.target.checked)}
+                  className="w-4 h-4 text-gray-600 rounded"
+                />
+                <span className="text-sm text-gray-700">Infrastructure</span>
+              </label>
+            )}
+
+            {selectedHazard && (
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={hazardVisible}
+                  onChange={(e) => setHazardVisible(e.target.checked)}
+                  className="w-4 h-4 text-gray-600 rounded"
+                />
+                <span className="text-sm text-gray-700">Hazard Layer</span>
+              </label>
+            )}
+          </div>
+        )}
+
+        {/* Zoom controls (wheel alternative) */}
+        <div className="flex flex-col bg-white/80 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            aria-label="Zoom in"
+            disabled={!mapReady || atMaxZoom}
+            className="min-h-9 min-w-9 flex items-center justify-center text-base font-medium text-gray-800 hover:bg-gray-100/80 disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white/80"
+            onClick={() => map.current?.zoomIn({ duration: 200 })}
+          >
+            +
+          </button>
+          <button
+            type="button"
+            aria-label="Zoom out"
+            disabled={!mapReady || atMinZoom}
+            className="min-h-9 min-w-9 flex items-center justify-center text-base font-medium text-gray-800 hover:bg-gray-100/80 disabled:opacity-40 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white/80"
+            onClick={() => map.current?.zoomOut({ duration: 200 })}
+          >
+            −
+          </button>
+        </div>
+      </div>
 
       {/* Hazard Color Bar Legend */}
       {selectedHazard && hazardStats && hazardVisible && (() => {

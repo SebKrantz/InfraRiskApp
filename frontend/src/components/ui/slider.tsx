@@ -12,9 +12,8 @@ const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
     const valueNum = Number(value ?? 0)
     const minNum = Number(min ?? 0)
     const maxNum = Number(max ?? 100)
-    const range = maxNum - minNum || 1
-    const progress = ((valueNum - minNum) / range) * 100
-
+    const range = maxNum - minNum
+    const fillPct = range === 0 ? 0 : ((valueNum - minNum) / range) * 100
     return (
       <input
         type="range"
@@ -31,7 +30,7 @@ const Slider = React.forwardRef<HTMLInputElement, SliderProps>(
           className
         )}
         style={{
-          background: `linear-gradient(to right, rgb(37, 99, 235) 0%, rgb(37, 99, 235) ${progress}%, rgb(229, 231, 235) ${progress}%, rgb(229, 231, 235) 100%)`
+          background: `linear-gradient(to right, rgb(37, 99, 235) 0%, rgb(37, 99, 235) ${fillPct}%, rgb(229, 231, 235) ${fillPct}%, rgb(229, 231, 235) 100%)`
         }}
         {...props}
       />
