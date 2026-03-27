@@ -591,7 +591,7 @@ export default function MapView({
         const percentage = value * 100
         return `${percentage.toFixed(percentage < 1 ? 2 : 1)}%`
       }
-      computedFeatures.push({ label: 'Vulnerability:', value: formatVulnerability(vulnerability) })
+      computedFeatures.push({ label: 'Damage Ratio:', value: formatVulnerability(vulnerability) })
     }
     
     if (damageCost !== undefined && damageCost !== null) {
@@ -1881,7 +1881,7 @@ export default function MapView({
         )
       })()}
 
-      {/* Vulnerability Color Bar Legend */}
+      {/* Damage Ratio color bar (vulnerability analysis mode) */}
       {vulnerabilityAnalysisEnabled && infrastructureVisible && analysisResult?.infrastructure_features && (() => {
         const maxPct = maxVulnerability * 100
         const ticks = [0, 0.25, 0.5, 0.75, 1].map(p => {
@@ -1891,7 +1891,7 @@ export default function MapView({
         const gradient = 'linear-gradient(to right, #10b981 0%, #f59e0b 50%, #ef4444 100%)'
         return (
           <div className="absolute bottom-4 left-4 z-10 bg-white/50 rounded-lg px-3 py-2">
-            <div className="text-[10px] text-gray-800 mb-1">Vulnerability</div>
+            <div className="text-[10px] text-gray-800 mb-1">Damage Ratio</div>
             <div className="rounded" style={{ width: 220, height: 12, background: gradient }} />
             <div className="relative" style={{ width: 220, height: 16 }}>
               {ticks.map((t, i) => (

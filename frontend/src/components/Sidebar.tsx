@@ -821,13 +821,13 @@ export default function Sidebar({
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">For Point features:</p>
               <p className="text-sm text-gray-600">
-                The replacement value represents the total cost of the asset. Damage cost is calculated as: <strong>replacement_value × vulnerability</strong>
+                The replacement value represents the total cost of the asset. Damage cost is calculated as: <strong>replacement_value × damage ratio</strong>
               </p>
             </div>
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">For LineString features:</p>
               <p className="text-sm text-gray-600">
-                The replacement value represents the cost per meter of the line. Damage cost is calculated as: <strong>replacement_value × vulnerability × length (in meters)</strong>
+                The replacement value represents the cost per meter of the line. Damage cost is calculated as: <strong>replacement_value × damage ratio × length (in meters)</strong>
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
@@ -861,8 +861,8 @@ export default function Sidebar({
               <p className="text-sm font-bold text-gray-700 mb-1">Display changes:</p>
               <ul className="text-sm text-gray-600 space-y-1 ml-4 list-disc">
                 <li><strong>Map viewer:</strong> The map display remains unchanged - infrastructure is still shown as affected (red) or unaffected (green) based on the intensity threshold.</li>
-                <li><strong>Barchart:</strong> Shows damage cost, exposure percentage, and average vulnerability instead of just affected/unaffected counts.</li>
-                <li><strong>Map popups:</strong> When clicking on affected lines or points, popups will display vulnerability (proportion destroyed) and damage cost in addition to exposure information.</li>
+                <li><strong>Barchart:</strong> Shows damage cost, exposure percentage, and average damage ratio instead of just affected/unaffected counts.</li>
+                <li><strong>Map popups:</strong> When clicking on affected lines or points, popups will display damage ratio (proportion destroyed) and damage cost in addition to exposure information.</li>
               </ul>
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
@@ -902,14 +902,14 @@ export default function Sidebar({
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-gray-700 mb-1">Vulnerability (right axis):</p>
+                  <p className="text-sm font-bold text-gray-700 mb-1">Damage ratio (right axis):</p>
                   <p className="text-sm text-gray-600">
-                    The average vulnerability (proportion destroyed) of exposed infrastructure. This is calculated <strong>only across exposed assets</strong> (those above the intensity threshold). For lines, this is a length-weighted average.
+                    The average damage ratio (proportion destroyed) of exposed infrastructure. This is calculated <strong>only across exposed assets</strong> (those above the intensity threshold). For lines, this is a length-weighted average.
                   </p>
                 </div>
                 <div className="mt-4 pt-3 border-t border-gray-300">
                   <p className="text-xs text-gray-500">
-                    <strong>Important:</strong> Both exposure and vulnerability calculations depend on the <strong>hazard intensity threshold</strong>. Only infrastructure exposed to hazards above the threshold is considered in these calculations.
+                    <strong>Important:</strong> Both exposure and damage ratio depend on the <strong>hazard intensity threshold</strong>. Only infrastructure exposed to hazards above the threshold is considered in these calculations.
                   </p>
                 </div>
               </>

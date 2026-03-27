@@ -46,7 +46,7 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
               minimumFractionDigits: 0,
               maximumFractionDigits: 0
             })
-          } else if (name === 'Exposure' || name === 'Vulnerability') {
+          } else if (name === 'Exposure' || name === 'Damage Ratio') {
             formatted = `${value.toFixed(1)}%`
           } else {
             formatted = value.toLocaleString('en-US')
@@ -238,7 +238,7 @@ export default function BarChart({ data }: BarChartProps) {
               <Bar
                 yAxisId="right"
                 dataKey="vulnerabilityPct"
-                name="Vulnerability"
+                name="Damage Ratio"
                 fill="#10b981"
               />
               <Legend
