@@ -166,7 +166,7 @@ def generate_barchart_png(
         ax1.grid(False)
         
         # Left axis: damage cost
-        categories = ['Damage Cost', 'Exposure', 'Vulnerability']
+        categories = ['Damage Cost', 'Exposure', 'Damage Ratio']
         damage_values = [damage_cost, 0, 0]
         pct_values = [0, exposure_pct, vulnerability_pct]
         
@@ -178,7 +178,7 @@ def generate_barchart_png(
         ax1.set_ylabel('Damage Cost (USD)', fontsize=12, color='#4b5563')
         ax1.tick_params(axis='y', labelcolor='#4b5563')
         ax1.set_xticks(x_pos)
-        ax1.set_xticklabels(['Damage', 'Exposure', 'Vulnerability'], fontsize=11, color='#4b5563')
+        ax1.set_xticklabels(['Damage', 'Exposure', 'Damage Ratio'], fontsize=11, color='#4b5563')
         ax1.set_title(title, fontsize=14, fontweight='bold')
         
         # Set y-axis limits to add margin above damage cost bar
@@ -203,7 +203,7 @@ def generate_barchart_png(
         # Exposure
         ax2.text(x_pos[1], exposure_pct + 1, 
                 f'{exposure_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#3b82f6')
-        # Vulnerability
+        # Damage Ratio
         ax2.text(x_pos[2], vulnerability_pct + 1, 
                 f'{vulnerability_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#10b981')
         
@@ -628,7 +628,7 @@ def generate_map_png(
             cb_h.ax.tick_params(labelsize=9)
         cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])
         cb_v = plt.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
-        cb_v.set_label('Vulnerability (%)', rotation=270, labelpad=15, fontsize=10)
+        cb_v.set_label('Damage Ratio (%)', rotation=270, labelpad=15, fontsize=10)
         cb_v.ax.tick_params(labelsize=9)
     
     # Save to bytes buffer
