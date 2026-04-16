@@ -507,86 +507,13 @@ export default function Sidebar({
               
               {/* Export Buttons */}
               {!loadingAnalysis && analysisResult && uploadedFile && selectedHazard && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Button
-                    onClick={async () => {
-                      if (!uploadedFile || !selectedHazard) return
-                      try {
-                        setExportingBarchart(true)
-                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
-                          ? intensityThreshold 
-                          : undefined
-                        await exportBarchart(
-                          uploadedFile.file_id,
-                          selectedHazard.id,
-                          threshold
-                        )
-                      } catch (err) {
-                        console.error('Failed to export barchart:', err)
-                        alert(err instanceof Error ? err.message : 'Failed to export barchart')
-                      } finally {
-                        setExportingBarchart(false)
-                      }
-                    }}
-                    disabled={exportingBarchart || exportingMap || exportingData}
-                    className="flex-1 min-w-[6rem] bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {exportingBarchart ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 mr-2"></div>
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4 mr-2" />
-                        Barchart
-                      </>
-                    )}
-                  </Button>
-                  <Button
-                    onClick={async () => {
-                      if (!uploadedFile || !selectedHazard) return
-                      try {
-                        setExportingMap(true)
-                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
-                          ? intensityThreshold 
-                          : undefined
-                        await exportMap(
-                          uploadedFile.file_id,
-                          selectedHazard.id,
-                          colorPalette,
-                          hazardOpacity,
-                          threshold,
-                          basemap
-                        )
-                      } catch (err) {
-                        console.error('Failed to export map:', err)
-                        alert(err instanceof Error ? err.message : 'Failed to export map')
-                      } finally {
-                        setExportingMap(false)
-                      }
-                    }}
-                    disabled={exportingBarchart || exportingMap || exportingData}
-                    className="flex-1 min-w-[6rem] bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {exportingMap ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 mr-2"></div>
-                        Generating...
-                      </>
-                    ) : (
-                      <>
-                        <Download className="h-4 w-4 mr-2" />
-                        Map
-                      </>
-                    )}
-                  </Button>
-                  <div className="relative flex-1 min-w-[6rem]" ref={dataMenuRef}>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="relative min-w-0" ref={dataMenuRef}>
                     {dataMenuOpen && uploadedFile.geometry_type === 'LineString' && (
-                      <div className="absolute bottom-full left-0 right-0 z-30 mb-1 flex flex-col overflow-hidden rounded border border-gray-600 bg-gray-900 shadow-lg">
+                      <div className="absolute bottom-full left-0 z-30 mb-1 flex min-w-max flex-col overflow-hidden rounded border border-gray-600 bg-gray-900 shadow-lg">
                         <button
                           type="button"
-                          className="px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                          className="whitespace-nowrap px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
                           onClick={async () => {
                             if (!uploadedFile || !selectedHazard) return
                             setDataMenuOpen(false)
@@ -613,7 +540,7 @@ export default function Sidebar({
                         </button>
                         <button
                           type="button"
-                          className="border-t border-gray-700 px-3 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                          className="whitespace-nowrap border-t border-gray-700 px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
                           onClick={async () => {
                             if (!uploadedFile || !selectedHazard) return
                             setDataMenuOpen(false)
@@ -666,7 +593,7 @@ export default function Sidebar({
                         }
                       }}
                       disabled={exportingBarchart || exportingMap || exportingData}
-                      className="w-full bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {exportingData ? (
                         <>
@@ -675,7 +602,7 @@ export default function Sidebar({
                         </>
                       ) : (
                         <>
-                          <Download className="h-4 w-4 mr-2" />
+                          <Download className="h-4 w-4 mr-2 shrink-0" />
                           Data
                           {uploadedFile.geometry_type === 'LineString' && (
                             <ChevronDown className="h-4 w-4 ml-1 shrink-0 opacity-70" />
@@ -684,6 +611,79 @@ export default function Sidebar({
                       )}
                     </Button>
                   </div>
+                  <Button
+                    onClick={async () => {
+                      if (!uploadedFile || !selectedHazard) return
+                      try {
+                        setExportingBarchart(true)
+                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
+                          ? intensityThreshold 
+                          : undefined
+                        await exportBarchart(
+                          uploadedFile.file_id,
+                          selectedHazard.id,
+                          threshold
+                        )
+                      } catch (err) {
+                        console.error('Failed to export barchart:', err)
+                        alert(err instanceof Error ? err.message : 'Failed to export barchart')
+                      } finally {
+                        setExportingBarchart(false)
+                      }
+                    }}
+                    disabled={exportingBarchart || exportingMap || exportingData}
+                    className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {exportingBarchart ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 mr-2"></div>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Barchart
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    onClick={async () => {
+                      if (!uploadedFile || !selectedHazard) return
+                      try {
+                        setExportingMap(true)
+                        const threshold = hazardStats && intensityThreshold > hazardStats.min 
+                          ? intensityThreshold 
+                          : undefined
+                        await exportMap(
+                          uploadedFile.file_id,
+                          selectedHazard.id,
+                          colorPalette,
+                          hazardOpacity,
+                          threshold,
+                          basemap
+                        )
+                      } catch (err) {
+                        console.error('Failed to export map:', err)
+                        alert(err instanceof Error ? err.message : 'Failed to export map')
+                      } finally {
+                        setExportingMap(false)
+                      }
+                    }}
+                    disabled={exportingBarchart || exportingMap || exportingData}
+                    className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {exportingMap ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 mr-2"></div>
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="h-4 w-4 mr-2" />
+                        Map
+                      </>
+                    )}
+                  </Button>
                 </div>
               )}
             </div>
