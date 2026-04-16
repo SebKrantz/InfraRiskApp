@@ -7,7 +7,7 @@ import pandas as pd
 import rasterio
 import numpy as np
 from shapely.geometry import Point, LineString
-from typing import Optional, Callable
+from typing import Optional, Callable, Tuple
 from pyproj import Geod
 import csv
 
@@ -210,25 +210,35 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
         return "LineString"
 
 
-def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
+def vulnerability_interp_from_arrays(
+    intensity: np.ndarray, proportion_destroyed: np.ndarray
+) -> Callable[[float], float]:
+    """Linear interpolation on sorted intensity / proportion_destroyed arrays."""
+    if len(intensity) == 0:
+        raise ValueError("Empty vulnerability curve arrays")
+
+    def interpolate(intensity_value: float) -> float:
+        if np.isnan(intensity_value):
+            return 0.0
+
+        if intensity_value <= intensity[0]:
+            return float(proportion_destroyed[0])
+        if intensity_value >= intensity[-1]:
+            return float(proportion_destroyed[-1])
+
+        return float(np.interp(intensity_value, intensity, proportion_destroyed))
+
+    return interpolate
+
+
+def parse_vulnerability_curve_data(csv_path: str) -> Tuple[Callable[[float], float], np.ndarray, np.ndarray]:
     """
-    Parse a vulnerability curve CSV file and return an interpolation function.
-    
-    CSV format: Two columns (intensity, proportion_destroyed)
-    - First column: hazard intensity
-    - Second column: proportion destroyed (0-1)
-    
-    Args:
-        csv_path: Path to CSV file
-        
-    Returns:
-        Interpolation function that takes intensity and returns proportion destroyed
+    Parse vulnerability curve CSV; return interp and sorted numpy arrays (for caching / export).
     """
-    # Try multiple encodings
     encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
     delimiter = ','
     encoding = 'utf-8'
-    
+
     for enc in encodings:
         try:
             with open(csv_path, 'r', encoding=enc) as f:
@@ -236,57 +246,96 @@ def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
                 sniffer = csv.Sniffer()
                 try:
                     delimiter = sniffer.sniff(first_line, delimiters=',;').delimiter
-                except:
+                except Exception:
                     delimiter = ';' if ';' in first_line else ','
                 encoding = enc
                 break
         except (UnicodeDecodeError, UnicodeError):
             continue
-    
-    # Read CSV
+
     df = pd.read_csv(csv_path, sep=delimiter, encoding=encoding, header=None)
-    
+
     if df.shape[1] < 2:
         raise ValueError("Vulnerability curve CSV must have at least 2 columns")
-    
-    # Extract intensity and proportion_destroyed (first two columns)
+
     intensity = pd.to_numeric(df.iloc[:, 0], errors='coerce')
     proportion_destroyed = pd.to_numeric(df.iloc[:, 1], errors='coerce')
-    
-    # Remove rows with NaN
+
     valid_mask = ~(intensity.isna() | proportion_destroyed.isna())
     intensity = intensity[valid_mask].values
     proportion_destroyed = proportion_destroyed[valid_mask].values
-    
+
     if len(intensity) == 0:
         raise ValueError("No valid data rows found in vulnerability curve CSV")
-    
-    # Validate proportion_destroyed is in [0, 1]
+
     if (proportion_destroyed < 0).any() or (proportion_destroyed > 1).any():
         raise ValueError("Proportion destroyed values must be between 0 and 1")
-    
-    # Sort by intensity
+
     sort_idx = np.argsort(intensity)
     intensity = intensity[sort_idx]
     proportion_destroyed = proportion_destroyed[sort_idx]
-    
-    # Create interpolation function
-    # For values below minimum, return 0 (or first value)
-    # For values above maximum, return 1 (or last value)
-    # For values in range, use linear interpolation
-    def interpolate(intensity_value: float) -> float:
-        if np.isnan(intensity_value):
-            return 0.0
-        
-        if intensity_value <= intensity[0]:
-            return float(proportion_destroyed[0])
-        if intensity_value >= intensity[-1]:
-            return float(proportion_destroyed[-1])
-        
-        # Linear interpolation
-        return float(np.interp(intensity_value, intensity, proportion_destroyed))
-    
-    return interpolate
+
+    return vulnerability_interp_from_arrays(intensity, proportion_destroyed), intensity, proportion_destroyed
+
+
+def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
+    """
+    Parse a vulnerability curve CSV file and return an interpolation function.
+
+    CSV format: Two columns (intensity, proportion_destroyed)
+    """
+    interp, _, _ = parse_vulnerability_curve_data(csv_path)
+    return interp
+
+
+def assign_line_ids_to_line_data(
+    line_data: list, infrastructure_gdf: gpd.GeoDataFrame, geod: Geod
+) -> None:
+    """
+    Set line_id (1-based upload row order) on each line_data entry, matching Phase 1 sampling logic.
+    """
+    ids: list[int] = []
+    for feature_pos, (_idx, row) in enumerate(infrastructure_gdf.iterrows()):
+        line_id = feature_pos + 1
+        line = row.geometry
+        if line is None or line.is_empty:
+            continue
+        if line.geom_type == 'MultiLineString':
+            parts = list(line.geoms)
+        elif line.geom_type == 'LineString':
+            parts = [line]
+        else:
+            continue
+        for single_line in parts:
+            line_coords = list(single_line.coords)
+            if len(line_coords) < 2:
+                continue
+            total_length_m = geod.line_length(*zip(*line_coords))
+            if total_length_m == 0:
+                continue
+            interval_meters = 100.0
+            sampled_points = [line_coords[0]]
+            current_distance = 0.0
+            while current_distance < total_length_m:
+                current_distance += interval_meters
+                if current_distance >= total_length_m:
+                    sampled_points.append(line_coords[-1])
+                    break
+                normalized_dist = current_distance / total_length_m
+                point = single_line.interpolate(normalized_dist, normalized=True)
+                sampled_points.append((point.x, point.y))
+            if sampled_points[-1] != line_coords[-1]:
+                sampled_points.append(line_coords[-1])
+            if len(sampled_points) < 2:
+                continue
+            ids.append(line_id)
+
+    if len(ids) != len(line_data):
+        raise RuntimeError(
+            f"line_data length {len(line_data)} does not match geometry-derived count {len(ids)}; re-run analysis."
+        )
+    for ld, lid in zip(line_data, ids):
+        ld['line_id'] = lid
 
 
 def analyze_intersection(
@@ -617,7 +666,9 @@ def analyze_intersection(
                     n_pts = len(ld['sampled_points'])
                     ld['raster_values'] = all_raster_values[current_point_idx:current_point_idx + n_pts]
                     current_point_idx += n_pts
-            
+
+            assign_line_ids_to_line_data(line_data, infrastructure_gdf, geod)
+
             # Phase 3: Process each line with pre-sampled values (always runs)
             affected_length = 0.0
             unaffected_length = 0.0
@@ -713,6 +764,7 @@ def analyze_intersection(
                     
                     seg_row = row_dict.copy()
                     seg_row['geometry'] = segment_geom
+                    seg_row['line_id'] = ld['line_id']
                     seg_row['length_m'] = segment_length_m
                     seg_row['affected'] = affected
                     seg_row['exposure_level_avg'] = avg_value

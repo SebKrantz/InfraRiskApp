@@ -5,6 +5,8 @@ export interface Hazard {
   description?: string
   metadata?: string
   unit?: string
+  /** Topical group for UI (e.g. optgroup in hazard dropdown); from CSV column `category` */
+  category?: string
 }
 
 export interface UploadedFile {

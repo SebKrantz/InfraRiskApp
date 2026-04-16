@@ -29,7 +29,8 @@ export async function getHazards(): Promise<Hazard[]> {
   const response = await fetch(`${API_BASE_URL}/hazards`)
 
   if (!response.ok) {
-    throw new Error('Failed to fetch hazard layers')
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch hazard layers' }))
+    throw new Error(error.detail || 'Failed to fetch hazard layers')
   }
 
   const data = await response.json()
@@ -223,6 +224,56 @@ export async function exportMap(
   }
 
   // Download the blob
+  const blob = await response.blob()
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  window.URL.revokeObjectURL(url)
+  document.body.removeChild(a)
+}
+
+export type DataExportMode = 'csv_points' | 'csv_lines_aggregate' | 'gpkg_lines_split'
+
+/**
+ * Export analysis results as CSV or GPKG (data download).
+ */
+export async function exportData(
+  fileId: string,
+  hazardId: string,
+  mode: DataExportMode,
+  intensityThreshold?: number
+): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/export/data`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      file_id: fileId,
+      hazard_id: hazardId,
+      intensity_threshold: intensityThreshold,
+      mode,
+    }),
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Export failed' }))
+    throw new Error(error.detail || 'Failed to export data')
+  }
+
+  const contentDisposition = response.headers.get('Content-Disposition')
+  const ext = mode === 'gpkg_lines_split' ? 'gpkg' : 'csv'
+  let filename = `data_${fileId.slice(0, 8)}_${hazardId.slice(0, 8)}.${ext}`
+  if (contentDisposition) {
+    const filenameMatch = contentDisposition.match(/filename="(.+)"/)
+    if (filenameMatch) {
+      filename = filenameMatch[1]
+    }
+  }
+
   const blob = await response.blob()
   const url = window.URL.createObjectURL(blob)
   const a = document.createElement('a')
