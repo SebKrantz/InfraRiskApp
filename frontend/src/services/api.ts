@@ -29,7 +29,8 @@ export async function getHazards(): Promise<Hazard[]> {
   const response = await fetch(`${API_BASE_URL}/hazards`)
 
   if (!response.ok) {
-    throw new Error('Failed to fetch hazard layers')
+    const error = await response.json().catch(() => ({ detail: 'Failed to fetch hazard layers' }))
+    throw new Error(error.detail || 'Failed to fetch hazard layers')
   }
 
   const data = await response.json()

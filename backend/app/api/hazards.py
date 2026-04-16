@@ -33,34 +33,73 @@ def generate_id_from_name(name: str) -> str:
 
 
 def _read_hazard_csv(csv_path: Path) -> pd.DataFrame:
-    """Reads hazard_layers.csv with robust delimiter and header detection."""
-    try:
-        # Try sniffing delimiter
-        with open(csv_path, 'r', newline='', encoding='utf-8') as f:
-            dialect = csv.Sniffer().sniff(f.read(1024))
-            f.seek(0)
-            df = pd.read_csv(f, sep=dialect.delimiter)
-    except (csv.Error, pd.errors.ParserError):
-        # Fallback to semicolon if sniffing fails
-        try:
-            df = pd.read_csv(csv_path, sep=';')
-        except pd.errors.ParserError:
-            # Fallback to comma if semicolon fails
-            df = pd.read_csv(csv_path, sep=',')
-    
-    # Normalize column names (strip whitespace, lowercase)
-    df.columns = df.columns.str.strip().str.lower()
-    
-    # Map common column name variants to expected names
+    """
+    Reads hazard_layers.csv with delimiter and encoding detection.
+
+    Project convention is semicolon-separated (GIRI-style). csv.Sniffer() often
+    mis-detects (e.g. '_' from URLs/text), so we try explicit separators and
+    encodings before falling back to sniffing.
+    """
     column_mapping = {
         'url': 'dataset_url',
         'link': 'dataset_url',
         'background': 'background_paper',
-        'metadata_url': 'background_paper'
+        'metadata_url': 'background_paper',
     }
-    df = df.rename(columns=column_mapping)
-    
-    return df
+
+    def _normalize(raw: pd.DataFrame) -> pd.DataFrame:
+        raw = raw.copy()
+        # Excel/UTF-8 BOM and stray zero-width chars on header names
+        raw.columns = (
+            raw.columns.astype(str)
+            .str.strip()
+            .str.replace('\ufeff', '', regex=False)
+            .str.replace('\u200b', '', regex=False)
+            .str.lower()
+        )
+        return raw.rename(columns=column_mapping)
+
+    required = {'hazard', 'dataset_url'}
+    encodings = ('utf-8-sig', 'utf-8', 'latin-1', 'cp1252')
+    separators = (';', ',', '\t')
+
+    for encoding in encodings:
+        for sep in separators:
+            try:
+                df = _normalize(
+                    pd.read_csv(csv_path, sep=sep, encoding=encoding, engine='python')
+                )
+                if required.issubset(df.columns):
+                    return df
+            except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError, OSError):
+                continue
+
+    # Last resort: sniff delimiter — validate columns; Sniffer is unreliable on messy rows
+    for encoding in encodings:
+        try:
+            with open(csv_path, 'r', newline='', encoding=encoding) as f:
+                sample = f.read(8192)
+                dialect = csv.Sniffer().sniff(sample)
+                df = _normalize(
+                    pd.read_csv(csv_path, sep=dialect.delimiter, encoding=encoding, engine='python')
+                )
+                if required.issubset(df.columns):
+                    return df
+        except (csv.Error, pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError, OSError):
+            continue
+
+    # Help callers debug: show what the header line looks like with default encoding
+    try:
+        first = csv_path.read_text(encoding='utf-8-sig', errors='replace').splitlines()[:3]
+        preview = ' | '.join(line[:120] for line in first if line.strip())
+    except OSError:
+        preview = '(could not read file preview)'
+
+    raise ValueError(
+        'Could not parse hazard_layers.csv: no encoding/separator pair produced columns '
+        '"hazard" and "dataset_url". Use a header row with those names (semicolon- or comma-separated). '
+        f'File preview: {preview!r}'
+    )
 
 
 def load_hazards_dict() -> Dict[str, Dict]:
@@ -87,11 +126,15 @@ def load_hazards_dict() -> Dict[str, Dict]:
         # Read CSV with robust delimiter detection
         df = _read_hazard_csv(csv_path)
         
-        # Validate required columns
+        # Validate required columns (belt-and-suspenders after _read_hazard_csv)
         required_cols = ["hazard", "dataset_url"]
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
-            raise ValueError(f"hazard_layers.csv missing required columns: {', '.join(missing_cols)}")
+            found = ", ".join(str(c) for c in df.columns)
+            raise ValueError(
+                f"hazard_layers.csv missing required columns: {', '.join(missing_cols)}. "
+                f"Found columns: [{found}]. Expected a header with hazard and dataset_url."
+            )
         
         # Build dict of dicts keyed by hazard_id
         hazards_dict = {}
@@ -171,6 +214,9 @@ async def get_hazards():
             # Surface unit from CSV if present (used by frontend for labels)
             if hazard_data.get("unit"):
                 hazard["unit"] = hazard_data["unit"]
+
+            if hazard_data.get("category"):
+                hazard["category"] = hazard_data["category"]
             
             hazards.append(hazard)
         
@@ -218,6 +264,9 @@ async def get_hazard_info(hazard_id: str):
         # Include unit field for detailed hazard info as well
         if hazard_data.get("unit"):
             hazard_info["unit"] = hazard_data["unit"]
+
+        if hazard_data.get("category"):
+            hazard_info["category"] = hazard_data["category"]
         
         return JSONResponse(content=hazard_info)
         

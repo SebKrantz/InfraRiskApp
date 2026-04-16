@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown, Download } from 'lucide-react'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Button } from './ui/button'
@@ -114,6 +114,20 @@ export default function Sidebar({
     onSelectHazard(hazard)
   }
 
+  const hazardSelectGroups = useMemo(() => {
+    const groups: { label: string; items: Hazard[] }[] = []
+    for (const h of hazards) {
+      const label = h.category?.trim() || 'Other'
+      const last = groups[groups.length - 1]
+      if (last && last.label === label) {
+        last.items.push(h)
+      } else {
+        groups.push({ label, items: [h] })
+      }
+    }
+    return groups
+  }, [hazards])
+
   return (
     <>
       <div
@@ -211,10 +225,14 @@ export default function Sidebar({
                 <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
                   <Select value={selectedHazard?.id || ''} onChange={handleHazardSelect} className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300">
                     <option value="" className="bg-gray-800 text-gray-300">Select a hazard...</option>
-                    {hazards.map(hazard => (
-                      <option key={hazard.id} value={hazard.id} className="bg-gray-800 text-gray-300">
-                        {hazard.name}
-                      </option>
+                    {hazardSelectGroups.map((group, idx) => (
+                      <optgroup key={`${idx}-${group.label}`} label={group.label}>
+                        {group.items.map(hazard => (
+                          <option key={hazard.id} value={hazard.id} className="bg-gray-800 text-gray-300">
+                            {hazard.name}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </Select>
                 </div>
