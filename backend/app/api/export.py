@@ -18,7 +18,12 @@ import numpy as np
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 from app.api.analyze import get_cached_raster_values, get_cached_analysis_result
-from app.utils.geospatial import analyze_intersection
+from app.utils.geospatial import analyze_intersection, vulnerability_interp_from_arrays
+from app.utils.export_data import (
+    lines_aggregate_to_csv_bytes,
+    lines_split_to_gpkg_bytes,
+    points_analysis_to_csv_bytes,
+)
 
 router = APIRouter()
 
@@ -45,6 +50,74 @@ class ExportMapRequest(BaseModel):
     hazard_opacity: float = 0.6  # Not used: export always uses full opacity
     intensity_threshold: Optional[float] = None
     basemap: str = 'positron'
+
+
+class ExportDataRequest(BaseModel):
+    """Request model for tabular / vector data export"""
+    file_id: str
+    hazard_id: str
+    intensity_threshold: Optional[float] = None
+    mode: str  # csv_points | csv_lines_aggregate | gpkg_lines_split
+
+
+def _run_data_export(
+    file_id: str,
+    hazard_id: str,
+    intensity_threshold: Optional[float],
+    mode: str,
+) -> tuple[bytes, str, str]:
+    """Returns (body, filename, media_type). Raises ValueError for bad input."""
+    if file_id not in uploaded_files:
+        raise ValueError("UPLOAD_NOT_FOUND")
+
+    file_info = uploaded_files[file_id]
+    geometry_type = file_info["geometry_type"]
+
+    if mode == "csv_points" and geometry_type != "Point":
+        raise ValueError("MODE_GEOMETRY_MISMATCH")
+    if mode in ("csv_lines_aggregate", "gpkg_lines_split") and geometry_type != "LineString":
+        raise ValueError("MODE_GEOMETRY_MISMATCH")
+
+    cached_analysis = get_cached_analysis_result(file_id, hazard_id, intensity_threshold)
+    if cached_analysis is None:
+        cached_analysis = get_cached_analysis_result(file_id, hazard_id, None)
+    if cached_analysis is None:
+        raise ValueError("NO_ANALYSIS_CACHE")
+
+    short_f = file_id[:8]
+    short_h = hazard_id[:8]
+
+    if mode == "csv_points":
+        full_gdf = cached_analysis.get("full_gdf")
+        if full_gdf is None:
+            full_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        body = points_analysis_to_csv_bytes(full_gdf)
+        return body, f"data_{short_f}_{short_h}.csv", "text/csv; charset=utf-8"
+
+    if mode == "csv_lines_aggregate":
+        full_gdf = cached_analysis.get("full_gdf")
+        if full_gdf is None:
+            full_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
+        body = lines_aggregate_to_csv_bytes(full_gdf)
+        return body, f"data_lines_{short_f}_{short_h}.csv", "text/csv; charset=utf-8"
+
+    if mode == "gpkg_lines_split":
+        line_data = cached_analysis.get("line_data")
+        if line_data is None:
+            line_data = []
+        vi = cached_analysis.get("vulnerability_curve_intensity")
+        vp = cached_analysis.get("vulnerability_curve_proportion")
+        repl = cached_analysis.get("vulnerability_replacement_value")
+        interp = None
+        if vi is not None and vp is not None and len(vi) > 0 and len(vp) > 0:
+            interp = vulnerability_interp_from_arrays(
+                np.asarray(vi, dtype=np.float64),
+                np.asarray(vp, dtype=np.float64),
+            )
+        body = lines_split_to_gpkg_bytes(line_data, interp, repl)
+        return body, f"lines_split_{short_f}_{short_h}.gpkg", "application/geopackage+sqlite3"
+
+    raise ValueError("INVALID_MODE")
 
 
 BASEMAP_TILE_URLS: dict[str, str] = {
@@ -760,10 +833,13 @@ async def export_map(request: ExportMapRequest):
         
         # Get infrastructure GeoDataFrame with affected status
         if "full_gdf" in analysis_result:
-            display_gdf = analysis_result["full_gdf"]
+            display_gdf = analysis_result["full_gdf"].copy()
         else:
             display_gdf = infrastructure_gdf.copy()
             display_gdf['affected'] = False
+
+        if "line_id" in display_gdf.columns:
+            display_gdf = display_gdf.drop(columns=["line_id"])
         
         # Check if vulnerability analysis mode
         is_vulnerability_mode = analysis_result.get("total_damage_cost") is not None
@@ -807,4 +883,51 @@ async def export_map(request: ExportMapRequest):
             status_code=500,
             detail=f"Error generating map: {str(e)}"
         )
+
+
+@router.post("/export/data")
+async def export_data(request: ExportDataRequest):
+    """
+    Export analysis results as CSV (points or line aggregate) or GPKG (line split segments).
+    """
+    hazards_dict = load_hazards_dict()
+    if request.hazard_id not in hazards_dict:
+        raise HTTPException(status_code=404, detail=f"Hazard layer '{request.hazard_id}' not found")
+
+    loop = asyncio.get_event_loop()
+    try:
+        body, filename, media_type = await loop.run_in_executor(
+            _export_executor,
+            _run_data_export,
+            request.file_id,
+            request.hazard_id,
+            request.intensity_threshold,
+            request.mode,
+        )
+    except ValueError as e:
+        code = str(e)
+        if code == "UPLOAD_NOT_FOUND":
+            raise HTTPException(status_code=404, detail="Uploaded file not found")
+        if code == "MODE_GEOMETRY_MISMATCH":
+            raise HTTPException(
+                status_code=400,
+                detail="Export mode is not valid for this dataset geometry type.",
+            )
+        if code == "NO_ANALYSIS_CACHE":
+            raise HTTPException(
+                status_code=404,
+                detail="No analysis results found. Please run analysis first.",
+            )
+        if code == "INVALID_MODE":
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid mode. Use csv_points, csv_lines_aggregate, or gpkg_lines_split.",
+            )
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return Response(
+        content=body,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 

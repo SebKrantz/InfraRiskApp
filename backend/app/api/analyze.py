@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from typing import Optional, Dict, Tuple
 import numpy as np
 
-from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve
+from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve_data
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 
@@ -140,6 +140,8 @@ async def analyze_intersections(
     
     # Parse vulnerability curve if provided
     vulnerability_curve_interp = None
+    vulnerability_curve_intensity: Optional[list] = None
+    vulnerability_curve_proportion: Optional[list] = None
     if actual_vulnerability_file is not None:
         try:
             # Read vulnerability curve file
@@ -151,7 +153,11 @@ async def analyze_intersections(
                 tmp_path = tmp_file.name
             
             try:
-                vulnerability_curve_interp = parse_vulnerability_curve(tmp_path)
+                vulnerability_curve_interp, vuln_intensity, vuln_prop = parse_vulnerability_curve_data(
+                    tmp_path
+                )
+                vulnerability_curve_intensity = vuln_intensity.tolist()
+                vulnerability_curve_proportion = vuln_prop.tolist()
             finally:
                 os.unlink(tmp_path)
         except Exception as e:
@@ -178,6 +184,11 @@ async def analyze_intersections(
                 replacement_value=actual_replacement_value
             )
         )
+
+        if vulnerability_curve_intensity is not None:
+            analysis_result["vulnerability_curve_intensity"] = vulnerability_curve_intensity
+            analysis_result["vulnerability_curve_proportion"] = vulnerability_curve_proportion
+            analysis_result["vulnerability_replacement_value"] = actual_replacement_value
         
         # Cache raster values for future threshold changes
         if "raster_values" in analysis_result:
@@ -234,11 +245,14 @@ async def analyze_intersections(
         try:
             # Get the full GeoDataFrame with affected status from analysis result
             if "full_gdf" in analysis_result:
-                display_gdf = analysis_result["full_gdf"]
+                display_gdf = analysis_result["full_gdf"].copy()
             else:
                 # Fallback: create from original with affected status set to False
                 display_gdf = infrastructure_gdf.copy()
                 display_gdf['affected'] = False
+
+            if "line_id" in display_gdf.columns:
+                display_gdf = display_gdf.drop(columns=["line_id"])
             
             # GeoDataFrame is already in WGS84 (EPSG:4326) and cleaned from upload
             # Convert to GeoJSON, stripping per-feature bbox to avoid

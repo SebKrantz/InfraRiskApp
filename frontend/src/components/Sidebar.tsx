@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import { ChevronLeft, ChevronRight, Info, ChevronUp, ChevronDown, Download } from 'lucide-react'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Button } from './ui/button'
@@ -7,7 +7,7 @@ import { Select } from './ui/select'
 import { Slider } from './ui/slider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import BarChart from './BarChart'
-import { exportBarchart, exportMap } from '../services/api'
+import { exportBarchart, exportMap, exportData } from '../services/api'
 
 interface SidebarProps {
   isOpen: boolean
@@ -78,6 +78,20 @@ export default function Sidebar({
   const [analysisResultsInfoOpen, setAnalysisResultsInfoOpen] = useState(false)
   const [exportingBarchart, setExportingBarchart] = useState(false)
   const [exportingMap, setExportingMap] = useState(false)
+  const [exportingData, setExportingData] = useState(false)
+  const [dataMenuOpen, setDataMenuOpen] = useState(false)
+  const dataMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!dataMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (dataMenuRef.current && !dataMenuRef.current.contains(e.target as Node)) {
+        setDataMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [dataMenuOpen])
 
   const sliderExponent = 2
 
@@ -511,7 +525,110 @@ export default function Sidebar({
               
               {/* Export Buttons */}
               {!loadingAnalysis && analysisResult && uploadedFile && selectedHazard && (
-                <div className="mt-4 flex gap-2">
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <div className="relative min-w-0" ref={dataMenuRef}>
+                    {dataMenuOpen && uploadedFile.geometry_type === 'LineString' && (
+                      <div className="absolute bottom-full left-0 z-30 mb-1 flex min-w-max flex-col overflow-hidden rounded border border-gray-600 bg-gray-900 shadow-lg">
+                        <button
+                          type="button"
+                          className="whitespace-nowrap px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                          onClick={async () => {
+                            if (!uploadedFile || !selectedHazard) return
+                            setDataMenuOpen(false)
+                            try {
+                              setExportingData(true)
+                              const threshold = hazardStats && intensityThreshold > hazardStats.min
+                                ? intensityThreshold
+                                : undefined
+                              await exportData(
+                                uploadedFile.file_id,
+                                selectedHazard.id,
+                                'csv_lines_aggregate',
+                                threshold
+                              )
+                            } catch (err) {
+                              console.error('Failed to export line CSV:', err)
+                              alert(err instanceof Error ? err.message : 'Failed to export data')
+                            } finally {
+                              setExportingData(false)
+                            }
+                          }}
+                        >
+                          CSV (aggregate)
+                        </button>
+                        <button
+                          type="button"
+                          className="whitespace-nowrap border-t border-gray-700 px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
+                          onClick={async () => {
+                            if (!uploadedFile || !selectedHazard) return
+                            setDataMenuOpen(false)
+                            try {
+                              setExportingData(true)
+                              const threshold = hazardStats && intensityThreshold > hazardStats.min
+                                ? intensityThreshold
+                                : undefined
+                              await exportData(
+                                uploadedFile.file_id,
+                                selectedHazard.id,
+                                'gpkg_lines_split',
+                                threshold
+                              )
+                            } catch (err) {
+                              console.error('Failed to export line GPKG:', err)
+                              alert(err instanceof Error ? err.message : 'Failed to export data')
+                            } finally {
+                              setExportingData(false)
+                            }
+                          }}
+                        >
+                          GPKG (split)
+                        </button>
+                      </div>
+                    )}
+                    <Button
+                      onClick={async () => {
+                        if (!uploadedFile || !selectedHazard) return
+                        if (uploadedFile.geometry_type === 'LineString') {
+                          setDataMenuOpen((open) => !open)
+                          return
+                        }
+                        try {
+                          setExportingData(true)
+                          const threshold = hazardStats && intensityThreshold > hazardStats.min
+                            ? intensityThreshold
+                            : undefined
+                          await exportData(
+                            uploadedFile.file_id,
+                            selectedHazard.id,
+                            'csv_points',
+                            threshold
+                          )
+                        } catch (err) {
+                          console.error('Failed to export data:', err)
+                          alert(err instanceof Error ? err.message : 'Failed to export data')
+                        } finally {
+                          setExportingData(false)
+                        }
+                      }}
+                      disabled={exportingBarchart || exportingMap || exportingData}
+                      className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {exportingData ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-300 mr-2"></div>
+                          Exporting...
+                        </>
+                      ) : (
+                        <>
+                          <Download className="h-4 w-4 mr-2 shrink-0" />
+                          Data
+                          {uploadedFile.geometry_type === 'LineString' && (
+                            <ChevronDown className="h-4 w-4 ml-1 shrink-0 opacity-70" />
+                          )}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <Button
                     onClick={async () => {
                       if (!uploadedFile || !selectedHazard) return
@@ -532,8 +649,8 @@ export default function Sidebar({
                         setExportingBarchart(false)
                       }
                     }}
-                    disabled={exportingBarchart || exportingMap}
-                    className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={exportingBarchart || exportingMap || exportingData}
+                    className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {exportingBarchart ? (
                       <>
@@ -570,8 +687,8 @@ export default function Sidebar({
                         setExportingMap(false)
                       }
                     }}
-                    disabled={exportingBarchart || exportingMap}
-                    className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={exportingBarchart || exportingMap || exportingData}
+                    className="w-full min-w-0 bg-gray-800 hover:bg-gray-700 text-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {exportingMap ? (
                       <>
