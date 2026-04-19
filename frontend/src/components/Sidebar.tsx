@@ -1031,7 +1031,7 @@ export default function Sidebar({
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">Display changes:</p>
               <ul className="text-sm text-gray-600 space-y-1 ml-4 list-disc">
-                <li><strong>Map viewer:</strong> The map display remains unchanged - infrastructure is still shown as affected (red) or unaffected (green) based on the intensity threshold.</li>
+                <li><strong>Map viewer:</strong> The map display now shows the damage ratio in percentage points - with a color legend in the bottom left corner.</li>
                 <li><strong>Barchart:</strong> Shows damage cost, exposure percentage, and average damage ratio instead of just affected/unaffected counts.</li>
                 <li><strong>Map popups:</strong> When clicking on affected lines or points, popups will display damage ratio (proportion destroyed) and damage cost in addition to exposure information.</li>
               </ul>
