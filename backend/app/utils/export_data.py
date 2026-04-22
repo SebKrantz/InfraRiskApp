@@ -28,6 +28,47 @@ _LINE_SEGMENT_INTERNAL = frozenset(
     }
 )
 
+_GEOD = Geod(ellps="WGS84")
+
+
+def _pair_hazard_from_endpoints(v1: float, v2: float) -> Optional[float]:
+    """Same rule as GPKG split export: average of valid endpoints; None if both missing."""
+    nan1 = np.isnan(v1)
+    nan2 = np.isnan(v2)
+    if nan1 and nan2:
+        return None
+    if not nan1 and not nan2:
+        return float((v1 + v2) / 2.0)
+    if not nan1:
+        return float(v1)
+    return float(v2)
+
+
+def hazard_intensity_line_from_line_data(line_data: list[dict[str, Any]], line_id: int) -> float:
+    """
+    Length-weighted mean hazard over ~100 m sample pairs (matches split GPKG segments).
+    Ignores sub-segments where both endpoints are NaN.
+    """
+    num = 0.0
+    den = 0.0
+    lid = int(line_id)
+    for ld in line_data:
+        if int(ld["line_id"]) != lid:
+            continue
+        pts = ld["sampled_points"]
+        rv = np.asarray(ld["raster_values"], dtype=np.float64)
+        for i in range(len(pts) - 1):
+            pt1, pt2 = pts[i], pts[i + 1]
+            seg_len = _GEOD.line_length(*zip(*[pt1, pt2]))
+            hi = _pair_hazard_from_endpoints(float(rv[i]), float(rv[i + 1]))
+            if hi is None:
+                continue
+            num += hi * seg_len
+            den += seg_len
+    if den <= 0.0:
+        return float("nan")
+    return float(num / den)
+
 
 def points_analysis_to_csv_bytes(gdf: gpd.GeoDataFrame) -> bytes:
     """CSV: lon, lat, original attributes, hazard_intensity; optional damage_ratio, damage_cost."""
@@ -63,12 +104,22 @@ def points_analysis_to_csv_bytes(gdf: gpd.GeoDataFrame) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def lines_aggregate_to_csv_bytes(segment_gdf: gpd.GeoDataFrame) -> bytes:
-    """One row per line_id: original attributes (first of group) + length-weighted metrics."""
+def lines_aggregate_to_csv_bytes(
+    segment_gdf: gpd.GeoDataFrame,
+    line_data: Optional[list[dict[str, Any]]] = None,
+) -> bytes:
+    """
+    One row per line_id: original attributes (first of group) + length-weighted metrics.
+
+    hazard_intensity is taken from line_data sample pairs when available (aligned with
+    split GPKG). Fallback: merged exposure segments' exposure_level_avg (can miss values
+    when long runs are all-NaN at vertices but pairs would interpolate).
+    """
     if segment_gdf.empty or "line_id" not in segment_gdf.columns:
         return b"line_id,hazard_intensity\n"
 
     has_vuln = "vulnerability" in segment_gdf.columns and segment_gdf["vulnerability"].notna().any()
+    use_line_data = bool(line_data)
 
     attr_cols = [
         c
@@ -81,12 +132,17 @@ def lines_aggregate_to_csv_bytes(segment_gdf: gpd.GeoDataFrame) -> bytes:
         w = grp["length_m"].astype(float).to_numpy()
         avg_exp = grp["exposure_level_avg"]
         mask = avg_exp.notna()
+        seg_hazard = np.nan
         if mask.any():
             wh = w[mask.to_numpy()]
             vals = avg_exp[mask].astype(float).to_numpy()
-            hazard_intensity = float(np.sum(wh * vals) / np.sum(wh))
+            seg_hazard = float(np.sum(wh * vals) / np.sum(wh))
+        if use_line_data:
+            hazard_intensity = hazard_intensity_line_from_line_data(line_data, int(line_id))
+            if np.isnan(hazard_intensity) and not np.isnan(seg_hazard):
+                hazard_intensity = seg_hazard
         else:
-            hazard_intensity = np.nan
+            hazard_intensity = seg_hazard
 
         first = grp.iloc[0]
         row: dict[str, Any] = {c: first[c] for c in attr_cols}

@@ -338,6 +338,68 @@ def assign_line_ids_to_line_data(
         ld['line_id'] = lid
 
 
+def repair_nan_line_raster_samples(line_data: list, raster_url: str) -> None:
+    """
+    Re-sample locations that are NaN after tile-based reads.
+
+    Parallel tile windows use row/col on a cropped array; that can disagree with
+    GDAL's full-dataset nearest-neighbour lookup used elsewhere. A second pass
+    using Dataset.sample() aligns values with the map and reduces spurious NaNs.
+    """
+    coords: list[tuple[float, float]] = []
+    mapping: list[tuple[dict, int]] = []
+    for ld in line_data:
+        rv = np.asarray(ld["raster_values"], dtype=np.float64)
+        pts = ld["sampled_points"]
+        for i, v in enumerate(rv):
+            if np.isnan(v):
+                coords.append((float(pts[i][0]), float(pts[i][1])))
+                mapping.append((ld, i))
+    if not coords:
+        return
+    try:
+        with rasterio.open(raster_url) as src:
+            nodata = src.nodata
+            if coords:
+                for (ld, i), sample_arr in zip(mapping, src.sample(coords)):
+                    v = float(sample_arr[0])
+                    if nodata is not None and not np.isnan(v):
+                        try:
+                            if np.isclose(v, float(nodata), rtol=0.0, atol=0.0, equal_nan=True):
+                                v = np.nan
+                        except (TypeError, ValueError):
+                            pass
+                    ld["raster_values"][i] = v
+
+            # Pass 2: consecutive vertex pairs still both NaN — sample segment midpoint (GDAL-style)
+            mid_coords: list[tuple[float, float]] = []
+            mid_map: list[tuple[dict, int, int]] = []
+            for ld in line_data:
+                rv = np.asarray(ld["raster_values"], dtype=np.float64)
+                pts = ld["sampled_points"]
+                for i in range(len(pts) - 1):
+                    if np.isnan(rv[i]) and np.isnan(rv[i + 1]):
+                        mx = (float(pts[i][0]) + float(pts[i + 1][0])) / 2.0
+                        my = (float(pts[i][1]) + float(pts[i + 1][1])) / 2.0
+                        mid_coords.append((mx, my))
+                        mid_map.append((ld, i, i + 1))
+            if mid_coords:
+                for (ld, ia, ib), sample_arr in zip(mid_map, src.sample(mid_coords)):
+                    v = float(sample_arr[0])
+                    if nodata is not None and not np.isnan(v):
+                        try:
+                            if np.isclose(v, float(nodata), rtol=0.0, atol=0.0, equal_nan=True):
+                                v = np.nan
+                        except (TypeError, ValueError):
+                            pass
+                    if not np.isnan(v):
+                        ld["raster_values"][ia] = v
+                        ld["raster_values"][ib] = v
+    except Exception:
+        # Keep original NaNs if the dataset cannot be re-opened or sampled
+        pass
+
+
 def analyze_intersection(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
@@ -666,6 +728,13 @@ def analyze_intersection(
                     n_pts = len(ld['sampled_points'])
                     ld['raster_values'] = all_raster_values[current_point_idx:current_point_idx + n_pts]
                     current_point_idx += n_pts
+
+            repair_nan_line_raster_samples(line_data, hazard_raster_path)
+            all_raster_values = (
+                np.concatenate([np.asarray(ld["raster_values"], dtype=np.float64) for ld in line_data])
+                if line_data
+                else np.array([], dtype=np.float64)
+            )
 
             assign_line_ids_to_line_data(line_data, infrastructure_gdf, geod)
 
