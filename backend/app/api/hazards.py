@@ -28,8 +28,16 @@ def generate_id_from_name(name: str) -> str:
     slug = re.sub(r'[^a-z0-9]+', '_', name.lower().strip())
     # Remove leading/trailing underscores
     slug = slug.strip('_')
-    # Use first 50 chars for ID
-    return slug[:50] if slug else hashlib.md5(name.encode()).hexdigest()[:12]
+    # Long display names can share the same first ~50 characters (e.g. three
+    # "Susceptibility Class of Landslides Triggered By Precipitation - …" layers),
+    # which must not collapse to one ID in hazards_dict.
+    max_len = 128
+    if not slug:
+        return hashlib.md5(name.encode()).hexdigest()[:12]
+    if len(slug) > max_len:
+        digest = hashlib.md5(name.encode()).hexdigest()[:10]
+        return f"{slug[: max_len - 11]}_{digest}"
+    return slug
 
 
 def _read_hazard_csv(csv_path: Path) -> pd.DataFrame:

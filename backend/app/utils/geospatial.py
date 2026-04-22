@@ -186,28 +186,38 @@ def convert_polygons_to_centroids(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
     """
     Validate that geometry type is Point or LineString
-    
+
+    LineString and MultiLineString may appear in the same layer (both are line mode).
+
     Args:
         gdf: GeoDataFrame
-        
+
     Returns:
         "Point" or "LineString"
     """
-    geom_types = gdf.geometry.geom_type.unique()
-    
-    if len(geom_types) > 1:
-        raise ValueError(f"Mixed geometry types found: {geom_types}. Only Point or LineString are supported.")
-    
-    geom_type = geom_types[0]
-    
+    unique_types = set(gdf.geometry.geom_type.unique())
+    line_types = {"LineString", "MultiLineString"}
+
+    if unique_types and unique_types <= line_types:
+        return "LineString"
+
+    if len(unique_types) > 1:
+        raise ValueError(
+            f"Mixed geometry types found: {unique_types}. Only Point or LineString are supported."
+        )
+
+    geom_type = next(iter(unique_types)) if unique_types else None
+    if geom_type is None:
+        raise ValueError("No geometry types found (empty layer?).")
+
     if geom_type not in ["Point", "LineString", "MultiPoint", "MultiLineString"]:
-        raise ValueError(f"Geometry type '{geom_type}' not supported. Only Point or LineString are allowed.")
-    
-    # Normalize to Point or LineString
+        raise ValueError(
+            f"Geometry type '{geom_type}' not supported. Only Point or LineString are allowed."
+        )
+
     if geom_type in ["Point", "MultiPoint"]:
         return "Point"
-    else:
-        return "LineString"
+    return "LineString"
 
 
 def vulnerability_interp_from_arrays(

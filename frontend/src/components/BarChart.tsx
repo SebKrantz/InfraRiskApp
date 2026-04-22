@@ -18,7 +18,8 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
         {payload.map((entry: any, index: number) => {
-          const name = entry.name
+          const name = entry.name as string
+          const tooltipLabel = name === 'D. Ratio' ? 'Damage Ratio' : name
           const value = entry.value as number
 
           // Exposure bar (dataKey "value"): point = count only; line = meters
@@ -46,7 +47,7 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
               minimumFractionDigits: 0,
               maximumFractionDigits: 0
             })
-          } else if (name === 'Exposure' || name === 'Damage Ratio') {
+          } else if (name === 'Exposure' || name === 'Damage Ratio' || name === 'D. Ratio') {
             formatted = `${value.toFixed(1)}%`
           } else {
             formatted = value.toLocaleString('en-US')
@@ -54,7 +55,7 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
 
           return (
             <p key={index} className="text-white text-xs">
-              {name}: {formatted}
+              {tooltipLabel}: {formatted}
             </p>
           )
         })}
@@ -238,7 +239,7 @@ export default function BarChart({ data }: BarChartProps) {
               <Bar
                 yAxisId="right"
                 dataKey="vulnerabilityPct"
-                name="Damage Ratio"
+                name="D. Ratio"
                 fill="#10b981"
               />
               <Legend
