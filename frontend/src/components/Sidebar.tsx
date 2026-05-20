@@ -93,6 +93,20 @@ export default function Sidebar({
     return () => document.removeEventListener('mousedown', onDoc)
   }, [dataMenuOpen])
 
+  const vulnerabilityWarning = useMemo(() => {
+    if (!vulnerabilityAnalysisEnabled) return null
+    if (!vulnerabilityCurveFile) {
+      return 'Upload a vulnerability curve CSV to run vulnerability analysis.'
+    }
+    if (replacementValue === null) {
+      return 'Enter a replacement value (USD) to calculate damage costs.'
+    }
+    if (replacementValue <= 0) {
+      return 'Replacement value must be greater than zero.'
+    }
+    return null
+  }, [vulnerabilityAnalysisEnabled, vulnerabilityCurveFile, replacementValue])
+
   const sliderExponent = 2
 
   const clamp = (value: number, min: number, max: number) => {
@@ -253,12 +267,22 @@ export default function Sidebar({
                   )}
                 </div>
                 <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-sm">
-                  <Select value={selectedHazard?.id || ''} onChange={handleHazardSelect} className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300">
+                  <Select
+                    value={selectedHazard?.id || ''}
+                    onChange={handleHazardSelect}
+                    title={selectedHazard?.name}
+                    className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300"
+                  >
                     <option value="" className="bg-gray-800 text-gray-300">Select a hazard...</option>
                     {hazardSelectGroups.map((group, idx) => (
                       <optgroup key={`${idx}-${group.label}`} label={group.label}>
                         {group.items.map(hazard => (
-                          <option key={hazard.id} value={hazard.id} className="bg-gray-800 text-gray-300">
+                          <option
+                            key={hazard.id}
+                            value={hazard.id}
+                            title={hazard.name}
+                            className="bg-gray-800 text-gray-300"
+                          >
                             {hazard.name}
                           </option>
                         ))}
@@ -413,6 +437,11 @@ export default function Sidebar({
                     <Info className="h-3.5 w-3.5" />
                   </Button>
                 </div>
+                {(loadingUpload || loadingAnalysis) && (
+                  <p className="text-xs text-gray-400 mt-1">
+                    {loadingUpload ? 'Upload in progress…' : 'Analysis in progress…'}
+                  </p>
+                )}
 
                 {vulnerabilityAnalysisEnabled && (
                   <div className="space-y-4">
@@ -421,6 +450,7 @@ export default function Sidebar({
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-sm font-medium text-gray-300">
                           Vulnerability Curve
+                          <span className="text-red-400 ml-0.5">*</span>
                         </label>
                         <Button
                           variant="ghost"
@@ -472,7 +502,8 @@ export default function Sidebar({
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-sm font-medium text-gray-300">
-                          Replacement Value
+                          Replacement Value (USD)
+                          <span className="text-red-400 ml-0.5">*</span>
                         </label>
                         <Button
                           variant="ghost"
@@ -494,11 +525,17 @@ export default function Sidebar({
                             onReplacementValueChange(val)
                           }}
                           disabled={loadingUpload || loadingAnalysis}
-                          placeholder="Enter replacement value"
+                          placeholder="e.g. 100000"
                           className="border-0 bg-transparent px-0 py-0 h-auto text-gray-300 placeholder:text-gray-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         />
                       </div>
                     </div>
+
+                    {vulnerabilityWarning && (
+                      <p className="text-xs text-amber-400 border border-amber-500/40 rounded-md px-3 py-2 bg-amber-500/10">
+                        {vulnerabilityWarning}
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -531,8 +568,12 @@ export default function Sidebar({
               {!loadingAnalysis && analysisResult ? (
                 <BarChart data={analysisResult} />
               ) : !loadingAnalysis && !analysisResult ? (
-                <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800">
-                  {uploadedFile && selectedHazard ? 'No analysis data yet' : 'Upload data and select a hazard to analyze'}
+                <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800 px-4 text-center">
+                  {vulnerabilityWarning
+                    ? 'Complete vulnerability inputs above to run analysis.'
+                    : uploadedFile && selectedHazard
+                      ? 'No analysis data yet'
+                      : 'Upload data and select a hazard to analyze'}
                 </div>
               ) : null}
               {error && (
@@ -547,6 +588,7 @@ export default function Sidebar({
                       <div className="absolute bottom-full left-0 z-30 mb-1 flex min-w-max flex-col overflow-hidden rounded border border-gray-600 bg-gray-900 shadow-lg">
                         <button
                           type="button"
+                          title="Download data (CSV, aggregate)"
                           className="whitespace-nowrap px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
                           onClick={async () => {
                             if (!uploadedFile || !selectedHazard) return
@@ -574,6 +616,7 @@ export default function Sidebar({
                         </button>
                         <button
                           type="button"
+                          title="Download data (GPKG, split segments)"
                           className="whitespace-nowrap border-t border-gray-700 px-4 py-2 text-left text-sm text-gray-200 hover:bg-gray-800"
                           onClick={async () => {
                             if (!uploadedFile || !selectedHazard) return
@@ -602,6 +645,7 @@ export default function Sidebar({
                       </div>
                     )}
                     <Button
+                      title="Download data (CSV)"
                       onClick={async () => {
                         if (!uploadedFile || !selectedHazard) return
                         if (uploadedFile.geometry_type === 'LineString') {
@@ -646,6 +690,7 @@ export default function Sidebar({
                     </Button>
                   </div>
                   <Button
+                    title="Download chart (PNG)"
                     onClick={async () => {
                       if (!uploadedFile || !selectedHazard) return
                       try {
@@ -681,6 +726,7 @@ export default function Sidebar({
                     )}
                   </Button>
                   <Button
+                    title="Download map (PNG)"
                     onClick={async () => {
                       if (!uploadedFile || !selectedHazard) return
                       try {
@@ -1002,7 +1048,7 @@ export default function Sidebar({
           <div className="space-y-3">
             <div>
               <p className="text-sm text-gray-700">
-                Enter the monetary cost of replacing the infrastructure asset. This value is unitless and can be in any currency. The barchart export however will dispay the total damage cost in USD.
+                Enter the monetary cost of replacing the infrastructure asset in US dollars (USD). All damage costs shown in the chart, map popups, and exports are reported in USD.
               </p>
             </div>
             <div>

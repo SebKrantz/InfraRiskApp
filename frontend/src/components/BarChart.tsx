@@ -1,6 +1,9 @@
 import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { AnalysisResult } from '../types'
 
+/** Recharts series name (tooltips); legend displays this as "Damage" via formatter */
+const DAMAGE_COST_SERIES_NAME = 'Damage Cost (USD)'
+
 interface BarChartProps {
   data: AnalysisResult
 }
@@ -19,7 +22,12 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
         {payload.map((entry: any, index: number) => {
           const name = entry.name as string
-          const tooltipLabel = name === 'D. Ratio' ? 'Damage Ratio' : name
+          const tooltipLabel =
+            name === DAMAGE_COST_SERIES_NAME
+              ? 'Damage (USD)'
+              : name === 'D. Ratio'
+                ? 'Damage Ratio'
+                : name
           const value = entry.value as number
 
           // Exposure bar (dataKey "value"): point = count only; line = meters
@@ -40,7 +48,7 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
           }
 
           let formatted: string
-          if (name === 'Damage Cost') {
+          if (name === DAMAGE_COST_SERIES_NAME) {
             formatted = value.toLocaleString('en-US', {
               style: 'currency',
               currency: 'USD',
@@ -184,7 +192,6 @@ export default function BarChart({ data }: BarChartProps) {
                 yAxisId="left"
                 stroke="#9ca3af"
                 tick={{ fill: '#9ca3af' }}
-                label={{ fill: '#9ca3af' }}
                 tickFormatter={(value) => {
                   return value.toLocaleString('en-US', { 
                     style: 'currency', 
@@ -227,7 +234,7 @@ export default function BarChart({ data }: BarChartProps) {
               <Bar
                 yAxisId="left"
                 dataKey="damageCost"
-                name="Damage Cost"
+                name={DAMAGE_COST_SERIES_NAME}
                 fill="#f59e0b"
               />
               <Bar
@@ -251,7 +258,7 @@ export default function BarChart({ data }: BarChartProps) {
                   whiteSpace: 'nowrap',
                 }}
                 formatter={(value: string) =>
-                  value === 'Damage Cost' ? 'Damage' : value
+                  value === DAMAGE_COST_SERIES_NAME ? 'Damage' : value
                 }
               />
             </>
