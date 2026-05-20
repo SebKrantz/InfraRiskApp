@@ -152,9 +152,25 @@ export default function Sidebar({
         {isOpen && (
           <div className="flex flex-col h-full overflow-y-auto p-4">
             {/* Header */}
-            <div className="flex items-center justify-between mb-5">
-              <h1 className="text-xl font-bold text-white">Infrastructure Risk Analyzer</h1>
-              <Button variant="ghost" size="sm" onClick={onToggle} className="text-gray-300 hover:text-white hover:bg-gray-800">
+            <div className="flex items-center justify-between gap-2 mb-5">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <h1 className="min-w-0 flex-1 text-xl font-bold leading-tight text-white">
+                  Infrastructure Risk Analyzer
+                </h1>
+                <div className="shrink-0">
+                  <a
+                    href="/infra-risk-analyzer-guide.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open user guide (PDF)"
+                    aria-label="Open user guide (PDF)"
+                    className="inline-flex items-center justify-center rounded-md border-0 px-3 py-1 text-sm font-medium bg-blue-600 text-white no-underline transition-colors hover:bg-blue-500"
+                  >
+                    Guide
+                  </a>
+                </div>
+              </div>
+              <Button variant="ghost" size="sm" onClick={onToggle} className="shrink-0 text-gray-300 hover:text-white hover:bg-gray-800">
                 <ChevronLeft className="h-4 w-4" />
               </Button>
             </div>
