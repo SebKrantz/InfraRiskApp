@@ -89,9 +89,15 @@ function App() {
       return
     }
 
-    // If vulnerability analysis is enabled, require both curve file and replacement value
-    if (vulnerabilityAnalysisEnabled && (!vulnerabilityCurveFile || replacementValue === null)) {
-      // Don't trigger analysis if vulnerability analysis is enabled but missing required fields
+    // If vulnerability analysis is enabled, require both curve file and a positive replacement value
+    const vulnerabilityInputsIncomplete =
+      vulnerabilityAnalysisEnabled &&
+      (!vulnerabilityCurveFile ||
+        replacementValue === null ||
+        replacementValue <= 0)
+
+    if (vulnerabilityInputsIncomplete) {
+      setAnalysisResult(null)
       return
     }
 
