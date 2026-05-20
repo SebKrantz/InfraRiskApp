@@ -165,7 +165,23 @@ async def analyze_intersections(
                 status_code=400,
                 detail=f"Error parsing vulnerability curve: {str(e)}"
             )
-    
+
+    if actual_vulnerability_file is not None and actual_replacement_value is None:
+        raise HTTPException(
+            status_code=400,
+            detail="replacement_value is required when vulnerability_curve_file is provided",
+        )
+    if actual_replacement_value is not None and actual_vulnerability_file is None:
+        raise HTTPException(
+            status_code=400,
+            detail="vulnerability_curve_file is required when replacement_value is provided",
+        )
+    if actual_replacement_value is not None and actual_replacement_value <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="replacement_value must be greater than zero",
+        )
+
     try:
         # Check cache for previously sampled raster values
         cached_values = get_cached_raster_values(actual_file_id, actual_hazard_id)

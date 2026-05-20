@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import Sidebar from './components/Sidebar'
 import MapView from './components/MapView'
+import DisclaimerDialog from './components/DisclaimerDialog'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from './types'
 import { getHazards, uploadFile, analyze as analyzeApi, getHazardStats } from './services/api'
 
@@ -88,9 +89,15 @@ function App() {
       return
     }
 
-    // If vulnerability analysis is enabled, require both curve file and replacement value
-    if (vulnerabilityAnalysisEnabled && (!vulnerabilityCurveFile || replacementValue === null)) {
-      // Don't trigger analysis if vulnerability analysis is enabled but missing required fields
+    // If vulnerability analysis is enabled, require both curve file and a positive replacement value
+    const vulnerabilityInputsIncomplete =
+      vulnerabilityAnalysisEnabled &&
+      (!vulnerabilityCurveFile ||
+        replacementValue === null ||
+        replacementValue <= 0)
+
+    if (vulnerabilityInputsIncomplete) {
+      setAnalysisResult(null)
       return
     }
 
@@ -127,6 +134,7 @@ function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden m-0 p-0">
+      <DisclaimerDialog />
       <Sidebar
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}

@@ -604,7 +604,7 @@ export default function MapView({
           maximumFractionDigits: 0
         })
       }
-      computedFeatures.push({ label: 'Damage Cost:', value: formatDamageCost(damageCost) })
+      computedFeatures.push({ label: 'Damage Cost (USD):', value: formatDamageCost(damageCost) })
     }
     
     // Display all computed features at the top (bold font distinguishes them)
