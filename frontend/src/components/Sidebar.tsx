@@ -173,7 +173,7 @@ export default function Sidebar({
                 </h1>
                 <div className="shrink-0">
                   <a
-                    href="/infra-risk-analyzer-guide.pdf"
+                    href="infra-risk-analyzer-guide.pdf"
                     target="_blank"
                     rel="noopener noreferrer"
                     title="Open user guide (PDF)"

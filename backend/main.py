@@ -55,8 +55,21 @@ async def health():
     """Health check endpoint"""
     return {"status": "healthy"}
 
+def _static_file_path(relative_path: str) -> Optional[Path]:
+    """Resolve a path under STATIC_DIR, rejecting directory traversal."""
+    static_root = STATIC_DIR.resolve()
+    candidate = (STATIC_DIR / relative_path).resolve()
+    if not str(candidate).startswith(str(static_root)):
+        return None
+    return candidate if candidate.is_file() else None
+
+
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa_fallback(full_path: str):
+    static_file = _static_file_path(full_path)
+    if static_file is not None:
+        return FileResponse(static_file)
+
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
