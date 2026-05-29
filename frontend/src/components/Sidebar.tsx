@@ -496,6 +496,10 @@ export default function Sidebar({
                           />
                         </div>
                       )}
+                      <p className="mt-1 text-xs text-gray-500">
+                        2 cols: <span className="font-mono">intensity, vulnerability</span>. For uncertainty bands use 4 cols:{' '}
+                        <span className="font-mono">intensity, lower, central, upper</span>.
+                      </p>
                     </div>
 
                     {/* Replacement Value */}

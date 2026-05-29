@@ -35,6 +35,10 @@ export interface AnalysisResult {
     affected_meters?: number
     unaffected_meters?: number
     total_damage_cost?: number
+    /** Lower-bound damage cost (from 4-column vulnerability CSV with uncertainty bands) */
+    total_damage_cost_lower?: number
+    /** Upper-bound damage cost (from 4-column vulnerability CSV with uncertainty bands) */
+    total_damage_cost_upper?: number
   }
   affected_features?: any
   infrastructure_features?: any // Full GeoJSON with affected status (includes vulnerability and damage_cost properties)

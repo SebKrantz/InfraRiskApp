@@ -140,6 +140,8 @@ async def analyze_intersections(
     
     # Parse vulnerability curve if provided
     vulnerability_curve_interp = None
+    vulnerability_curve_lower_interp = None
+    vulnerability_curve_upper_interp = None
     vulnerability_curve_intensity: Optional[list] = None
     vulnerability_curve_proportion: Optional[list] = None
     if actual_vulnerability_file is not None:
@@ -151,11 +153,15 @@ async def analyze_intersections(
                 content = await actual_vulnerability_file.read()
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
-            
+
             try:
-                vulnerability_curve_interp, vuln_intensity, vuln_prop = parse_vulnerability_curve_data(
-                    tmp_path
-                )
+                (
+                    vulnerability_curve_interp,
+                    vuln_intensity,
+                    vuln_prop,
+                    vulnerability_curve_lower_interp,
+                    vulnerability_curve_upper_interp,
+                ) = parse_vulnerability_curve_data(tmp_path)
                 vulnerability_curve_intensity = vuln_intensity.tolist()
                 vulnerability_curve_proportion = vuln_prop.tolist()
             finally:
@@ -197,7 +203,9 @@ async def analyze_intersections(
                 intensity_threshold=actual_threshold,
                 cached_raster_values=cached_values,
                 vulnerability_curve_interp=vulnerability_curve_interp,
-                replacement_value=actual_replacement_value
+                replacement_value=actual_replacement_value,
+                vulnerability_curve_lower_interp=vulnerability_curve_lower_interp,
+                vulnerability_curve_upper_interp=vulnerability_curve_upper_interp,
             )
         )
 
@@ -243,6 +251,10 @@ async def analyze_intersections(
         # Add vulnerability analysis results if available
         if "total_damage_cost" in analysis_result:
             result["summary"]["total_damage_cost"] = safe_float(analysis_result["total_damage_cost"])
+        if "total_damage_cost_lower" in analysis_result:
+            result["summary"]["total_damage_cost_lower"] = safe_float(analysis_result["total_damage_cost_lower"])
+        if "total_damage_cost_upper" in analysis_result:
+            result["summary"]["total_damage_cost_upper"] = safe_float(analysis_result["total_damage_cost_upper"])
         if "total_replacement_value" in analysis_result:
             result["summary"]["total_replacement_value"] = safe_float(analysis_result["total_replacement_value"])
         
