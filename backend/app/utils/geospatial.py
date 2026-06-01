@@ -562,6 +562,8 @@ def analyze_intersection(
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 vulnerability_values = []
                 damage_cost_values = []
+                damage_cost_lower_values = []
+                damage_cost_upper_values = []
 
                 for idx, row in infrastructure_gdf.iterrows():
                     exposure = row.get('exposure_level')
@@ -569,18 +571,30 @@ def analyze_intersection(
                         vulnerability = vulnerability_curve_interp(float(exposure))
                         damage_cost = replacement_value * vulnerability
                         if has_bounds:
-                            total_damage_cost_lower += replacement_value * vulnerability_curve_lower_interp(float(exposure))
-                            total_damage_cost_upper += replacement_value * vulnerability_curve_upper_interp(float(exposure))
+                            dc_lower = replacement_value * vulnerability_curve_lower_interp(float(exposure))
+                            dc_upper = replacement_value * vulnerability_curve_upper_interp(float(exposure))
+                            total_damage_cost_lower += dc_lower
+                            total_damage_cost_upper += dc_upper
+                        else:
+                            dc_lower = None
+                            dc_upper = None
                     else:
                         vulnerability = 0.0
                         damage_cost = 0.0
+                        dc_lower = None
+                        dc_upper = None
 
                     vulnerability_values.append(vulnerability)
                     damage_cost_values.append(damage_cost)
+                    damage_cost_lower_values.append(dc_lower)
+                    damage_cost_upper_values.append(dc_upper)
                     total_damage_cost += damage_cost
 
                 infrastructure_gdf['vulnerability'] = vulnerability_values
                 infrastructure_gdf['damage_cost'] = damage_cost_values
+                if has_bounds:
+                    infrastructure_gdf['damage_cost_lower'] = damage_cost_lower_values
+                    infrastructure_gdf['damage_cost_upper'] = damage_cost_upper_values
             else:
                 infrastructure_gdf['vulnerability'] = None
                 infrastructure_gdf['damage_cost'] = None
@@ -798,6 +812,8 @@ def analyze_intersection(
                     # Calculate distance-weighted average vulnerability for this segment
                     vulnerability = None
                     damage_cost = None
+                    seg_damage_cost_lower = None
+                    seg_damage_cost_upper = None
                     if vulnerability_curve_interp is not None and replacement_value is not None:
                         if segment_vals:
                             # Calculate distance-weighted average vulnerability
@@ -856,14 +872,20 @@ def analyze_intersection(
                             # Damage cost = replacement_value (per meter) × vulnerability × length
                             damage_cost = replacement_value * vulnerability * segment_length_m
                             total_damage_cost += damage_cost
+                            seg_damage_cost_lower = None
+                            seg_damage_cost_upper = None
                             if has_bounds and length_sum > 0:
                                 lower_vuln_avg = lower_vuln_sum / length_sum
                                 upper_vuln_avg = upper_vuln_sum / length_sum
-                                total_damage_cost_lower += replacement_value * lower_vuln_avg * segment_length_m
-                                total_damage_cost_upper += replacement_value * upper_vuln_avg * segment_length_m
+                                seg_damage_cost_lower = replacement_value * lower_vuln_avg * segment_length_m
+                                seg_damage_cost_upper = replacement_value * upper_vuln_avg * segment_length_m
+                                total_damage_cost_lower += seg_damage_cost_lower
+                                total_damage_cost_upper += seg_damage_cost_upper
                         else:
                             vulnerability = 0.0
                             damage_cost = 0.0
+                            seg_damage_cost_lower = None
+                            seg_damage_cost_upper = None
                     
                     if affected:
                         affected_length += segment_length_m
@@ -881,6 +903,10 @@ def analyze_intersection(
                         seg_row['vulnerability'] = vulnerability
                     if damage_cost is not None:
                         seg_row['damage_cost'] = damage_cost
+                    if seg_damage_cost_lower is not None:
+                        seg_row['damage_cost_lower'] = seg_damage_cost_lower
+                    if seg_damage_cost_upper is not None:
+                        seg_row['damage_cost_upper'] = seg_damage_cost_upper
                     segment_rows.append(seg_row)
                 
                 for i in range(1, len(sampled_points)):

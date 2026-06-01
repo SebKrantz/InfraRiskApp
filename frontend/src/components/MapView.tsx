@@ -544,6 +544,8 @@ export default function MapView({
     const exposureLevelAvg = properties['exposure_level_avg']
     const vulnerability = properties['vulnerability']
     const damageCost = properties['damage_cost']
+    const damageCostLower = properties['damage_cost_lower']
+    const damageCostUpper = properties['damage_cost_upper']
     
     // Build list of computed features to display in a single shaded box
     const computedFeatures: Array<{label: string, value: string}> = []
@@ -604,6 +606,13 @@ export default function MapView({
         })
       }
       computedFeatures.push({ label: 'Damage Cost (USD):', value: formatDamageCost(damageCost) })
+      if (damageCostLower !== undefined && damageCostLower !== null &&
+          damageCostUpper !== undefined && damageCostUpper !== null) {
+        computedFeatures.push({
+          label: 'Range:',
+          value: `${formatDamageCost(damageCostLower)} – ${formatDamageCost(damageCostUpper)}`
+        })
+      }
     }
     
     // Display all computed features at the top (bold font distinguishes them)
@@ -623,7 +632,7 @@ export default function MapView({
     // Sort properties alphabetically
     // Exclude affected, exposure level, vulnerability, and damage_cost properties from the main list since they're shown at the top
     const sortedKeys = Object.keys(properties)
-      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m', 'vulnerability', 'damage_cost'].includes(key))
+      .filter(key => !['affected', 'exposure_level', 'exposure_level_max', 'exposure_level_avg', 'length_m', 'vulnerability', 'damage_cost', 'damage_cost_lower', 'damage_cost_upper'].includes(key))
       .sort((a, b) => a.localeCompare(b))
 
     for (const key of sortedKeys) {
