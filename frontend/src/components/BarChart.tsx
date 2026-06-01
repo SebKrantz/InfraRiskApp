@@ -1,8 +1,11 @@
-import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { BarChart as RechartsBarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ErrorBar } from 'recharts'
 import { AnalysisResult } from '../types'
 
 /** Recharts series name (tooltips); legend displays this as "Damage" via formatter */
 const DAMAGE_COST_SERIES_NAME = 'Damage Cost (USD)'
+
+const fmtUSD = (v: number) =>
+  v.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 })
 
 interface BarChartProps {
   data: AnalysisResult
@@ -14,9 +17,11 @@ interface CustomTooltipProps {
   payload?: Array<{ name: string; value: number; dataKey: string; payload?: { unit?: string } }>
   geometryType?: 'Point' | 'LineString'
   isExposureMode?: boolean
+  damageLower?: number
+  damageUpper?: number
 }
 
-const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: CustomTooltipProps) => {
+const CustomTooltip = ({ active, payload, geometryType, isExposureMode, damageLower, damageUpper }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-gray-800 border border-gray-700 rounded-md px-3 py-2 shadow-lg">
@@ -49,12 +54,7 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
 
           let formatted: string
           if (name === DAMAGE_COST_SERIES_NAME) {
-            formatted = value.toLocaleString('en-US', {
-              style: 'currency',
-              currency: 'USD',
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 0
-            })
+            formatted = fmtUSD(value)
           } else if (name === 'Exposure' || name === 'Damage Ratio' || name === 'D. Ratio') {
             formatted = `${value.toFixed(1)}%`
           } else {
@@ -62,9 +62,16 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
           }
 
           return (
-            <p key={index} className="text-white text-xs">
-              {tooltipLabel}: {formatted}
-            </p>
+            <div key={index}>
+              <p className="text-white text-xs">
+                {tooltipLabel}: {formatted}
+              </p>
+              {name === DAMAGE_COST_SERIES_NAME && damageLower !== undefined && damageUpper !== undefined && (
+                <p className="text-gray-400 text-xs">
+                  Range: {fmtUSD(damageLower)} – {fmtUSD(damageUpper)}
+                </p>
+              )}
+            </div>
           )
         })}
       </div>
@@ -76,6 +83,11 @@ const CustomTooltip = ({ active, payload, geometryType, isExposureMode }: Custom
 export default function BarChart({ data }: BarChartProps) {
   const chartData: any[] = []
   const isVulnerabilityMode = data.summary.total_damage_cost !== undefined && data.summary.total_damage_cost !== null
+
+  // Uncertainty bounds (populated only when a 4-column vulnerability CSV was used)
+  const damageLower = data.summary.total_damage_cost_lower
+  const damageUpper = data.summary.total_damage_cost_upper
+  const hasErrorBars = damageLower !== undefined && damageUpper !== undefined
 
   // If vulnerability analysis is enabled, show damage cost (left axis) and exposure/vulnerability (right axis)
   if (isVulnerabilityMode) {
@@ -103,7 +115,7 @@ export default function BarChart({ data }: BarChartProps) {
       if (data.geometry_type === 'Point') {
         // For points: simple average of vulnerability for affected points
         const exposed = features.filter(
-          (f: any) => f.properties && f.properties.affected && 
+          (f: any) => f.properties && f.properties.affected &&
           f.properties.vulnerability !== null && f.properties.vulnerability !== undefined
         )
         if (exposed.length > 0) {
@@ -130,12 +142,18 @@ export default function BarChart({ data }: BarChartProps) {
       }
     }
 
+    // Error bar values: Recharts ErrorBar expects [minus, plus] (distances from centre)
+    const damageCostError = hasErrorBars
+      ? [totalDamageCost - Math.max(0, damageLower!), Math.max(0, damageUpper!) - totalDamageCost]
+      : undefined
+
     // Create a single data point with all three values
     chartData.push({
       name: '',
       damageCost: totalDamageCost,
       exposurePct,
-      vulnerabilityPct
+      vulnerabilityPct,
+      ...(damageCostError !== undefined ? { damageCostError } : {}),
     })
   } else {
     // Otherwise show affected/unaffected as before
@@ -188,13 +206,14 @@ export default function BarChart({ data }: BarChartProps) {
           {isVulnerabilityMode ? (
             <>
               {/* Left Y axis: damage cost (currency) */}
-              <YAxis 
+              <YAxis
                 yAxisId="left"
                 stroke="#9ca3af"
                 tick={{ fill: '#9ca3af' }}
+                domain={hasErrorBars ? [0, (v: number) => Math.max(v, damageUpper! * 1.2)] : [0, 'auto']}
                 tickFormatter={(value) => {
-                  return value.toLocaleString('en-US', { 
-                    style: 'currency', 
+                  return value.toLocaleString('en-US', {
+                    style: 'currency',
                     currency: 'USD',
                     minimumFractionDigits: 0,
                     maximumFractionDigits: 0,
@@ -226,6 +245,8 @@ export default function BarChart({ data }: BarChartProps) {
               <CustomTooltip
                 geometryType={data.geometry_type}
                 isExposureMode={!isVulnerabilityMode}
+                damageLower={damageLower}
+                damageUpper={damageUpper}
               />
             }
           />
@@ -236,7 +257,17 @@ export default function BarChart({ data }: BarChartProps) {
                 dataKey="damageCost"
                 name={DAMAGE_COST_SERIES_NAME}
                 fill="#f59e0b"
-              />
+              >
+                {hasErrorBars && (
+                  <ErrorBar
+                    dataKey="damageCostError"
+                    width={5}
+                    strokeWidth={2}
+                    stroke="#374151"
+                    direction="y"
+                  />
+                )}
+              </Bar>
               <Bar
                 yAxisId="right"
                 dataKey="exposurePct"

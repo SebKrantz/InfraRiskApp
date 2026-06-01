@@ -241,9 +241,33 @@ def vulnerability_interp_from_arrays(
     return interpolate
 
 
-def parse_vulnerability_curve_data(csv_path: str) -> Tuple[Callable[[float], float], np.ndarray, np.ndarray]:
+def parse_vulnerability_curve_data(
+    csv_path: str,
+) -> Tuple[
+    Callable[[float], float],
+    np.ndarray,
+    np.ndarray,
+    Optional[Callable[[float], float]],
+    Optional[Callable[[float], float]],
+]:
     """
     Parse vulnerability curve CSV; return interp and sorted numpy arrays (for caching / export).
+
+    Supported CSV formats (header row optional — non-numeric rows are silently skipped):
+
+    * **2 columns**: ``intensity, proportion_destroyed``
+      → standard single-curve mode; no uncertainty bounds.
+
+    * **4 columns**: ``intensity, proportion_lower, proportion_central, proportion_upper``
+      → uncertainty-band mode; lower/upper interpolators are returned in addition to the
+      central one. The central column (col 2) is used as the primary vulnerability curve.
+
+    Returns
+    -------
+    tuple of 5 elements:
+        (central_interp, intensity_arr, proportion_central_arr, lower_interp, upper_interp)
+
+    ``lower_interp`` and ``upper_interp`` are ``None`` when only 2 columns are present.
     """
     encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'windows-1252']
     delimiter = ','
@@ -268,10 +292,26 @@ def parse_vulnerability_curve_data(csv_path: str) -> Tuple[Callable[[float], flo
     if df.shape[1] < 2:
         raise ValueError("Vulnerability curve CSV must have at least 2 columns")
 
-    intensity = pd.to_numeric(df.iloc[:, 0], errors='coerce')
-    proportion_destroyed = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+    has_bounds = df.shape[1] >= 4
 
-    valid_mask = ~(intensity.isna() | proportion_destroyed.isna())
+    intensity = pd.to_numeric(df.iloc[:, 0], errors='coerce')
+
+    if has_bounds:
+        # 4-column format: intensity | lower | central | upper
+        proportion_lower_raw = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+        proportion_destroyed = pd.to_numeric(df.iloc[:, 2], errors='coerce')
+        proportion_upper_raw = pd.to_numeric(df.iloc[:, 3], errors='coerce')
+        valid_mask = ~(
+            intensity.isna()
+            | proportion_destroyed.isna()
+            | proportion_lower_raw.isna()
+            | proportion_upper_raw.isna()
+        )
+    else:
+        # 2-column format: intensity | proportion_destroyed
+        proportion_destroyed = pd.to_numeric(df.iloc[:, 1], errors='coerce')
+        valid_mask = ~(intensity.isna() | proportion_destroyed.isna())
+
     intensity = intensity[valid_mask].values
     proportion_destroyed = proportion_destroyed[valid_mask].values
 
@@ -279,13 +319,34 @@ def parse_vulnerability_curve_data(csv_path: str) -> Tuple[Callable[[float], flo
         raise ValueError("No valid data rows found in vulnerability curve CSV")
 
     if (proportion_destroyed < 0).any() or (proportion_destroyed > 1).any():
-        raise ValueError("Proportion destroyed values must be between 0 and 1")
+        raise ValueError("Proportion destroyed (central) values must be between 0 and 1")
 
     sort_idx = np.argsort(intensity)
     intensity = intensity[sort_idx]
     proportion_destroyed = proportion_destroyed[sort_idx]
 
-    return vulnerability_interp_from_arrays(intensity, proportion_destroyed), intensity, proportion_destroyed
+    central_interp = vulnerability_interp_from_arrays(intensity, proportion_destroyed)
+
+    if has_bounds:
+        proportion_lower = proportion_lower_raw[valid_mask].values[sort_idx]
+        proportion_upper = proportion_upper_raw[valid_mask].values[sort_idx]
+
+        if (proportion_lower < 0).any() or (proportion_lower > 1).any():
+            raise ValueError("proportion_lower values must be between 0 and 1")
+        if (proportion_upper < 0).any() or (proportion_upper > 1).any():
+            raise ValueError("proportion_upper values must be between 0 and 1")
+
+        lower_interp: Optional[Callable[[float], float]] = vulnerability_interp_from_arrays(
+            intensity, proportion_lower
+        )
+        upper_interp: Optional[Callable[[float], float]] = vulnerability_interp_from_arrays(
+            intensity, proportion_upper
+        )
+    else:
+        lower_interp = None
+        upper_interp = None
+
+    return central_interp, intensity, proportion_destroyed, lower_interp, upper_interp
 
 
 def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
@@ -294,7 +355,7 @@ def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
 
     CSV format: Two columns (intensity, proportion_destroyed)
     """
-    interp, _, _ = parse_vulnerability_curve_data(csv_path)
+    interp, _, _, _, _ = parse_vulnerability_curve_data(csv_path)
     return interp
 
 
@@ -355,7 +416,9 @@ def analyze_intersection(
     intensity_threshold: Optional[float] = None,
     cached_raster_values: Optional[np.ndarray] = None,
     vulnerability_curve_interp: Optional[Callable[[float], float]] = None,
-    replacement_value: Optional[float] = None
+    replacement_value: Optional[float] = None,
+    vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
+    vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
 ) -> dict:
     """
     Analyze intersection between infrastructure and hazard raster
@@ -490,32 +553,55 @@ def analyze_intersection(
             
             # Calculate vulnerability and damage cost if vulnerability analysis is enabled
             total_damage_cost = 0.0
+            total_damage_cost_lower = 0.0
+            total_damage_cost_upper = 0.0
+            has_bounds = (
+                vulnerability_curve_lower_interp is not None
+                and vulnerability_curve_upper_interp is not None
+            )
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 vulnerability_values = []
                 damage_cost_values = []
-                
+                damage_cost_lower_values = []
+                damage_cost_upper_values = []
+
                 for idx, row in infrastructure_gdf.iterrows():
                     exposure = row.get('exposure_level')
                     if exposure is not None and not np.isnan(exposure):
                         vulnerability = vulnerability_curve_interp(float(exposure))
                         damage_cost = replacement_value * vulnerability
+                        if has_bounds:
+                            dc_lower = replacement_value * vulnerability_curve_lower_interp(float(exposure))
+                            dc_upper = replacement_value * vulnerability_curve_upper_interp(float(exposure))
+                            total_damage_cost_lower += dc_lower
+                            total_damage_cost_upper += dc_upper
+                        else:
+                            dc_lower = None
+                            dc_upper = None
                     else:
                         vulnerability = 0.0
                         damage_cost = 0.0
-                    
+                        dc_lower = None
+                        dc_upper = None
+
                     vulnerability_values.append(vulnerability)
                     damage_cost_values.append(damage_cost)
+                    damage_cost_lower_values.append(dc_lower)
+                    damage_cost_upper_values.append(dc_upper)
                     total_damage_cost += damage_cost
-                
+
                 infrastructure_gdf['vulnerability'] = vulnerability_values
                 infrastructure_gdf['damage_cost'] = damage_cost_values
+                if has_bounds:
+                    infrastructure_gdf['damage_cost_lower'] = damage_cost_lower_values
+                    infrastructure_gdf['damage_cost_upper'] = damage_cost_upper_values
             else:
                 infrastructure_gdf['vulnerability'] = None
                 infrastructure_gdf['damage_cost'] = None
-            
+
             affected_count = int(affected_mask.sum())
             unaffected_count = len(infrastructure_gdf) - affected_count
-            
+
             result = {
                 "affected_count": affected_count,
                 "unaffected_count": unaffected_count,
@@ -524,10 +610,13 @@ def analyze_intersection(
                 "full_gdf": infrastructure_gdf,  # Return full GDF with affected status
                 "raster_values": raster_values  # Return for caching (threshold changes)
             }
-            
+
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
-            
+                if has_bounds:
+                    result["total_damage_cost_lower"] = total_damage_cost_lower
+                    result["total_damage_cost_upper"] = total_damage_cost_upper
+
             return result
         
         else:  # LineString
@@ -683,89 +772,120 @@ def analyze_intersection(
             affected_length = 0.0
             unaffected_length = 0.0
             total_damage_cost = 0.0
+            total_damage_cost_lower = 0.0
+            total_damage_cost_upper = 0.0
+            has_bounds = (
+                vulnerability_curve_lower_interp is not None
+                and vulnerability_curve_upper_interp is not None
+            )
             segment_rows = []
-            
+
             for ld in line_data:
                 row_dict = ld['row_dict']
                 sampled_points = ld['sampled_points']
                 raster_values = ld['raster_values']
-                
+
                 # Classify points as affected
                 if intensity_threshold is not None:
                     point_affected = [not np.isnan(v) and v >= intensity_threshold for v in raster_values]
                 else:
                     point_affected = [not np.isnan(v) and v > 0 for v in raster_values]
-                
+
                 # Create segments by grouping consecutive points with same status
                 current_segment_points = [sampled_points[0]]
                 current_segment_indices = [0]
                 current_affected = point_affected[0]
-                
+
                 def create_segment(points, indices, affected):
                     nonlocal affected_length, unaffected_length, total_damage_cost
+                    nonlocal total_damage_cost_lower, total_damage_cost_upper
                     if len(points) < 2:
                         return
-                    
+
                     segment_geom = LineString(points)
                     segment_length_m = geod.line_length(*zip(*points))
-                    
+
                     segment_vals = [raster_values[j] for j in indices if not np.isnan(raster_values[j])]
                     avg_value = sum(segment_vals) / len(segment_vals) if segment_vals else None
                     max_value = max(segment_vals) if segment_vals else None
-                    
+
                     # Calculate distance-weighted average vulnerability for this segment
                     vulnerability = None
                     damage_cost = None
+                    seg_damage_cost_lower = None
+                    seg_damage_cost_upper = None
                     if vulnerability_curve_interp is not None and replacement_value is not None:
                         if segment_vals:
                             # Calculate distance-weighted average vulnerability
                             # For each segment between consecutive points, calculate vulnerability
                             # at the segment midpoint (average of endpoints) and weight by segment length
                             vulnerability_sum = 0.0
+                            lower_vuln_sum = 0.0
+                            upper_vuln_sum = 0.0
                             length_sum = 0.0
-                            
+
                             for i in range(len(points) - 1):
                                 idx1 = indices[i]
                                 idx2 = indices[i + 1]
-                                
+
                                 # Get exposure values at both endpoints
                                 val1 = raster_values[idx1] if idx1 < len(raster_values) and not np.isnan(raster_values[idx1]) else None
                                 val2 = raster_values[idx2] if idx2 < len(raster_values) and not np.isnan(raster_values[idx2]) else None
-                                
+
                                 # Calculate segment length
                                 pt1 = points[i]
                                 pt2 = points[i + 1]
                                 # geod.line_length expects two arrays: lons and lats
                                 # Use the same pattern as elsewhere: *zip(*coords)
                                 seg_len = geod.line_length(*zip(*[pt1, pt2]))
-                                
+
                                 # Calculate vulnerability for this segment
                                 if val1 is not None and val2 is not None:
                                     # Average vulnerability of both endpoints
                                     vuln1 = vulnerability_curve_interp(float(val1))
                                     vuln2 = vulnerability_curve_interp(float(val2))
                                     avg_vuln = (vuln1 + vuln2) / 2.0
+                                    if has_bounds:
+                                        lower_vuln_sum += ((vulnerability_curve_lower_interp(float(val1)) + vulnerability_curve_lower_interp(float(val2))) / 2.0) * seg_len
+                                        upper_vuln_sum += ((vulnerability_curve_upper_interp(float(val1)) + vulnerability_curve_upper_interp(float(val2))) / 2.0) * seg_len
                                 elif val1 is not None:
                                     avg_vuln = vulnerability_curve_interp(float(val1))
+                                    if has_bounds:
+                                        lower_vuln_sum += vulnerability_curve_lower_interp(float(val1)) * seg_len
+                                        upper_vuln_sum += vulnerability_curve_upper_interp(float(val1)) * seg_len
                                 elif val2 is not None:
                                     avg_vuln = vulnerability_curve_interp(float(val2))
+                                    if has_bounds:
+                                        lower_vuln_sum += vulnerability_curve_lower_interp(float(val2)) * seg_len
+                                        upper_vuln_sum += vulnerability_curve_upper_interp(float(val2)) * seg_len
                                 else:
                                     avg_vuln = 0.0
-                                
+
                                 vulnerability_sum += avg_vuln * seg_len
                                 length_sum += seg_len
-                            
+
                             if length_sum > 0:
                                 vulnerability = vulnerability_sum / length_sum
                             else:
                                 vulnerability = 0.0
-                            
+
                             # Damage cost = replacement_value (per meter) × vulnerability × length
                             damage_cost = replacement_value * vulnerability * segment_length_m
                             total_damage_cost += damage_cost
+                            seg_damage_cost_lower = None
+                            seg_damage_cost_upper = None
+                            if has_bounds and length_sum > 0:
+                                lower_vuln_avg = lower_vuln_sum / length_sum
+                                upper_vuln_avg = upper_vuln_sum / length_sum
+                                seg_damage_cost_lower = replacement_value * lower_vuln_avg * segment_length_m
+                                seg_damage_cost_upper = replacement_value * upper_vuln_avg * segment_length_m
+                                total_damage_cost_lower += seg_damage_cost_lower
+                                total_damage_cost_upper += seg_damage_cost_upper
                         else:
                             vulnerability = 0.0
                             damage_cost = 0.0
+                            seg_damage_cost_lower = None
+                            seg_damage_cost_upper = None
                     
                     if affected:
                         affected_length += segment_length_m
@@ -783,6 +903,10 @@ def analyze_intersection(
                         seg_row['vulnerability'] = vulnerability
                     if damage_cost is not None:
                         seg_row['damage_cost'] = damage_cost
+                    if seg_damage_cost_lower is not None:
+                        seg_row['damage_cost_lower'] = seg_damage_cost_lower
+                    if seg_damage_cost_upper is not None:
+                        seg_row['damage_cost_upper'] = seg_damage_cost_upper
                     segment_rows.append(seg_row)
                 
                 for i in range(1, len(sampled_points)):
@@ -818,9 +942,12 @@ def analyze_intersection(
                 "line_data": line_data,
                 "raster_values": all_raster_values
             }
-            
+
             if vulnerability_curve_interp is not None and replacement_value is not None:
                 result["total_damage_cost"] = total_damage_cost
-            
+                if has_bounds:
+                    result["total_damage_cost_lower"] = total_damage_cost_lower
+                    result["total_damage_cost_upper"] = total_damage_cost_upper
+
             return result
 
