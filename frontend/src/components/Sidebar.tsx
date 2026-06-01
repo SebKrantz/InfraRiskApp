@@ -82,6 +82,37 @@ export default function Sidebar({
   const [dataMenuOpen, setDataMenuOpen] = useState(false)
   const dataMenuRef = useRef<HTMLDivElement>(null)
 
+  // Local (immediate) state for the Replacement Value input. The parent
+  // (and therefore recalculation) is only updated after a short debounce so a
+  // multi-digit number can be typed without triggering analysis on each digit.
+  const [replacementValueInput, setReplacementValueInput] = useState<string>(
+    replacementValue !== null ? String(replacementValue) : ''
+  )
+  // Tracks whether the latest change came from the user typing, so external
+  // updates to `replacementValue` (e.g. reset) don't fight the local state.
+  const replacementValueEditing = useRef(false)
+
+  // Resync local input when the prop changes externally (not from our own typing).
+  useEffect(() => {
+    if (replacementValueEditing.current) return
+    setReplacementValueInput(replacementValue !== null ? String(replacementValue) : '')
+  }, [replacementValue])
+
+  // Debounce propagating the typed value to the parent.
+  useEffect(() => {
+    if (!replacementValueEditing.current) return
+    const handle = setTimeout(() => {
+      const val = replacementValueInput === '' ? null : parseFloat(replacementValueInput)
+      const normalized = val !== null && Number.isNaN(val) ? null : val
+      if (normalized !== replacementValue) {
+        onReplacementValueChange(normalized)
+      }
+      replacementValueEditing.current = false
+    }, 700)
+    return () => clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replacementValueInput])
+
   useEffect(() => {
     if (!dataMenuOpen) return
     const onDoc = (e: MouseEvent) => {
@@ -437,11 +468,6 @@ export default function Sidebar({
                     <Info className="h-3.5 w-3.5" />
                   </Button>
                 </div>
-                {(loadingUpload || loadingAnalysis) && (
-                  <p className="text-xs text-gray-400 mt-1">
-                    {loadingUpload ? 'Upload in progress…' : 'Analysis in progress…'}
-                  </p>
-                )}
 
                 {vulnerabilityAnalysisEnabled && (
                   <div className="space-y-4">
@@ -519,10 +545,10 @@ export default function Sidebar({
                           type="number"
                           min="0"
                           step="0.01"
-                          value={replacementValue ?? ''}
+                          value={replacementValueInput}
                           onChange={(e) => {
-                            const val = e.target.value === '' ? null : parseFloat(e.target.value)
-                            onReplacementValueChange(val)
+                            replacementValueEditing.current = true
+                            setReplacementValueInput(e.target.value)
                           }}
                           disabled={loadingUpload || loadingAnalysis}
                           placeholder="e.g. 100000"
@@ -980,13 +1006,24 @@ export default function Sidebar({
             </div>
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">CSV Format:</p>
-              <p className="text-sm text-gray-600">
-                The CSV file must contain exactly two columns:
+              <p className="text-sm text-gray-600 mb-2">
+                The CSV file must contain either <strong>2 columns</strong> (standard) or <strong>4 columns</strong> (with uncertainty bounds). A header row is optional.
               </p>
-              <ul className="text-sm text-gray-600 space-y-1 mt-2 ml-4 list-disc">
-                <li><strong>Column 1:</strong> Hazard intensity (numeric values)</li>
-                <li><strong>Column 2:</strong> Proportion destroyed (numeric values between 0 and 1)</li>
+              <p className="text-sm font-medium text-gray-700 mb-1">Standard (2 columns):</p>
+              <ul className="text-sm text-gray-600 space-y-1 ml-4 list-disc mb-3">
+                <li><strong>Column 1:</strong> Hazard intensity (numeric)</li>
+                <li><strong>Column 2:</strong> Proportion destroyed (0–1)</li>
               </ul>
+              <p className="text-sm font-medium text-gray-700 mb-1">With uncertainty bands (4 columns):</p>
+              <ul className="text-sm text-gray-600 space-y-1 ml-4 list-disc">
+                <li><strong>Column 1:</strong> Hazard intensity (numeric)</li>
+                <li><strong>Column 2:</strong> Lower-bound proportion destroyed (0–1)</li>
+                <li><strong>Column 3:</strong> Central proportion destroyed (0–1)</li>
+                <li><strong>Column 4:</strong> Upper-bound proportion destroyed (0–1)</li>
+              </ul>
+              <p className="text-sm text-gray-500 mt-2">
+                When 4 columns are provided, error bars appear on the Damage Cost bar and the map popup shows the damage range per feature.
+              </p>
             </div>
             <div>
               <p className="text-sm font-bold text-gray-700 mb-1">How it works:</p>

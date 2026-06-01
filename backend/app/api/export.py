@@ -197,7 +197,15 @@ def generate_barchart_png(
     if total_damage_cost is not None:
         # Vulnerability analysis mode - show damage cost (left axis) and exposure/vulnerability (right axis)
         damage_cost = max(0, total_damage_cost)
-        
+
+        # Uncertainty bounds (None when not provided)
+        damage_lower = analysis_result.get('total_damage_cost_lower')
+        damage_upper = analysis_result.get('total_damage_cost_upper')
+        has_bounds = damage_lower is not None and damage_upper is not None
+        if has_bounds:
+            damage_lower = max(0, damage_lower)
+            damage_upper = max(0, damage_upper)
+
         # Calculate exposure percentage
         exposure_pct = 0.0
         if geometry_type == 'Point':
@@ -211,7 +219,7 @@ def generate_barchart_png(
             total_meters = affected_meters + unaffected_meters
             if total_meters > 0:
                 exposure_pct = (affected_meters / total_meters) * 100
-        
+
         # Calculate average vulnerability of exposed assets (as percentage)
         vulnerability_pct = 0.0
         if full_gdf is not None and 'vulnerability' in full_gdf.columns:
@@ -231,35 +239,42 @@ def generate_barchart_png(
                         length_sum = exposed['length_m'].sum()
                         if length_sum > 0:
                             vulnerability_pct = (weighted_sum / length_sum) * 100
-        
+
         # Create dual-axis plot
         fig, ax1 = plt.subplots(figsize=(6, 5))
-        
+
         # Disable gridlines
         ax1.grid(False)
-        
+
         # Left axis: damage cost
         categories = ['Damage Cost', 'Exposure', 'Damage Ratio']
-        damage_values = [damage_cost, 0, 0]
-        pct_values = [0, exposure_pct, vulnerability_pct]
-        
         x_pos = np.arange(len(categories))
         width = 0.6
-        
+
         # Plot damage cost on left axis
-        bars1 = ax1.bar(x_pos[0], damage_cost, width, color='#f59e0b', alpha=0.8)
+        bars1 = ax1.bar(x_pos[0], damage_cost, width, color='#f59e0b', alpha=0.8, zorder=3)
         ax1.set_ylabel('Damage Cost (USD)', fontsize=12, color='#4b5563')
         ax1.tick_params(axis='y', labelcolor='#4b5563')
         ax1.set_xticks(x_pos)
         ax1.set_xticklabels(['Damage', 'Exposure', 'Damage Ratio'], fontsize=11, color='#4b5563')
         ax1.set_title(title, fontsize=14, fontweight='bold')
-        
-        # Set y-axis limits to add margin above damage cost bar
-        ax1.set_ylim(bottom=0, top=damage_cost * 1.15)
-        
+
+        # Y-axis upper limit — extend to accommodate error bar whisker when bounds present
+        y_top_ref = damage_upper if has_bounds else damage_cost
+        ax1.set_ylim(bottom=0, top=max(y_top_ref, 1) * 1.25)
+
         # Format left axis as currency
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-        
+
+        # Error bars for damage cost uncertainty bounds
+        if has_bounds:
+            ax1.errorbar(
+                x_pos[0], damage_cost,
+                yerr=[[damage_cost - damage_lower], [damage_upper - damage_cost]],
+                fmt='none', color='#374151', capsize=10, capthick=2,
+                linewidth=2, zorder=4,
+            )
+
         # Right axis: percentages
         ax2 = ax1.twinx()
         ax2.grid(False)  # Disable gridlines on right axis too
@@ -268,25 +283,31 @@ def generate_barchart_png(
         ax2.set_ylabel('Percentage (%)', fontsize=12, color='#4b5563')
         ax2.tick_params(axis='y', labelcolor='#4b5563')
         ax2.set_ylim(0, 100)
-        
+
         # Add value labels on bars
-        # Damage cost
-        ax1.text(x_pos[0], damage_cost + max(damage_cost, 1) * 0.01, 
-                f'${damage_cost:,.0f}', ha='center', va='bottom', fontsize=10, color='#f59e0b')
+        # Damage cost — show range below the central value when bounds present
+        label_y = damage_upper if has_bounds else damage_cost
+        cost_label = f'${damage_cost:,.0f}'
+        if has_bounds:
+            cost_label += f'\n[${damage_lower:,.0f} – ${damage_upper:,.0f}]'
+        ax1.text(
+            x_pos[0], label_y + max(y_top_ref, 1) * 0.02,
+            cost_label, ha='center', va='bottom', fontsize=9, color='#f59e0b',
+        )
         # Exposure
-        ax2.text(x_pos[1], exposure_pct + 1, 
+        ax2.text(x_pos[1], exposure_pct + 1,
                 f'{exposure_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#3b82f6')
         # Damage Ratio
-        ax2.text(x_pos[2], vulnerability_pct + 1, 
+        ax2.text(x_pos[2], vulnerability_pct + 1,
                 f'{vulnerability_pct:.1f}%', ha='center', va='bottom', fontsize=10, color='#10b981')
-        
+
         plt.tight_layout()
-        
+
         # Save to bytes buffer
         img_buffer = io.BytesIO()
         plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
         plt.close(fig)
-        
+
         return img_buffer.getvalue()
     else:
         # Standard exposure analysis mode
@@ -769,6 +790,8 @@ async def export_barchart(request: ExportBarchartRequest):
             "affected_meters": analysis_result.get("affected_meters", 0.0),
             "unaffected_meters": analysis_result.get("unaffected_meters", 0.0),
             "total_damage_cost": analysis_result.get("total_damage_cost"),
+            "total_damage_cost_lower": analysis_result.get("total_damage_cost_lower"),
+            "total_damage_cost_upper": analysis_result.get("total_damage_cost_upper"),
             "total_features": file_info["feature_count"]
         }
         
