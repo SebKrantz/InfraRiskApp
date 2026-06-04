@@ -289,7 +289,7 @@ def generate_barchart_png(
         label_y = damage_upper if has_bounds else damage_cost
         cost_label = f'${damage_cost:,.0f}'
         if has_bounds:
-            cost_label += f'\n[${damage_lower:,.0f} – ${damage_upper:,.0f}]'
+            cost_label += f'\n[${damage_lower:,.0f} - ${damage_upper:,.0f}]'
         ax1.text(
             x_pos[0], label_y + max(y_top_ref, 1) * 0.02,
             cost_label, ha='center', va='bottom', fontsize=9, color='#f59e0b',
