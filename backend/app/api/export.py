@@ -30,9 +30,36 @@ router = APIRouter()
 # Thread pool for blocking image generation
 _export_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="export_worker")
 
+def _register_bundled_fonts() -> None:
+    """
+    Explicitly register matplotlib's bundled DejaVu Sans fonts.
+
+    On some deployment hosts (e.g. Posit Connect) matplotlib's font cache can be
+    stale or incomplete, so resolving the default ``sans-serif`` family fails with
+    "Failed to find font DejaVu Sans ... and fallback to the default font was
+    disabled" when rendering any text. matplotlib always ships these TTF files
+    inside its own package, so adding them to the in-memory font manager makes
+    font resolution independent of the host's (possibly corrupt) cache.
+    """
+    import os
+    from matplotlib import font_manager
+
+    ttf_dir = os.path.join(matplotlib.get_data_path(), 'fonts', 'ttf')
+    for ttf in ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf', 'DejaVuSans-Oblique.ttf'):
+        path = os.path.join(ttf_dir, ttf)
+        if os.path.exists(path):
+            try:
+                font_manager.fontManager.addfont(path)
+            except Exception:
+                pass
+
+
+_register_bundled_fonts()
+
 # Set style for plots
 sns.set_style("whitegrid")
 plt.rcParams['figure.dpi'] = 100
+plt.rcParams['font.family'] = 'DejaVu Sans'
 
 
 class ExportBarchartRequest(BaseModel):
