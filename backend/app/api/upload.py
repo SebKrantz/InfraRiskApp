@@ -31,7 +31,9 @@ async def upload_file(
     - .shp (zipped shapefile)
     - .gpkg (GeoPackage)
     - .geojson (GeoJSON)
-    - .csv (with lat/lon, lat/lng, latitude/longitude, or y/x columns)
+    - .csv (with lat/lon, lat/lng, latitude/longitude, or y/x columns, or a
+            WKT geometry column such as geometry/geom/wkt holding POINT or
+            LINESTRING geometries)
 
     Shapefile and GeoPackage may contain Polygon or MultiPolygon geometries
     (e.g. buildings); these are converted to centroid points for analysis.

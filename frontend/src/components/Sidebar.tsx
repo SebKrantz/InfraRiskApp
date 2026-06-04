@@ -889,7 +889,9 @@ export default function Sidebar({
                 <li>y/x (case-insensitive)</li>
               </ul>
               <p className="text-xs text-gray-500 mt-1">
-                CSV files will be interpreted as Point geometries.
+                Coordinate-based CSVs are interpreted as Point geometries. Alternatively,
+                a WKT geometry column (e.g. <code>geometry</code>, <code>geom</code>, or
+                <code> wkt</code>) holding POINT or LINESTRING values is supported.
               </p>
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">

@@ -7,25 +7,91 @@ import pandas as pd
 import rasterio
 import numpy as np
 from shapely.geometry import Point, LineString
+from shapely import wkt as shapely_wkt
 from typing import Optional, Callable, Tuple
 from pyproj import Geod
 import csv
 
+
+def _find_wkt_geometry_column(columns) -> Optional[str]:
+    """
+    Return the name of a likely WKT geometry column, or None.
+
+    Column names are assumed already normalized to lowercase. Matches an exact
+    'geometry'/'geom'/'wkt' first, then any column starting with
+    'geometry'/'geom' or containing 'wkt' (e.g. 'geometry_wkt', 'the_geom').
+    """
+    cols = list(columns)
+    for exact in ('geometry', 'geom', 'wkt'):
+        if exact in cols:
+            return exact
+    for c in cols:
+        if c.startswith('geometry') or c.startswith('geom') or 'wkt' in c:
+            return c
+    return None
+
+
+def _load_csv_wkt(df: pd.DataFrame, geom_col: str, original_columns) -> gpd.GeoDataFrame:
+    """
+    Build a GeoDataFrame from a CSV column of WKT geometry strings.
+
+    Geometries may be POINT or LINESTRING (or any other WKT type). Rows with
+    missing/blank/unparseable geometry are dropped. The raw WKT text column is
+    removed from the attributes. Coordinates are assumed to be WGS84 (EPSG:4326).
+    """
+    geometries = []
+    valid_positions = []
+    for pos, value in enumerate(df[geom_col].tolist()):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        try:
+            geom = shapely_wkt.loads(text)
+        except Exception:
+            continue
+        if geom is None or geom.is_empty:
+            continue
+        geometries.append(geom)
+        valid_positions.append(pos)
+
+    if not geometries:
+        raise ValueError(
+            f"Found a geometry column '{geom_col}' but could not parse any valid "
+            f"WKT geometries from it (expected POINT or LINESTRING). "
+            f"Original columns: {original_columns}."
+        )
+
+    dropped = len(df) - len(geometries)
+    if dropped > 0:
+        print(f"Warning: {dropped}/{len(df)} rows have missing/invalid geometry and will be dropped")
+
+    # Keep attributes from valid rows; drop the raw WKT text column (now redundant)
+    attrs = df.iloc[valid_positions].drop(columns=[geom_col]).reset_index(drop=True)
+    gdf = gpd.GeoDataFrame(attrs, geometry=geometries, crs="EPSG:4326")
+    return gdf
+
+
 def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     """
-    Load a CSV file with point coordinates
-    
+    Load a CSV file with point coordinates or WKT geometries.
+
     Supports various column name variations (case-agnostic):
     - lat/lon, lat/lng, latitude/longitude
     - y/x (for Y/X coordinate order)
-    
+
+    If no coordinate columns are present, falls back to a WKT geometry column
+    (e.g. 'geometry', 'geom', 'wkt', 'geometry_wkt') containing POINT or
+    LINESTRING WKT strings.
+
     Supports both comma and semicolon delimiters (auto-detected).
-    
+
     Args:
         file_path: Path to .csv file
-        
+
     Returns:
-        GeoDataFrame with Point geometries
+        GeoDataFrame with Point or LineString geometries
     """
     # Read CSV - auto-detect delimiter and encoding
     # Try multiple encodings to handle different file formats
@@ -85,10 +151,16 @@ def load_csv_points(file_path: str) -> gpd.GeoDataFrame:
     # This is the standard geographic convention
     
     if lat_col is None or lon_col is None:
+        # No coordinate columns: fall back to a WKT geometry column if present
+        geom_col = _find_wkt_geometry_column(df.columns)
+        if geom_col is not None:
+            return _load_csv_wkt(df, geom_col, original_columns)
+
         # Provide helpful error message with both original and normalized column names
         raise ValueError(
-            f"Could not find coordinate columns in CSV. "
-            f"Expected columns like: lat/lon, lat/lng, latitude/longitude, or y/x. "
+            f"Could not find coordinate or geometry columns in CSV. "
+            f"Expected coordinate columns like: lat/lon, lat/lng, latitude/longitude, or y/x, "
+            f"or a WKT geometry column like: geometry, geom, wkt, geometry_wkt. "
             f"Found columns (original): {original_columns}. "
             f"Found columns (normalized): {list(df.columns)}"
         )
