@@ -98,7 +98,8 @@ def _run_data_export(
         full_gdf = cached_analysis.get("full_gdf")
         if full_gdf is None:
             full_gdf = gpd.GeoDataFrame(geometry=[], crs="EPSG:4326")
-        body = lines_aggregate_to_csv_bytes(full_gdf)
+        line_data = cached_analysis.get("line_data")
+        body = lines_aggregate_to_csv_bytes(full_gdf, line_data=line_data)
         return body, f"data_lines_{short_f}_{short_h}.csv", "text/csv; charset=utf-8"
 
     if mode == "gpkg_lines_split":
