@@ -2,6 +2,7 @@
 Hazard layers endpoints
 """
 
+import logging
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pathlib import Path
@@ -292,6 +293,34 @@ async def get_hazard_info(hazard_id: str):
         )
 
 
+def _raster_intensity_min_max(src) -> Optional[Tuple[float, float]]:
+    """
+    Min/max for hazard colormap scaling.
+
+    Uses embedded GDAL STATISTICS_* tags when present (no pixel I/O), otherwise
+    GDAL approximate statistics (overview-based scan, no full-raster download).
+    """
+    import math
+
+    tags = src.tags(1)
+    tag_min = tags.get("STATISTICS_MINIMUM")
+    tag_max = tags.get("STATISTICS_MAXIMUM")
+    if tag_min is not None and tag_max is not None:
+        min_val, max_val = float(tag_min), float(tag_max)
+    else:
+        if hasattr(src, "stats"):
+            st = src.stats(indexes=1, approx=True)[0]
+        else:
+            st = src.statistics(1, approx=True)
+        min_val, max_val = float(st.min), float(st.max)
+
+    if math.isnan(min_val) or math.isnan(max_val) or max_val < min_val:
+        return None
+    if min_val >= 1e15 or max_val >= 1e15:
+        return None
+    return min_val, max_val
+
+
 @router.get("/hazards/{hazard_id}/stats")
 async def get_hazard_stats(hazard_id: str):
     """Get statistics (min, max) for a hazard raster"""
@@ -310,49 +339,20 @@ async def get_hazard_stats(hazard_id: str):
         if not cog_url:
             raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
         
-        # Read raster statistics; try overview first (fewer tiles), then fallback so broken TIFFs don't 500
-        def _stats_from_data(data: np.ndarray) -> Optional[Tuple[float, float]]:
-            valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
-            valid_data = data if np.all(valid_mask) else data[valid_mask]
-            if len(valid_data) == 0:
-                return None
-            return float(np.min(valid_data)), float(np.max(valid_data))
-
         last_error: Optional[Exception] = None
         try:
             with rasterio.open(cog_url) as src:
-                # 1) Try reading from smallest overview (largest decimation) to avoid bad tiles
-                ov = src.overviews(1)
-                if ov:
-                    decim = max(ov)
-                    h, w = src.height // decim, src.width // decim
-                    if h > 0 and w > 0:
-                        try:
-                            data = src.read(1, out_shape=(h, w))
-                            stats = _stats_from_data(data)
-                            if stats is not None:
-                                min_val, max_val = stats
-                                _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
-                                return JSONResponse(content={"min": min_val, "max": max_val})
-                        except Exception as e:
-                            last_error = e
-                # 2) Try full-resolution sample (1000x1000 or full)
-                try:
-                    data = src.read(1, out_shape=(1000, 1000)) if (src.width > 1000 or src.height > 1000) else src.read(1)
-                    stats = _stats_from_data(data)
-                    if stats is not None:
-                        min_val, max_val = stats
-                        _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
-                        return JSONResponse(content={"min": min_val, "max": max_val})
-                except Exception as e:
-                    last_error = e
+                stats = _raster_intensity_min_max(src)
+                if stats is not None:
+                    min_val, max_val = stats
+                    _hazard_stats_cache[hazard_id] = (np.sqrt(min_val), np.sqrt(max_val))
+                    return JSONResponse(content={"min": min_val, "max": max_val})
         except Exception as e:
-            # open() or directory read failed (e.g. corrupt TIFF directory)
             last_error = e
-        # 3) Fallback so UI and tiles still load (colormap scale may be wrong)
+
+        # Fallback so UI and tiles still load (colormap scale may be wrong)
         _hazard_stats_cache[hazard_id] = (0.0, 1.0)
         if last_error is not None:
-            import logging
             logging.getLogger(__name__).warning(
                 "Raster stats read failed, using fallback min=0 max=1: %s",
                 last_error,
