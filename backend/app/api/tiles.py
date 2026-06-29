@@ -16,7 +16,7 @@ from rasterio.warp import transform_bounds
 from rasterio.crs import CRS
 import numpy as np
 from PIL import Image
-import matplotlib.cm as cm
+from matplotlib import colormaps
 from cachetools import TTLCache
 
 router = APIRouter()
@@ -52,7 +52,7 @@ def _get_thread_local_dataset(cog_url: str) -> rasterio.DatasetReader:
 def apply_colormap(data: np.ndarray, palette: str = 'turbo', vmin: float = None, vmax: float = None) -> np.ndarray:
     """Apply a colormap to raster data"""
     # Get colormap
-    cmap = cm.get_cmap(palette)
+    cmap = colormaps[palette]
     
     # Handle NaN and invalid values
     valid_mask = ~np.isnan(data) & (data >= 0.0) & (data < 1e15)
