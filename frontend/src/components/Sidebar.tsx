@@ -200,7 +200,7 @@ export default function Sidebar({
             <div className="flex items-center justify-between gap-2 mb-5">
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <h1 className="min-w-0 flex-1 text-xl font-bold leading-tight text-white">
-                  Infrastructure Risk Analyzer (Beta Version)
+                  Infrastructure Risk Analyzer
                 </h1>
                 <div className="shrink-0">
                   <a
