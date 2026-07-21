@@ -172,15 +172,24 @@ docker compose logs -f app
 
 ## Step 5 — Public HTTPS on a domain (Caddy, automatic TLS)
 
-The app is intentionally public (no login). To serve it on
-**`infrarisk.sebastiankrantz.com`** over HTTPS, enable the bundled **Caddy**
-proxy. Caddy obtains and auto-renews a Let's Encrypt certificate itself — there
-is no certbot, no cert files, and no renewal cron to manage. (Same pattern as the
-OTN app.)
+The app is intentionally public (no login). HTTPS is done with **Caddy** (auto
+Let's Encrypt cert — no certbot, no cert files, no renewal cron).
 
-### 5a — Point DNS at the server
+**Only one process can bind ports 80/443 on a host.** So choose the mode that
+matches the server:
 
-In your DNS provider (Namecheap), create an **A record**:
+- **Mode A — standalone** (this app is the only thing on the VPS): use the
+  bundled Caddy in `docker-compose.yml` (the `proxy` profile). See §5A.
+- **Mode B — shared reverse proxy** (this app runs *alongside another app*, e.g.
+  OTN, that already owns 80/443): do **not** run the bundled Caddy. Attach the
+  app to a shared network and add one site block to the shared Caddyfile. See §5B.
+  **This is the mode for `otn.sebastiankrantz.com`'s server.**
+
+### 5a — Point DNS at the server (both modes)
+
+In your DNS provider (Namecheap), create an **A record**. Multiple A records may
+point at the same IP — `infrarisk` alongside `otn` on one server is normal
+name-based virtual hosting, not a conflict:
 
 ```
 infrarisk.sebastiankrantz.com.   A   <SERVER_IP>
@@ -193,10 +202,11 @@ certificate until this resolves, so verify first:
 dig +short infrarisk.sebastiankrantz.com    # must return <SERVER_IP>
 ```
 
-### 5b — Open the firewall
+### 5b — Open the firewall (both modes)
 
-Caddy needs public **80 and 443** (80 is required for the ACME HTTP challenge
-and the HTTP→HTTPS redirect). On Ubuntu (UFW):
+The front-door Caddy needs public **80 and 443** (80 is required for the ACME
+HTTP challenge and the HTTP→HTTPS redirect). If OTN's Caddy is already serving,
+these are already open. On Ubuntu (UFW):
 
 ```bash
 sudo apt-get install -y ufw
@@ -210,26 +220,55 @@ sudo ufw status
 > **Hostinger:** there is also a **panel-level firewall** (hPanel → VPS →
 > Firewall) that is independent of UFW. Make sure it allows 22/80/443.
 
-### 5c — Start the proxy
+### 5A — Mode A: standalone (bundled Caddy owns 80/443)
+
+Use only if nothing else on the host is on 80/443.
 
 ```bash
 docker compose --profile proxy up -d --build
 ```
 
 The domain defaults to `infrarisk.sebastiankrantz.com` (baked into
-`docker-compose.yml`). To serve a different host, override it:
+`docker-compose.yml`); override with `DOMAIN=... docker compose ...`. Caddy
+issues the cert on first start and serves `https://infrarisk.sebastiankrantz.com/`,
+redirecting HTTP→HTTPS. Certs persist in the `caddy_data` volume.
 
-```bash
-DOMAIN=infrarisk.example.org docker compose --profile proxy up -d --build
-```
+### 5B — Mode B: behind a shared reverse proxy (multi-app server)
 
-Caddy requests the certificate on first start (a few seconds once DNS resolves)
-and serves `https://infrarisk.sebastiankrantz.com/`, redirecting HTTP→HTTPS.
-Certs persist in the `caddy_data` volume across restarts. Verify:
+Use when a front-door Caddy already owns 80/443 (e.g. the OTN stack). The app
+runs as a **backend only** — its container listens on **port 8000** and joins a
+shared Docker network so the shared Caddy can route to it.
+
+1. Ensure the shared network exists (the shared Caddy must also be on it):
+
+   ```bash
+   docker network create web    # once; skip if it already exists
+   ```
+
+2. Start the app with the shared overlay — **no `proxy` profile**:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build
+   ```
+
+3. Add a site block to the **shared** Caddyfile (note: **port 8000**), then
+   reload that Caddy:
+
+   ```
+   infrarisk.sebastiankrantz.com {
+       reverse_proxy infrarisk-app:8000
+   }
+   ```
+
+   The shared Caddy container must share the `web` network with `infrarisk-app`
+   (attach it if needed: `docker network connect web <shared-caddy-container>`),
+   then reload: `docker exec <shared-caddy-container> caddy reload --config /etc/caddy/Caddyfile`
+   (or `docker compose ... up -d` on the proxy stack).
+
+### 5c — Verify (both modes)
 
 ```bash
 curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
-docker compose logs caddy | grep -i certificate           # confirm issuance
 ```
 
 ---
@@ -274,11 +313,12 @@ docker compose logs caddy | grep -i certificate           # confirm issuance
 |------|------|
 | `deploy/DEPLOY.md` | **This runbook — start here** |
 | `Dockerfile` | Multi-stage Node build + Python 3.11 app |
-| `docker-compose.yml` | `app` (+ optional `caddy` proxy profile) |
+| `docker-compose.yml` | `app` (+ optional bundled `caddy` proxy profile) |
+| `docker-compose.shared.yml` | Overlay for Mode B: app joins external `web` net, no own Caddy |
 | `scripts/download_hazard_rasters.py` | Download COGs + rewrite CSV for Docker |
 | `data/download_rasters.R` | Same URL list as CSV (R downloader; no CSV rewrite) |
 | `data/hazard_layers.csv` | Hazard catalog (URLs rewritten on server after download) |
-| `deploy/Caddyfile` | Reverse proxy + automatic HTTPS (Let's Encrypt) |
+| `deploy/Caddyfile` | Bundled reverse proxy + automatic HTTPS (Mode A only) |
 
 ---
 
@@ -292,4 +332,7 @@ docker compose logs caddy | grep -i certificate           # confirm issuance
 - [ ] UI smoke test passed (via SSH tunnel or the proxy)
 - [ ] If public: A record for `infrarisk.sebastiankrantz.com` → server IP resolves
 - [ ] If public: UFW (and Hostinger panel firewall) allow 22/80/443
-- [ ] If public: `docker compose --profile proxy up -d --build`, HTTPS `/health` healthy (Caddy auto-issued the cert)
+- [ ] Picked proxy mode: **A** (standalone, own Caddy) or **B** (shared Caddy already on 80/443)
+- [ ] Mode A: `docker compose --profile proxy up -d --build`
+- [ ] Mode B: `docker network create web`; `docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build`; add `infrarisk-app:8000` block to shared Caddyfile + reload
+- [ ] HTTPS `/health` healthy at `https://infrarisk.sebastiankrantz.com`
