@@ -4,3 +4,13 @@
 /cursor_build_steps.md
 /venv
 /workflow.md
+
+# Hazard rasters (too large for git) and generated catalog backup
+/data/rasters/
+/data/hazard_layers.remote.csv
+
+# Docker / deploy secrets
+/deploy/htpasswd
+/deploy/certs/*.pem
+/deploy/certs/*.key
+/deploy/certs/*.crt

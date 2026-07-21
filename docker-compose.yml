@@ -1,0 +1,71 @@
+# Infra Risk Analyzer — production compose
+#
+# Prerequisites (see deploy/DEPLOY.md):
+#   1. Download COGs and rewrite data/hazard_layers.csv to local paths
+#   2. Ensure data/rasters/ contains the GeoTIFFs
+#
+# Usage:
+#   docker compose up -d --build
+#   # with TLS reverse proxy:
+#   docker compose --profile proxy up -d --build
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: infrarisk-app:latest
+    container_name: infrarisk-app
+    restart: unless-stopped
+    ports:
+      # Direct access when not using the proxy profile
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "false"
+      DATA_DIR: /app/data
+      HAZARD_LAYERS_CSV: /app/data/hazard_layers.csv
+      UPLOAD_DIR: /app/uploads
+      # Tune GDAL block cache (MB) for 16 GB hosts; lower on smaller VMs
+      GDAL_CACHEMAX: "${GDAL_CACHEMAX:-512}"
+    volumes:
+      # Local hazard rasters + rewritten CSV (host paths → container)
+      - ./data:/app/data:ro
+      # Persist uploads across restarts (still lost from in-memory GeoDataFrames on restart)
+      - infrarisk_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Match Hostinger KVM 4 loosely; adjust if co-hosting other services
+    deploy:
+      resources:
+        limits:
+          cpus: "3.5"
+          memory: 12G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  # Optional TLS reverse proxy (docker compose --profile proxy up -d)
+  nginx:
+    profiles: ["proxy"]
+    image: nginx:1.27-alpine
+    container_name: infrarisk-nginx
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - ./deploy/htpasswd:/etc/nginx/htpasswd:ro
+
+volumes:
+  infrarisk_uploads:
