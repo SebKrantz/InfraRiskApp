@@ -153,11 +153,14 @@ curl -fsS http://127.0.0.1:8000/health
 from the internet.** This is deliberate: the app has no authentication and all
 users share one in-memory upload state. To reach the UI, use one of:
 
-- **The nginx proxy with TLS + basic auth (recommended)** — see §5.
+- **The Caddy proxy with automatic HTTPS (recommended for public use)** — see §5.
 - **An SSH tunnel** for a quick private look:
   `ssh -L 8000:127.0.0.1:8000 <user>@<SERVER_IP>` then open `http://127.0.0.1:8000/`.
-- **Direct public exposure (NOT recommended, no auth):**
+- **Direct public HTTP (no TLS):**
   `APP_BIND=0.0.0.0 docker compose up -d` → `http://<SERVER_IP>:8000/`.
+
+The app is intentionally public (no login), so serving it openly is expected —
+§5 just adds a domain + HTTPS, which browsers want.
 
 Logs:
 
@@ -167,22 +170,24 @@ docker compose logs -f app
 
 ---
 
-## Step 5 — Public HTTPS on a domain (do this for any public VPS)
+## Step 5 — Public HTTPS on a domain (Caddy, automatic TLS)
 
-The app has **no login and shared state**, so never leave port 8000 open to the
-world. Put it behind the bundled nginx proxy (TLS + HTTP basic auth) on the
-domain **`infrarisk.sebastiankrantz.com`**.
+The app is intentionally public (no login). To serve it on
+**`infrarisk.sebastiankrantz.com`** over HTTPS, enable the bundled **Caddy**
+proxy. Caddy obtains and auto-renews a Let's Encrypt certificate itself — there
+is no certbot, no cert files, and no renewal cron to manage. (Same pattern as the
+OTN app.)
 
 ### 5a — Point DNS at the server
 
-In your DNS provider, create an **A record**:
+In your DNS provider (Namecheap), create an **A record**:
 
 ```
 infrarisk.sebastiankrantz.com.   A   <SERVER_IP>
 ```
 
-(Add a `AAAA` record too if the VPS has an IPv6 address.) Wait for it to
-resolve before requesting a certificate:
+(Add an `AAAA` record too if the VPS has an IPv6 address.) Caddy cannot get a
+certificate until this resolves, so verify first:
 
 ```bash
 dig +short infrarisk.sebastiankrantz.com    # must return <SERVER_IP>
@@ -190,7 +195,8 @@ dig +short infrarisk.sebastiankrantz.com    # must return <SERVER_IP>
 
 ### 5b — Open the firewall
 
-Expose only SSH + HTTP/HTTPS; keep 8000 private. On Ubuntu (UFW):
+Caddy needs public **80 and 443** (80 is required for the ACME HTTP challenge
+and the HTTP→HTTPS redirect). On Ubuntu (UFW):
 
 ```bash
 sudo apt-get install -y ufw
@@ -202,50 +208,28 @@ sudo ufw status
 ```
 
 > **Hostinger:** there is also a **panel-level firewall** (hPanel → VPS →
-> Firewall) that is independent of UFW and cannot be set from this runbook. Make
-> sure it allows 22/80/443 and does **not** allow 8000.
+> Firewall) that is independent of UFW. Make sure it allows 22/80/443.
 
-### 5c — Obtain a TLS certificate (Let's Encrypt)
-
-The nginx container reads certs from `deploy/certs/`. Issue a cert on the host
-with certbot in standalone mode (port 80 must be free — do this *before*
-starting the proxy):
-
-```bash
-sudo apt-get install -y certbot
-sudo certbot certonly --standalone -d infrarisk.sebastiankrantz.com \
-  --agree-tos -m basti.krantz@gmail.com --no-eff-email
-
-# Copy the issued cert into the path nginx.conf expects:
-mkdir -p deploy/certs
-sudo cp /etc/letsencrypt/live/infrarisk.sebastiankrantz.com/fullchain.pem deploy/certs/fullchain.pem
-sudo cp /etc/letsencrypt/live/infrarisk.sebastiankrantz.com/privkey.pem   deploy/certs/privkey.pem
-sudo chown "$USER":"$USER" deploy/certs/*.pem
-```
-
-Let's Encrypt certs expire after 90 days. To renew, re-run `certbot renew`
-(stop the nginx container first so port 80 is free), re-copy the two `.pem`
-files, and `docker compose --profile proxy restart nginx`.
-
-### 5d — Create the basic-auth user
-
-```bash
-sudo apt-get install -y apache2-utils
-htpasswd -c deploy/htpasswd analyst    # choose a strong password; do not commit
-```
-
-### 5e — Start the proxy
+### 5c — Start the proxy
 
 ```bash
 docker compose --profile proxy up -d --build
 ```
 
-nginx now serves `https://infrarisk.sebastiankrantz.com/` on ports 80/443 per
-`deploy/nginx.conf` (HTTP redirects to HTTPS; `/health` is exempt from auth).
-Verify:
+The domain defaults to `infrarisk.sebastiankrantz.com` (baked into
+`docker-compose.yml`). To serve a different host, override it:
+
+```bash
+DOMAIN=infrarisk.example.org docker compose --profile proxy up -d --build
+```
+
+Caddy requests the certificate on first start (a few seconds once DNS resolves)
+and serves `https://infrarisk.sebastiankrantz.com/`, redirecting HTTP→HTTPS.
+Certs persist in the `caddy_data` volume across restarts. Verify:
 
 ```bash
 curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
+docker compose logs caddy | grep -i certificate           # confirm issuance
 ```
 
 ---
@@ -279,6 +263,8 @@ curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
 | Permission denied reading rasters | `chmod -R a+rX data` |
 | Docker permission denied | `sg docker -c 'docker compose up -d --build'` |
 | OOM | Lower `GDAL_CACHEMAX` in compose env; ensure only one app container |
+| Caddy TLS fails / no cert | DNS A record not resolving yet, or ports 80/443 blocked (§5b) — `docker compose logs caddy` |
+| Caddy: "too many certificates" | Hit Let's Encrypt rate limit from repeated re-issue; wait, or test with `DOMAIN` on a staging cert |
 
 ---
 
@@ -288,11 +274,11 @@ curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
 |------|------|
 | `deploy/DEPLOY.md` | **This runbook — start here** |
 | `Dockerfile` | Multi-stage Node build + Python 3.11 app |
-| `docker-compose.yml` | `app` (+ optional `nginx` profile) |
+| `docker-compose.yml` | `app` (+ optional `caddy` proxy profile) |
 | `scripts/download_hazard_rasters.py` | Download COGs + rewrite CSV for Docker |
 | `data/download_rasters.R` | Same URL list as CSV (R downloader; no CSV rewrite) |
 | `data/hazard_layers.csv` | Hazard catalog (URLs rewritten on server after download) |
-| `deploy/nginx.conf` | TLS reverse proxy + basic auth |
+| `deploy/Caddyfile` | Reverse proxy + automatic HTTPS (Let's Encrypt) |
 
 ---
 
@@ -305,6 +291,5 @@ curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
 - [ ] `docker compose up -d --build` and `/health` is healthy (bound to 127.0.0.1)
 - [ ] UI smoke test passed (via SSH tunnel or the proxy)
 - [ ] If public: A record for `infrarisk.sebastiankrantz.com` → server IP resolves
-- [ ] If public: UFW (and Hostinger panel firewall) allow only 22/80/443
-- [ ] If public: TLS cert in `deploy/certs/` + `deploy/htpasswd` created
-- [ ] If public: `docker compose --profile proxy up -d --build`, HTTPS `/health` healthy
+- [ ] If public: UFW (and Hostinger panel firewall) allow 22/80/443
+- [ ] If public: `docker compose --profile proxy up -d --build`, HTTPS `/health` healthy (Caddy auto-issued the cert)

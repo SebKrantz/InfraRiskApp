@@ -10,7 +10,4 @@
 /data/hazard_layers.remote.csv
 
 # Docker / deploy secrets
-/deploy/htpasswd
-/deploy/certs/*.pem
-/deploy/certs/*.key
-/deploy/certs/*.crt
+/deploy/.env

@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
     ports:
       # Secure by default: bind to loopback so port 8000 is NOT publicly reachable.
-      #   - Use the nginx proxy profile (§5) for public HTTPS access, or
+      #   - Use the Caddy proxy profile (§5) for public HTTPS access, or
       #   - SSH-tunnel:  ssh -L 8000:127.0.0.1:8000 user@server
       # To expose the app directly on the public interface (NO auth — not recommended),
       # set APP_BIND=0.0.0.0 in the environment before `docker compose up`.
@@ -54,11 +54,12 @@ services:
           cpus: "1.0"
           memory: 2G
 
-  # Optional TLS reverse proxy (docker compose --profile proxy up -d)
-  nginx:
+  # Optional reverse proxy with automatic HTTPS (docker compose --profile proxy up -d)
+  # Caddy fetches + renews a Let's Encrypt cert for $DOMAIN — no certbot needed.
+  caddy:
     profiles: ["proxy"]
-    image: nginx:1.27-alpine
-    container_name: infrarisk-nginx
+    image: caddy:2
+    container_name: infrarisk-caddy
     restart: unless-stopped
     depends_on:
       app:
@@ -66,10 +67,16 @@ services:
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
+    environment:
+      # Domain Caddy serves + requests a certificate for
+      DOMAIN: "${DOMAIN:-infrarisk.sebastiankrantz.com}"
     volumes:
-      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./deploy/certs:/etc/nginx/certs:ro
-      - ./deploy/htpasswd:/etc/nginx/htpasswd:ro
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certs + ACME account across restarts (avoids re-issuing)
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   infrarisk_uploads:
+  caddy_data:
+  caddy_config:
