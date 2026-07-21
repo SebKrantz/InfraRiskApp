@@ -18,8 +18,12 @@ services:
     container_name: infrarisk-app
     restart: unless-stopped
     ports:
-      # Direct access when not using the proxy profile
-      - "${APP_PORT:-8000}:8000"
+      # Secure by default: bind to loopback so port 8000 is NOT publicly reachable.
+      #   - Use the nginx proxy profile (§5) for public HTTPS access, or
+      #   - SSH-tunnel:  ssh -L 8000:127.0.0.1:8000 user@server
+      # To expose the app directly on the public interface (NO auth — not recommended),
+      # set APP_BIND=0.0.0.0 in the environment before `docker compose up`.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
     environment:
       HOST: "0.0.0.0"
       PORT: "8000"

@@ -57,6 +57,9 @@ git pull --ff-only origin docker-deployment
 
 ## Step 2 — Install Docker
 
+On hosts where Docker ships pre-installed (e.g. Hostinger's Ubuntu 24.04 + Docker
+template), this whole block is skipped and you only confirm the versions.
+
 ```bash
 if ! command -v docker >/dev/null; then
   curl -fsSL https://get.docker.com | sudo sh
@@ -65,11 +68,15 @@ if ! command -v docker >/dev/null; then
   exec sg docker newgrp docker
 fi
 docker --version
-docker compose version
+docker compose version   # must print v2.x — the Compose plugin is required
 ```
 
+If `docker compose version` fails on a pre-installed host, the Compose plugin is
+missing — install it with `sudo apt-get install -y docker-compose-plugin`.
+
 If `docker compose` fails with permission errors, re-run under `sg docker -c '...'`
-or have the operator re-login after `usermod -aG docker`.
+or have the operator re-login after `usermod -aG docker`. (Running as `root`, as is
+common on a fresh VPS, avoids the docker-group step entirely.)
 
 ---
 
@@ -142,7 +149,15 @@ curl -fsS http://127.0.0.1:8000/health
 # expect: {"status":"healthy"}
 ```
 
-App URL: `http://<SERVER_IP>:8000/`
+**The app binds to `127.0.0.1:8000` on the host by default — it is NOT reachable
+from the internet.** This is deliberate: the app has no authentication and all
+users share one in-memory upload state. To reach the UI, use one of:
+
+- **The nginx proxy with TLS + basic auth (recommended)** — see §5.
+- **An SSH tunnel** for a quick private look:
+  `ssh -L 8000:127.0.0.1:8000 <user>@<SERVER_IP>` then open `http://127.0.0.1:8000/`.
+- **Direct public exposure (NOT recommended, no auth):**
+  `APP_BIND=0.0.0.0 docker compose up -d` → `http://<SERVER_IP>:8000/`.
 
 Logs:
 
@@ -152,23 +167,86 @@ docker compose logs -f app
 
 ---
 
-## Step 5 — Optional public HTTPS + basic auth
+## Step 5 — Public HTTPS on a domain (do this for any public VPS)
 
-The app has no login. For a public VPS, enable the nginx profile:
+The app has **no login and shared state**, so never leave port 8000 open to the
+world. Put it behind the bundled nginx proxy (TLS + HTTP basic auth) on the
+domain **`infrarisk.sebastiankrantz.com`**.
+
+### 5a — Point DNS at the server
+
+In your DNS provider, create an **A record**:
+
+```
+infrarisk.sebastiankrantz.com.   A   <SERVER_IP>
+```
+
+(Add a `AAAA` record too if the VPS has an IPv6 address.) Wait for it to
+resolve before requesting a certificate:
+
+```bash
+dig +short infrarisk.sebastiankrantz.com    # must return <SERVER_IP>
+```
+
+### 5b — Open the firewall
+
+Expose only SSH + HTTP/HTTPS; keep 8000 private. On Ubuntu (UFW):
+
+```bash
+sudo apt-get install -y ufw
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw --force enable
+sudo ufw status
+```
+
+> **Hostinger:** there is also a **panel-level firewall** (hPanel → VPS →
+> Firewall) that is independent of UFW and cannot be set from this runbook. Make
+> sure it allows 22/80/443 and does **not** allow 8000.
+
+### 5c — Obtain a TLS certificate (Let's Encrypt)
+
+The nginx container reads certs from `deploy/certs/`. Issue a cert on the host
+with certbot in standalone mode (port 80 must be free — do this *before*
+starting the proxy):
+
+```bash
+sudo apt-get install -y certbot
+sudo certbot certonly --standalone -d infrarisk.sebastiankrantz.com \
+  --agree-tos -m basti.krantz@gmail.com --no-eff-email
+
+# Copy the issued cert into the path nginx.conf expects:
+mkdir -p deploy/certs
+sudo cp /etc/letsencrypt/live/infrarisk.sebastiankrantz.com/fullchain.pem deploy/certs/fullchain.pem
+sudo cp /etc/letsencrypt/live/infrarisk.sebastiankrantz.com/privkey.pem   deploy/certs/privkey.pem
+sudo chown "$USER":"$USER" deploy/certs/*.pem
+```
+
+Let's Encrypt certs expire after 90 days. To renew, re-run `certbot renew`
+(stop the nginx container first so port 80 is free), re-copy the two `.pem`
+files, and `docker compose --profile proxy restart nginx`.
+
+### 5d — Create the basic-auth user
 
 ```bash
 sudo apt-get install -y apache2-utils
 htpasswd -c deploy/htpasswd analyst    # choose a strong password; do not commit
+```
 
-# Place TLS certs as:
-#   deploy/certs/fullchain.pem
-#   deploy/certs/privkey.pem
-# (certbot, Cloudflare origin cert, etc.)
+### 5e — Start the proxy
 
+```bash
 docker compose --profile proxy up -d --build
 ```
 
-Then serve on ports 80/443 per `deploy/nginx.conf`.
+nginx now serves `https://infrarisk.sebastiankrantz.com/` on ports 80/443 per
+`deploy/nginx.conf` (HTTP redirects to HTTPS; `/health` is exempt from auth).
+Verify:
+
+```bash
+curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
+```
 
 ---
 
@@ -224,6 +302,9 @@ Then serve on ports 80/443 per `deploy/nginx.conf`.
 - [ ] Docker Engine + Compose available
 - [ ] Ran `python3 scripts/download_hazard_rasters.py --path-prefix /app/data/rasters`
 - [ ] Verification script reports all rasters present
-- [ ] `docker compose up -d --build` and `/health` is healthy
-- [ ] UI smoke test passed
-- [ ] (Optional) TLS + `deploy/htpasswd` if exposing publicly
+- [ ] `docker compose up -d --build` and `/health` is healthy (bound to 127.0.0.1)
+- [ ] UI smoke test passed (via SSH tunnel or the proxy)
+- [ ] If public: A record for `infrarisk.sebastiankrantz.com` → server IP resolves
+- [ ] If public: UFW (and Hostinger panel firewall) allow only 22/80/443
+- [ ] If public: TLS cert in `deploy/certs/` + `deploy/htpasswd` created
+- [ ] If public: `docker compose --profile proxy up -d --build`, HTTPS `/health` healthy
