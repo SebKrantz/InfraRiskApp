@@ -235,14 +235,20 @@ redirecting HTTP→HTTPS. Certs persist in the `caddy_data` volume.
 
 ### 5B — Mode B: behind a shared reverse proxy (multi-app server)
 
-Use when a front-door Caddy already owns 80/443 (e.g. the OTN stack). The app
-runs as a **backend only** — its container listens on **port 8000** and joins a
-shared Docker network so the shared Caddy can route to it.
+Use when a front-door Caddy already owns 80/443. The app runs as a **backend
+only** — its container listens on **port 8000** and joins a shared Docker network
+so the front-door Caddy can route to it.
 
-1. Ensure the shared network exists (the shared Caddy must also be on it):
+**On `sebastiankrantz.com`'s server** the front door is the dedicated **edge
+Caddy stack at `/opt/edge`** (container `edge-caddy`, on network `web`), which
+also serves `otn.sebastiankrantz.com`. The commands below assume that stack. If
+your proxy lives elsewhere or is named differently, substitute its path,
+container name, and Caddyfile location.
+
+1. Ensure the shared network exists (the edge stack already created it):
 
    ```bash
-   docker network create web    # once; skip if it already exists
+   docker network create web    # once; skip if it already exists (it does here)
    ```
 
 2. Start the app with the shared overlay — **no `proxy` profile**:
@@ -251,8 +257,8 @@ shared Docker network so the shared Caddy can route to it.
    docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build
    ```
 
-3. Add a site block to the **shared** Caddyfile (note: **port 8000**), then
-   reload that Caddy:
+3. Add a site block to the **edge** Caddyfile — `/opt/edge/Caddyfile` (note:
+   **port 8000**):
 
    ```
    infrarisk.sebastiankrantz.com {
@@ -260,10 +266,16 @@ shared Docker network so the shared Caddy can route to it.
    }
    ```
 
-   The shared Caddy container must share the `web` network with `infrarisk-app`
-   (attach it if needed: `docker network connect web <shared-caddy-container>`),
-   then reload: `docker exec <shared-caddy-container> caddy reload --config /etc/caddy/Caddyfile`
-   (or `docker compose ... up -d` on the proxy stack).
+4. Zero-downtime reload the edge Caddy (no restart, other apps untouched):
+
+   ```bash
+   docker compose exec edge-caddy caddy reload --config /etc/caddy/Caddyfile
+   # run from /opt/edge, or: docker exec edge-caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+
+`edge-caddy` and `infrarisk-app` are both on `web` (the overlay in step 2 joins
+`infrarisk-app`), so no `docker network connect` is needed. Confirm with
+`docker network inspect web` if a route ever 502s.
 
 ### 5c — Verify (both modes)
 
@@ -334,5 +346,5 @@ curl -fsS https://infrarisk.sebastiankrantz.com/health   # {"status":"healthy"}
 - [ ] If public: UFW (and Hostinger panel firewall) allow 22/80/443
 - [ ] Picked proxy mode: **A** (standalone, own Caddy) or **B** (shared Caddy already on 80/443)
 - [ ] Mode A: `docker compose --profile proxy up -d --build`
-- [ ] Mode B: `docker network create web`; `docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build`; add `infrarisk-app:8000` block to shared Caddyfile + reload
+- [ ] Mode B: `docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build`; add `infrarisk-app:8000` block to `/opt/edge/Caddyfile`; `docker compose exec edge-caddy caddy reload --config /etc/caddy/Caddyfile`
 - [ ] HTTPS `/health` healthy at `https://infrarisk.sebastiankrantz.com`
