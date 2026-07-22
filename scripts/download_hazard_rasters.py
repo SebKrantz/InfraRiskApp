@@ -12,7 +12,8 @@ Usage (from repo root):
 The script:
   1. Backs up the CSV to data/hazard_layers.remote.csv (once, if missing)
   2. Downloads each http(s) URL into --out-dir (skips files that already exist
-     and match Content-Length when available)
+     and match Content-Length when available). Interrupted transfers resume from
+     the .partial file via an HTTP Range request rather than restarting.
   3. Rewrites dataset_url to {path_prefix}/{filename} in the CSV
 
 Docker deployments should use --path-prefix /app/data/rasters so paths match
@@ -25,6 +26,7 @@ import argparse
 import csv
 import shutil
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -57,7 +59,20 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true", help="List downloads without writing")
     p.add_argument("--force", action="store_true", help="Re-download even if local file exists")
-    p.add_argument("--timeout", type=int, default=3600, help="Per-file HTTP timeout (seconds)")
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Per-read HTTP timeout in seconds. Low on purpose: the GIRI host "
+        "stalls connections without closing them, and downloads resume, so "
+        "failing fast and reconnecting beats waiting out a dead socket.",
+    )
+    p.add_argument(
+        "--retries",
+        type=int,
+        default=10,
+        help="Resume attempts per file before giving up (default 10)",
+    )
     return p.parse_args()
 
 
@@ -98,50 +113,84 @@ def _remote_size(url: str, timeout: int) -> Optional[int]:
         return None
 
 
-def _download(url: str, dest: Path, timeout: int) -> None:
+def _download(url: str, dest: Path, timeout: int, retries: int = 10) -> None:
+    """Download `url` to `dest`, resuming an interrupted transfer via HTTP Range.
+
+    The GIRI host (hazards-data.unepgrid.ch) regularly stops sending mid-file
+    without closing the connection, which surfaces as a read timeout. Restarting
+    a multi-GB file from zero each time rarely converges, so the `.partial` file
+    is kept between attempts and re-requested with `Range: bytes=<have>-`.
+    Servers that ignore Range (200 instead of 206) fall back to a clean restart.
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
     partial = dest.with_suffix(dest.suffix + ".partial")
-    if partial.exists():
-        partial.unlink()
 
-    def _reporthook(block_num: int, block_size: int, total_size: int) -> None:
-        if total_size <= 0:
-            return
-        downloaded = block_num * block_size
-        pct = min(100.0, 100.0 * downloaded / total_size)
-        mb = downloaded / (1024 * 1024)
-        total_mb = total_size / (1024 * 1024)
-        sys.stdout.write(f"\r    {pct:5.1f}%  ({mb:.1f}/{total_mb:.1f} MiB)")
+    total_size = _remote_size(url, timeout=min(60, timeout))
+
+    def _progress(done: int) -> None:
+        if total_size:
+            pct = min(100.0, 100.0 * done / total_size)
+            sys.stdout.write(
+                f"\r    {pct:5.1f}%  ({done/1024/1024:.1f}/{total_size/1024/1024:.1f} MiB)"
+            )
+        else:
+            sys.stdout.write(f"\r    {done/1024/1024:.1f} MiB")
         sys.stdout.flush()
 
-    try:
-        urllib.request.urlretrieve(url, partial, reporthook=_reporthook, timeout=timeout)  # type: ignore[call-arg]
-    except TypeError:
-        # Python <3.13 urlretrieve has no timeout kwarg — use urlopen
-        with urllib.request.urlopen(url, timeout=timeout) as resp, partial.open("wb") as out:
-            total = resp.headers.get("Content-Length")
-            total_size = int(total) if total else 0
-            downloaded = 0
-            while True:
-                chunk = resp.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-                downloaded += len(chunk)
-                if total_size:
-                    pct = min(100.0, 100.0 * downloaded / total_size)
-                    sys.stdout.write(
-                        f"\r    {pct:5.1f}%  ({downloaded/1024/1024:.1f}/{total_size/1024/1024:.1f} MiB)"
-                    )
-                    sys.stdout.flush()
-    except urllib.error.HTTPError as e:
+    for attempt in range(1, retries + 1):
+        have = partial.stat().st_size if partial.exists() else 0
+        if total_size and have >= total_size:
+            break
+
+        req = urllib.request.Request(url)
+        if have:
+            req.add_header("Range", f"bytes={have}-")
+
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                # 206 = server honoured Range; anything else means start over.
+                if have and getattr(resp, "status", resp.getcode()) != 206:
+                    print(f"\n    Server ignored Range; restarting {dest.name} from 0")
+                    have = 0
+                mode = "ab" if have else "wb"
+                with partial.open(mode) as out:
+                    while True:
+                        chunk = resp.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
+                        have += len(chunk)
+                        _progress(have)
+        except urllib.error.HTTPError as e:
+            # 416 after a complete transfer just means "nothing left to send".
+            if e.code == 416 and total_size and have >= total_size:
+                break
+            if partial.exists():
+                partial.unlink()
+            raise SystemExit(f"HTTP {e.code} downloading {url}: {e.reason}") from e
+        except Exception as e:
+            # Keep the partial — the next attempt resumes from where this died.
+            if attempt >= retries:
+                raise
+            print(f"\n    Attempt {attempt}/{retries} failed ({e}); resuming in 5s")
+            time.sleep(5)
+            continue
+
+        if total_size is None or have >= total_size:
+            break
+
+        # Short read with no exception: the connection closed early. Resume.
+        if attempt < retries:
+            print(f"\n    Short read ({have}/{total_size}); resuming in 5s")
+            time.sleep(5)
+
+    final = partial.stat().st_size if partial.exists() else 0
+    if total_size and final < total_size:
         if partial.exists():
             partial.unlink()
-        raise SystemExit(f"HTTP {e.code} downloading {url}: {e.reason}") from e
-    except Exception:
-        if partial.exists():
-            partial.unlink()
-        raise
+        raise SystemExit(
+            f"Incomplete after {retries} attempts ({final}/{total_size} bytes): {url}"
+        )
 
     partial.replace(dest)
     if sys.stdout.isatty():
@@ -227,7 +276,7 @@ def main() -> int:
             continue
 
         try:
-            _download(url, dest, timeout=args.timeout)
+            _download(url, dest, timeout=args.timeout, retries=args.retries)
             size_gb = dest.stat().st_size / (1024**3)
             print(f"    Done ({size_gb:.2f} GiB)")
             row["dataset_url"] = local_url
