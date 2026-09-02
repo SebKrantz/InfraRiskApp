@@ -31,6 +31,9 @@ services:
       DATA_DIR: /app/data
       HAZARD_LAYERS_CSV: /app/data/hazard_layers.csv
       UPLOAD_DIR: /app/uploads
+      # CARTO basemap API key (see .env) — CARTO's raster basemaps now require
+      # ?key=<...>. Used for PNG-export basemaps and injected into the SPA.
+      CARTO_API_KEY: "${CARTO_API_KEY:-}"
       # Tune GDAL block cache (MB) for 16 GB hosts; lower on smaller VMs
       GDAL_CACHEMAX: "${GDAL_CACHEMAX:-512}"
     volumes:

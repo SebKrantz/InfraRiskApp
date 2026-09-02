@@ -14,7 +14,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import geopandas as gpd
 import numpy as np
+from urllib.parse import quote
 
+from app.config import settings
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 from app.api.analyze import get_cached_raster_values, get_cached_analysis_result
@@ -148,8 +150,8 @@ def _run_data_export(
 
 
 BASEMAP_TILE_URLS: dict[str, str] = {
-    'positron': 'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-    'dark-matter': 'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
+    'positron': 'https://basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png',
+    'dark-matter': 'https://basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}.png',
     'osm': 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
     'topo': 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
     'esri-street': 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
@@ -162,6 +164,21 @@ BASEMAP_TILE_URLS: dict[str, str] = {
     'google-hybrid': 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
     'google-satellite': 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
 }
+
+
+def basemap_tile_url(basemap: str) -> str:
+    """
+    Tile URL for a basemap name, with the CARTO API key appended.
+
+    CARTO's raster basemaps now require ``?key=<...>``; the key comes from the
+    CARTO_API_KEY environment variable (see .env). When it is unset the URL is
+    returned unkeyed, and non-CARTO providers are never touched.
+    """
+    url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
+    if 'basemaps.cartocdn.com' in url and settings.CARTO_API_KEY:
+        sep = '&' if '?' in url else '?'
+        url = f"{url}{sep}key={quote(settings.CARTO_API_KEY, safe='')}"
+    return url
 
 
 def _hazard_intensity_cbar_label(unit: Optional[str]) -> str:
@@ -468,7 +485,7 @@ def generate_map_png(
     # Add basemap (should be at zorder 0, behind everything)
     try:
         import contextily as ctx
-        tile_url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
+        tile_url = basemap_tile_url(basemap)
         ctx.add_basemap(
             ax,
             crs='EPSG:3857',

@@ -11,3 +11,4 @@
 
 # Docker / deploy secrets
 /deploy/.env
+/.env

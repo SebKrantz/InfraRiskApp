@@ -17,17 +17,28 @@ interface MapViewProps {
   hazardStats?: { min: number; max: number } | null
 }
 
+// CARTO's raster basemaps now require an API key. In production the backend
+// substitutes it into index.html (window.__CARTO_API_KEY__); `vite dev` leaves the
+// placeholder untouched, so fall back to VITE_CARTO_API_KEY there. With no key the
+// tiles are requested unkeyed, exactly as before.
+const injectedCartoKey = window.__CARTO_API_KEY__
+const CARTO_API_KEY =
+  injectedCartoKey && injectedCartoKey !== '__CARTO_API_KEY__'
+    ? injectedCartoKey
+    : import.meta.env.VITE_CARTO_API_KEY ?? ''
+
+const cartoTiles = (style: string): string[] => [
+  `https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png` +
+    (CARTO_API_KEY ? `?key=${encodeURIComponent(CARTO_API_KEY)}` : '')
+]
+
 const basemapStyles: Record<Basemap, any> = {
   positron: {
     version: 8,
     sources: {
       'carto-positron': {
         type: 'raster',
-        tiles: [
-          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-        ],
+        tiles: cartoTiles('light_all'),
         tileSize: 256,
         attribution: '© OpenStreetMap © CARTO'
       }
@@ -47,11 +58,7 @@ const basemapStyles: Record<Basemap, any> = {
     sources: {
       'carto-dark-matter': {
         type: 'raster',
-        tiles: [
-          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-        ],
+        tiles: cartoTiles('dark_all'),
         tileSize: 256,
         attribution: '© OpenStreetMap © CARTO'
       }
