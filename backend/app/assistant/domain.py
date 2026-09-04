@@ -15,10 +15,13 @@ Two invariants worth stating:
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 from difflib import get_close_matches
 from typing import Any, Callable, Optional
 
 from ..api.analyze import (
+    _analysis_results_cache,
     get_cached_analysis_result,
     get_cached_raster_values,
     set_cached_analysis_result,
@@ -29,6 +32,25 @@ from ..api.upload import uploaded_files
 from ..utils.geospatial import analyze_intersection
 
 log = logging.getLogger("infrarisk.assistant")
+
+# The app's `_analysis_results_cache` is unbounded, which is fine when entries
+# only appear as fast as a user can click. The assistant can add a dozen in one
+# `compare_hazards` call, and each one holds a full GeoDataFrame — so we keep a
+# bound on OUR OWN entries. Keys the user created through the UI are never
+# evicted; their sidebar export buttons must keep working.
+MAX_ASSISTANT_CACHED = 48
+_OURS: OrderedDict[tuple, None] = OrderedDict()
+_OURS_LOCK = threading.Lock()
+
+
+def _remember_cached(key: tuple) -> None:
+    with _OURS_LOCK:
+        _OURS[key] = None
+        _OURS.move_to_end(key)
+        while len(_OURS) > MAX_ASSISTANT_CACHED:
+            old, _ = _OURS.popitem(last=False)
+            _analysis_results_cache.pop(old, None)
+            log.info("assistant analysis cache evicted: %s", old)
 
 
 # ---- hazards --------------------------------------------------------------- #
@@ -190,6 +212,7 @@ def run_exposure(
     }
     # Make the sidebar's export buttons work on what the assistant just ran.
     set_cached_analysis_result(file_id, hazard_id, threshold, result)
+    _remember_cached((file_id, hazard_id, threshold))
     return result
 
 

@@ -90,7 +90,10 @@ class AnthropicProvider:
     name = "anthropic"
 
     def __init__(self) -> None:
-        self.client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+        self.client = anthropic.Anthropic(
+            api_key=config.ANTHROPIC_API_KEY,
+            timeout=config.ASSISTANT_PROVIDER_TIMEOUT,
+        )
 
     def stream_turn(
         self,

@@ -210,6 +210,9 @@ REPORTS = """\
       prose:  "The worst-affected corridors run north of Brazzaville ([[flood_map]])."
   Hand-counted "Figure 3" WILL eventually be wrong; `[[flood_map]]` cannot be.
   The tool returns the resolved `numbering` map so you can see what each became.
+  A ref expands to the WHOLE label ("Figure 2"), so write "[[a]] and [[b]] show"
+  — never "Figures [[a]] and [[b]]", which reads as "Figures Figure 1 and
+  Figure 2".
 - EVERY table and figure gets a descriptive title/caption (what, where, units,
   scenario) and MUST be cited at least once in the text. No orphan exhibits, no
   "the table below".

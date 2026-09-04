@@ -87,7 +87,14 @@ class GeminiProvider:
     name = "gemini"
 
     def __init__(self) -> None:
-        self.client = genai.Client(api_key=config.GEMINI_API_KEY)
+        self.client = genai.Client(
+            api_key=config.GEMINI_API_KEY,
+            # Without a cap a stalled stream hangs the whole turn; a timeout
+            # reads as transient and the loop retries it.
+            http_options=types.HttpOptions(
+                timeout=int(config.ASSISTANT_PROVIDER_TIMEOUT * 1000)
+            ),
+        )
 
     def stream_turn(
         self,

@@ -99,7 +99,13 @@ def _tool_with_pings(
     conv: Conversation, call: schema.ToolCall, holder: dict[str, Any]
 ) -> Iterator[str]:
     """Run one server tool in a worker and keep the SSE stream warm with comment
-    pings while it grinds — sampling a remote COG runs for tens of seconds."""
+    pings while it grinds — sampling a remote COG runs for tens of seconds.
+
+    Capped: a remote raster read can hang indefinitely, and one wedged tool
+    would otherwise wedge the turn. On timeout the model gets an error result
+    and can carry on; the worker is left to run out in the background (it holds
+    no lock a later call needs).
+    """
     done = threading.Event()
 
     def work() -> None:
@@ -110,7 +116,21 @@ def _tool_with_pings(
 
     worker = threading.Thread(target=work, daemon=True)
     worker.start()
+    deadline = time.time() + config.ASSISTANT_TOOL_TIMEOUT
     while not done.wait(15.0):
+        if time.time() > deadline:
+            holder["res"] = {
+                "id": call.id,
+                "name": call.name,
+                "ok": False,
+                "content": (
+                    f"timed out after {config.ASSISTANT_TOOL_TIMEOUT:.0f}s — the "
+                    "hazard raster is unreachable or unusually slow right now. "
+                    "Try a different layer, or fewer layers at once."
+                ),
+            }
+            log.warning("tool %s timed out", call.name)
+            return
         yield schema.SSE_PING
 
 

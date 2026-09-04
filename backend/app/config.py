@@ -66,6 +66,12 @@ ASSISTANT_DEFAULT_PROVIDER = os.environ.get("ASSISTANT_DEFAULT_PROVIDER", "anthr
 
 # Tool round-trips allowed per user turn before the loop gives up.
 ASSISTANT_MAX_ITERATIONS = int(os.environ.get("ASSISTANT_MAX_ITERATIONS", "30"))
+# Wall-clock cap on one provider request, seconds. Without it a hung stream
+# hangs the whole turn; with it the failure looks transient and is retried.
+ASSISTANT_PROVIDER_TIMEOUT = float(os.environ.get("ASSISTANT_PROVIDER_TIMEOUT", "300"))
+# Wall-clock cap on one server-side tool call, seconds. Remote COG reads are
+# slow and occasionally never return.
+ASSISTANT_TOOL_TIMEOUT = float(os.environ.get("ASSISTANT_TOOL_TIMEOUT", "600"))
 # Wall-clock cap on one python_exec call, seconds. Generous: sampling a remote
 # COG over a large network is minutes of work, not seconds.
 ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))
