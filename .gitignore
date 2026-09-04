@@ -4,3 +4,10 @@
 /cursor_build_steps.md
 /venv
 /workflow.md
+
+# AI assistant: API keys live here, never in git
+backend/.env
+.env
+
+__pycache__/
+*.pyc

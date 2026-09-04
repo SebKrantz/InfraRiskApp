@@ -15,6 +15,8 @@ interface MapViewProps {
   loadingAnalysis?: boolean
   vulnerabilityAnalysisEnabled?: boolean
   hazardStats?: { min: number; max: number } | null
+  /** Handed the map once it has loaded, so callers outside can move the camera. */
+  onMapReady?: (map: maplibregl.Map) => void
 }
 
 const basemapStyles: Record<Basemap, any> = {
@@ -345,9 +347,14 @@ export default function MapView({
   loadingAnalysis: _loadingAnalysis = false,
   vulnerabilityAnalysisEnabled = false,
   hazardStats = null,
+  onMapReady,
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<maplibregl.Map | null>(null)
+  // The map is initialised once in an effect with no deps, so the callback is
+  // read through a ref rather than captured at mount.
+  const onMapReadyRef = useRef(onMapReady)
+  onMapReadyRef.current = onMapReady
   const [mapLoaded, setMapLoaded] = useState(false)
   const isRestoringLayers = useRef(false)
   const popup = useRef<maplibregl.Popup | null>(null)
@@ -414,6 +421,7 @@ export default function MapView({
         // Track initial zoom level
         if (map.current) {
           lastZoomLevel.current = map.current.getZoom()
+          onMapReadyRef.current?.(map.current)
         }
       })
 

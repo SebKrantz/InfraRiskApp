@@ -13,8 +13,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
+      // Override with BACKEND_URL when port 8000 is taken by another app.
       '/api': {
-        target: 'http://localhost:8000',
+        target: process.env.BACKEND_URL || 'http://localhost:8000',
         changeOrigin: true,
       }
     }
