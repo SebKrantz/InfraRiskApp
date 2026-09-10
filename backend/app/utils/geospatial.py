@@ -575,8 +575,13 @@ def analyze_intersection(
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
 
-                            # Mask nodata values as NaN
-                            if tile_src.nodata is not None:
+                            # Mask nodata as NaN — but not when the raster declares 0
+                            # as its nodata value. The GIRI flood layers are uint32
+                            # with nodata=0, where 0 means "no flood depth here", not
+                            # "unknown": valid depths start at 1 mm. Masking those to
+                            # NaN dropped every dry cell out of the exports while the
+                            # map still drew the line, so leave them as 0.0.
+                            if tile_src.nodata is not None and tile_src.nodata != 0:
                                 data = np.where(data == tile_src.nodata, np.nan, data)
 
                             if data.size == 0:
@@ -805,8 +810,13 @@ def analyze_intersection(
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
 
-                            # Mask nodata values as NaN
-                            if tile_src.nodata is not None:
+                            # Mask nodata as NaN — but not when the raster declares 0
+                            # as its nodata value. The GIRI flood layers are uint32
+                            # with nodata=0, where 0 means "no flood depth here", not
+                            # "unknown": valid depths start at 1 mm. Masking those to
+                            # NaN dropped every dry cell out of the exports while the
+                            # map still drew the line, so leave them as 0.0.
+                            if tile_src.nodata is not None and tile_src.nodata != 0:
                                 data = np.where(data == tile_src.nodata, np.nan, data)
 
                             if data.size == 0:
