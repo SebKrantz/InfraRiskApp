@@ -5,9 +5,10 @@ Analysis endpoints for computing intersections
 import math
 import json
 import asyncio
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, Dict, Tuple
 import numpy as np
@@ -21,25 +22,49 @@ router = APIRouter()
 # Thread pool for blocking analysis operations
 _analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis_worker")
 
+# Both caches hold whole analyses — for a national line network that is a
+# segment GeoDataFrame plus every sample point along it, hundreds of MB per
+# entry. Dragging the threshold slider produces one analysis-result entry per
+# stop, so an unbounded dict grows without limit in a process that is meant to
+# stay up. Keep the most recent few and let the rest be recomputed; a raster
+# cache miss costs a re-sample, an analysis cache miss only costs arithmetic.
+_MAX_CACHE_ENTRIES = 8
+
 # Cache for sampled raster values: (file_id, hazard_id) -> cached data
 # For Points: np.ndarray of raster values
 # For LineStrings: dict with 'line_data' and 'raster_values'
 # This allows threshold changes without re-sampling the raster
-_raster_values_cache: Dict[Tuple[str, str], any] = {}
+_raster_values_cache: "OrderedDict[Tuple[str, str], any]" = OrderedDict()
 
 # Cache for full analysis results: (file_id, hazard_id, threshold) -> full analysis result
 # This allows export to use pre-computed results without recalculation
-_analysis_results_cache: Dict[Tuple[str, str, Optional[float]], dict] = {}
+_analysis_results_cache: "OrderedDict[Tuple[str, str, Optional[float]], dict]" = OrderedDict()
+
+
+def _cache_get(cache: OrderedDict, key) -> Optional[any]:
+    """Read through an LRU cache, marking the key as most recently used."""
+    if key not in cache:
+        return None
+    cache.move_to_end(key)
+    return cache[key]
+
+
+def _cache_put(cache: OrderedDict, key, value) -> None:
+    """Write to an LRU cache, evicting the least recently used entry."""
+    cache[key] = value
+    cache.move_to_end(key)
+    while len(cache) > _MAX_CACHE_ENTRIES:
+        cache.popitem(last=False)
 
 
 def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[any]:
     """Get cached raster values if available."""
-    return _raster_values_cache.get((file_id, hazard_id))
+    return _cache_get(_raster_values_cache, (file_id, hazard_id))
 
 
 def set_cached_raster_values(file_id: str, hazard_id: str, values: any):
     """Cache raster values for future threshold changes."""
-    _raster_values_cache[(file_id, hazard_id)] = values
+    _cache_put(_raster_values_cache, (file_id, hazard_id), values)
 
 
 def clear_raster_cache_for_file(file_id: str):
@@ -56,12 +81,12 @@ def clear_raster_cache_for_file(file_id: str):
 
 def get_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float]) -> Optional[dict]:
     """Get cached analysis result if available."""
-    return _analysis_results_cache.get((file_id, hazard_id, threshold))
+    return _cache_get(_analysis_results_cache, (file_id, hazard_id, threshold))
 
 
 def set_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float], result: dict):
     """Cache full analysis result."""
-    _analysis_results_cache[(file_id, hazard_id, threshold)] = result
+    _cache_put(_analysis_results_cache, (file_id, hazard_id, threshold), result)
 
 
 class AnalyzeRequest(BaseModel):
@@ -305,19 +330,19 @@ async def analyze_intersections(
                     return None
             raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
         
-        # Try to serialize to catch any remaining NaN (but this should be rare now)
+        # Serialize once and hand the bytes straight back. Encoding, decoding and
+        # letting JSONResponse encode again walked the whole feature collection
+        # three times, which for a large upload is the most expensive step in
+        # the request.
         try:
-            json_str = json.dumps(result, default=json_encoder, allow_nan=False)
-            # Parse back to dict for JSONResponse
-            result = json.loads(json_str)
+            body = json.dumps(result, default=json_encoder, allow_nan=False)
         except (ValueError, TypeError) as e:
             # If serialization fails, remove features and retry
             print(f"Warning: JSON serialization issue, removing features: {e}")
-            if "infrastructure_features" in result:
-                del result["infrastructure_features"]
-            result = json.loads(json.dumps(result, default=json_encoder, allow_nan=False))
-        
-        return JSONResponse(content=result)
+            result.pop("infrastructure_features", None)
+            body = json.dumps(result, default=json_encoder, allow_nan=False)
+
+        return Response(content=body, media_type="application/json")
         
     except Exception as e:
         raise HTTPException(
