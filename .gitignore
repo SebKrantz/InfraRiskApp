@@ -4,3 +4,7 @@
 /cursor_build_steps.md
 /venv
 /workflow.md
+
+# Hazard rasters (too large for git) and generated catalog backup
+/data/rasters/
+/data/hazard_layers.remote.csv
