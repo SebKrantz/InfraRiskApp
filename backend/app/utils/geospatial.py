@@ -11,6 +11,46 @@ from shapely import wkt as shapely_wkt
 from typing import Optional, Callable, Tuple
 from pyproj import Geod
 import csv
+import threading
+
+
+_nodata_mask_thread_local = threading.local()
+
+
+def mask_raster_nodata(data: np.ndarray, nodata: Optional[float]) -> np.ndarray:
+    """Replace a raster's declared nodata with NaN. Returns the array to use.
+
+    Prefer this over inferring nodata from the values: the declared value is
+    the only thing that distinguishes "no data" from a real measurement that
+    happens to look like a sentinel. Reading it is free — it comes from the
+    header, not the pixels.
+
+    No-op in three cases:
+      * nodata is None — nothing is declared, so nothing can be masked.
+      * nodata is NaN — those cells already read as NaN.
+      * nodata is 0 — the nine GIRI flood layers are uint32 with nodata=0,
+        where 0 means "no flood depth here" and not "unknown"; valid depths
+        start at 1 mm. Masking them erases every dry cell from the analysis
+        and its exports while the map still draws the asset.
+
+    Integer input is copied to float64 (NaN needs a float). Float input is
+    modified in place, so pass a freshly read array, not a cached one.
+    """
+    if nodata is None or nodata == 0 or np.isnan(nodata):
+        return data
+
+    if data.dtype.kind != "f":
+        data = data.astype(np.float64)
+
+    # Reuse one boolean buffer per thread rather than allocating a mask per tile
+    buf = getattr(_nodata_mask_thread_local, "mask_buf", None)
+    if buf is None or buf.shape != data.shape:
+        buf = np.empty(data.shape, dtype=np.bool_)
+        _nodata_mask_thread_local.mask_buf = buf
+
+    np.equal(data, nodata, out=buf)
+    np.putmask(data, buf, np.nan)
+    return data
 
 
 def _find_wkt_geometry_column(columns) -> Optional[str]:
@@ -575,14 +615,7 @@ def analyze_intersection(
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
 
-                            # Mask nodata as NaN — but not when the raster declares 0
-                            # as its nodata value. The GIRI flood layers are uint32
-                            # with nodata=0, where 0 means "no flood depth here", not
-                            # "unknown": valid depths start at 1 mm. Masking those to
-                            # NaN dropped every dry cell out of the exports while the
-                            # map still drew the line, so leave them as 0.0.
-                            if tile_src.nodata is not None and tile_src.nodata != 0:
-                                data = np.where(data == tile_src.nodata, np.nan, data)
+                            data = mask_raster_nodata(data, tile_src.nodata)
 
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
@@ -810,14 +843,7 @@ def analyze_intersection(
                             window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
                             data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
 
-                            # Mask nodata as NaN — but not when the raster declares 0
-                            # as its nodata value. The GIRI flood layers are uint32
-                            # with nodata=0, where 0 means "no flood depth here", not
-                            # "unknown": valid depths start at 1 mm. Masking those to
-                            # NaN dropped every dry cell out of the exports while the
-                            # map still drew the line, so leave them as 0.0.
-                            if tile_src.nodata is not None and tile_src.nodata != 0:
-                                data = np.where(data == tile_src.nodata, np.nan, data)
+                            data = mask_raster_nodata(data, tile_src.nodata)
 
                             if data.size == 0:
                                 return point_indices, np.full(len(point_indices), np.nan)
