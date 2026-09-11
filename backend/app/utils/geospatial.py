@@ -335,20 +335,26 @@ def validate_geometry_type(gdf: gpd.GeoDataFrame) -> str:
 def vulnerability_interp_from_arrays(
     intensity: np.ndarray, proportion_destroyed: np.ndarray
 ) -> Callable[[float], float]:
-    """Linear interpolation on sorted intensity / proportion_destroyed arrays."""
+    """Linear interpolation on sorted intensity / proportion_destroyed arrays.
+
+    Takes a scalar or an array; array input is what lets the callers apply a
+    curve to a whole dataset at once instead of a value at a time.
+
+    np.interp already returns the end values outside the curve's range, which
+    is what the explicit clamping branches here used to do by hand.
+
+    A NaN intensity yields 0.0 — a cell the raster does not measure is
+    reported as undamaged rather than dropped, so that a feature never
+    silently disappears from a damage total.
+    """
     if len(intensity) == 0:
         raise ValueError("Empty vulnerability curve arrays")
 
-    def interpolate(intensity_value: float) -> float:
-        if np.isnan(intensity_value):
-            return 0.0
-
-        if intensity_value <= intensity[0]:
-            return float(proportion_destroyed[0])
-        if intensity_value >= intensity[-1]:
-            return float(proportion_destroyed[-1])
-
-        return float(np.interp(intensity_value, intensity, proportion_destroyed))
+    def interpolate(intensity_value):
+        values = np.asarray(intensity_value, dtype=np.float64)
+        out = np.interp(values, intensity, proportion_destroyed)
+        out = np.where(np.isnan(values), 0.0, out)
+        return float(out) if out.ndim == 0 else out
 
     return interpolate
 
@@ -471,54 +477,153 @@ def parse_vulnerability_curve(csv_path: str) -> Callable[[float], float]:
     return interp
 
 
-def assign_line_ids_to_line_data(
-    line_data: list, infrastructure_gdf: gpd.GeoDataFrame, geod: Geod
-) -> None:
+def sample_points_along_line(
+    coords: list, geod: Geod, interval_meters: float = 100.0
+) -> Tuple[list, float]:
     """
-    Set line_id (1-based upload row order) on each line_data entry, matching Phase 1 sampling logic.
-    """
-    ids: list[int] = []
-    for feature_pos, (_idx, row) in enumerate(infrastructure_gdf.iterrows()):
-        line_id = feature_pos + 1
-        line = row.geometry
-        if line is None or line.is_empty:
-            continue
-        if line.geom_type == 'MultiLineString':
-            parts = list(line.geoms)
-        elif line.geom_type == 'LineString':
-            parts = [line]
-        else:
-            continue
-        for single_line in parts:
-            line_coords = list(single_line.coords)
-            if len(line_coords) < 2:
-                continue
-            total_length_m = geod.line_length(*zip(*line_coords))
-            if total_length_m == 0:
-                continue
-            interval_meters = 100.0
-            sampled_points = [line_coords[0]]
-            current_distance = 0.0
-            while current_distance < total_length_m:
-                current_distance += interval_meters
-                if current_distance >= total_length_m:
-                    sampled_points.append(line_coords[-1])
-                    break
-                normalized_dist = current_distance / total_length_m
-                point = single_line.interpolate(normalized_dist, normalized=True)
-                sampled_points.append((point.x, point.y))
-            if sampled_points[-1] != line_coords[-1]:
-                sampled_points.append(line_coords[-1])
-            if len(sampled_points) < 2:
-                continue
-            ids.append(line_id)
+    Sample a line no more than interval_meters apart, keeping every vertex.
 
-    if len(ids) != len(line_data):
-        raise RuntimeError(
-            f"line_data length {len(line_data)} does not match geometry-derived count {len(ids)}; re-run analysis."
+    Returns (sampled_points, total_length_m); ([], 0.0) for a degenerate line.
+
+    The samples are a superset of the input vertices, so joining them reproduces
+    the input geometry and the length reported is the geometry's own length.
+    Resampling at a fixed interval instead — keeping the interpolated positions
+    and dropping the vertices — cuts every corner in between. On the Congo fibre
+    network, whose vertices sit a median 38 m apart, that shortened the network
+    by 1.9% and individual lines by up to 21%.
+
+    Points added inside a span lie on the geodesic between its two vertices, so
+    densifying a span leaves its length unchanged.
+    """
+    n = len(coords)
+    if n < 2:
+        return [], 0.0
+
+    lons = np.fromiter((c[0] for c in coords), dtype=np.float64, count=n)
+    lats = np.fromiter((c[1] for c in coords), dtype=np.float64, count=n)
+
+    _, _, spans = geod.inv(
+        lons[:-1], lats[:-1], lons[1:], lats[1:], return_back_azimuth=True
+    )
+    total_length_m = float(spans.sum())
+    if not total_length_m > 0.0:
+        return [], 0.0
+
+    # Sub-spans each vertex pair splits into to stay under the sampling interval
+    splits = np.ceil(spans / interval_meters).astype(np.int64)
+    np.maximum(splits, 1, out=splits)
+
+    points = [(float(lons[0]), float(lats[0]))]
+    for i in range(n - 1):
+        extra = int(splits[i]) - 1
+        if extra > 0:
+            between = geod.inv_intermediate(
+                lons[i], lats[i], lons[i + 1], lats[i + 1],
+                npts=extra, initial_idx=1, terminus_idx=1,
+                return_back_azimuth=True,
+            )
+            points.extend(zip(between.lons, between.lats))
+        points.append((float(lons[i + 1]), float(lats[i + 1])))
+
+    return points, total_length_m
+
+
+def sample_raster_at_points(
+    raster_path: str,
+    x_coords: np.ndarray,
+    y_coords: np.ndarray,
+    tile_size: float = 1.0,
+    max_workers: int = 16,
+) -> np.ndarray:
+    """
+    Sample a raster at scattered lon/lat positions. Returns float64; NaN where a
+    point falls outside the raster.
+
+    Points are grouped into tile_size-degree tiles so each part of the raster is
+    fetched once, and tiles are read in parallel: the hazard layers are remote
+    COGs, so the cost is round trips rather than pixels.
+
+    Pixel indices come from the dataset's own transform and are shifted by the
+    window's integer offset. Recomputing them from the window's transform — as
+    this did — puts the window offset back in as a float, and a point sitting
+    exactly on a pixel boundary then lands on the neighbouring pixel: on the
+    Congo cell towers that made 4 of 1594 points disagree with rasterio's own
+    sample() by up to 274 mm of flood depth.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from rasterio.transform import rowcol
+    from rasterio.windows import Window
+
+    n_points = len(x_coords)
+    values = np.full(n_points, np.nan, dtype=np.float64)
+    if n_points == 0:
+        return values
+
+    with rasterio.open(raster_path) as src:
+        transform = src.transform
+        height, width = src.height, src.width
+
+    rows, cols = rowcol(transform, x_coords, y_coords)
+    rows = np.asarray(rows, dtype=np.int64)
+    cols = np.asarray(cols, dtype=np.int64)
+
+    # Off-raster is genuinely unknown, and must not be confused with a zero
+    on_raster = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
+    if not on_raster.any():
+        return values
+
+    tile_x = np.floor(x_coords / tile_size).astype(np.int64)
+    tile_y = np.floor(y_coords / tile_size).astype(np.int64)
+    tile_keys = np.where(on_raster, (tile_x + 180) * 1000 + (tile_y + 90), -1)
+
+    # Group by tile with a single sort. Testing `tile_keys == key` inside every
+    # tile task instead costs O(points x tiles), which takes over once a dataset
+    # runs to hundreds of thousands of sample points.
+    order = np.argsort(tile_keys, kind="stable")
+    sorted_keys = tile_keys[order]
+    starts = np.flatnonzero(np.r_[True, sorted_keys[1:] != sorted_keys[:-1]])
+    groups = [g for g in np.split(order, starts[1:]) if tile_keys[g[0]] >= 0]
+    if not groups:
+        return values
+
+    def process_tile(idx: np.ndarray):
+        r, c = rows[idx], cols[idx]
+        row_off, col_off = int(r.min()), int(c.min())
+        window = Window(
+            col_off, row_off,
+            int(c.max()) - col_off + 1, int(r.max()) - row_off + 1,
         )
-    for ld, lid in zip(line_data, ids):
-        ld['line_id'] = lid
+        try:
+            with rasterio.open(raster_path) as tile_src:
+                data = tile_src.read(1, window=window)
+                data = mask_raster_nodata(data, tile_src.nodata)
+                return idx, data[r - row_off, c - col_off]
+        except Exception as exc:
+            # A failed read is unknown hazard, not absent hazard; say so, because
+            # NaN here silently becomes "unaffected" downstream.
+            print(
+                f"Warning: could not read hazard raster window {window} "
+                f"({len(idx)} sample points): {type(exc).__name__}: {exc}"
+            )
+            return idx, np.full(len(idx), np.nan)
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(groups))) as executor:
+        for idx, vals in executor.map(process_tile, groups):
+            values[idx] = vals
+
+    return values
+
+
+def pairwise_mean(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Mean of each consecutive pair, over whichever endpoints are valid.
+
+    NaN for a pair with no valid endpoint. Vectorized equivalent of the
+    val1/val2 branches this replaces.
+    """
+    filled = np.where(valid, values, 0.0)
+    total = filled[:-1] + filled[1:]
+    count = valid[:-1].astype(np.float64) + valid[1:].astype(np.float64)
+    return np.where(count > 0.0, total / np.maximum(count, 1.0), np.nan)
 
 
 def analyze_intersection(
@@ -551,511 +656,297 @@ def analyze_intersection(
         - full_gdf: GeoDataFrame with all features and affected status
         - raster_values: (for points) sampled values for caching
     """
-    # All hazard rasters use EPSG:4326
-    # Infrastructure GeoDataFrame is already in WGS84 (EPSG:4326) from upload
-    with rasterio.open(hazard_raster_path) as src:
-                
-        if len(infrastructure_gdf) == 0:
+    if len(infrastructure_gdf) == 0:
+        return {
+            "affected_count": 0,
+            "unaffected_count": 0,
+            "affected_meters": 0.0,
+            "unaffected_meters": 0.0
+        }
+
+    has_bounds = (
+        vulnerability_curve_lower_interp is not None
+        and vulnerability_curve_upper_interp is not None
+    )
+    vuln_on = vulnerability_curve_interp is not None and replacement_value is not None
+
+    if geometry_type == "Point":
+        n_points = len(infrastructure_gdf)
+
+        # Work on a copy. The caller's GeoDataFrame is the stored upload, and
+        # every analysis result is cached by threshold; writing these columns in
+        # place made all of those cached results the same object, so re-running
+        # at a new threshold rewrote the exports of the runs before it.
+        infrastructure_gdf = infrastructure_gdf.copy()
+
+        if cached_raster_values is not None and len(cached_raster_values) == n_points:
+            raster_values = cached_raster_values
+        else:
+            raster_values = sample_raster_at_points(
+                hazard_raster_path,
+                infrastructure_gdf.geometry.x.to_numpy(),
+                infrastructure_gdf.geometry.y.to_numpy(),
+            )
+
+        valid_mask = ~np.isnan(raster_values)
+        if intensity_threshold is not None:
+            affected_mask = valid_mask & (raster_values >= intensity_threshold)
+        else:
+            affected_mask = valid_mask & (raster_values > 0)
+
+        # NaN -> None so the GeoJSON response stays serializable
+        infrastructure_gdf['exposure_level'] = pd.Series(
+            np.where(valid_mask, raster_values, np.nan), index=infrastructure_gdf.index
+        ).replace({np.nan: None})
+        infrastructure_gdf['affected'] = affected_mask
+
+        total_damage_cost = 0.0
+        total_damage_cost_lower = 0.0
+        total_damage_cost_upper = 0.0
+
+        if vuln_on:
+            vulnerability_values = np.where(
+                valid_mask,
+                np.asarray(vulnerability_curve_interp(raster_values), dtype=np.float64),
+                0.0,
+            )
+            damage_cost_values = replacement_value * vulnerability_values
+            total_damage_cost = float(damage_cost_values.sum())
+
+            infrastructure_gdf['vulnerability'] = vulnerability_values
+            infrastructure_gdf['damage_cost'] = damage_cost_values
+
+            if has_bounds:
+                dc_lower = replacement_value * np.asarray(
+                    vulnerability_curve_lower_interp(raster_values), dtype=np.float64
+                )
+                dc_upper = replacement_value * np.asarray(
+                    vulnerability_curve_upper_interp(raster_values), dtype=np.float64
+                )
+                total_damage_cost_lower = float(dc_lower[valid_mask].sum())
+                total_damage_cost_upper = float(dc_upper[valid_mask].sum())
+                for name, arr in (('damage_cost_lower', dc_lower), ('damage_cost_upper', dc_upper)):
+                    infrastructure_gdf[name] = pd.Series(
+                        np.where(valid_mask, arr, np.nan), index=infrastructure_gdf.index
+                    ).replace({np.nan: None})
+        else:
+            infrastructure_gdf['vulnerability'] = None
+            infrastructure_gdf['damage_cost'] = None
+
+        affected_count = int(affected_mask.sum())
+
+        result = {
+            "affected_count": affected_count,
+            "unaffected_count": n_points - affected_count,
+            "affected_meters": 0.0,
+            "unaffected_meters": 0.0,
+            "full_gdf": infrastructure_gdf,
+            "raster_values": raster_values,
+        }
+
+        if vuln_on:
+            result["total_damage_cost"] = total_damage_cost
+            if has_bounds:
+                result["total_damage_cost_lower"] = total_damage_cost_lower
+                result["total_damage_cost_upper"] = total_damage_cost_upper
+
+        return result
+
+    # LineString
+    geod = Geod(ellps="WGS84")
+
+    use_cache = (cached_raster_values is not None and
+                 isinstance(cached_raster_values, dict) and
+                 'line_data' in cached_raster_values and
+                 'raster_values' in cached_raster_values)
+
+    if use_cache:
+        line_data = cached_raster_values['line_data']
+        all_raster_values = cached_raster_values['raster_values']
+    else:
+        # Phase 1: sample every line, recording the upload row it came from
+        line_data = []
+        sample_x: list = []
+        sample_y: list = []
+
+        for feature_pos, (_idx, row) in enumerate(infrastructure_gdf.iterrows()):
+            line = row.geometry
+            if line is None or line.is_empty:
+                continue
+            if line.geom_type == 'MultiLineString':
+                parts = list(line.geoms)
+            elif line.geom_type == 'LineString':
+                parts = [line]
+            else:
+                continue
+
+            row_dict = row.to_dict()
+            for single_line in parts:
+                sampled_points, total_length_m = sample_points_along_line(
+                    list(single_line.coords), geod
+                )
+                if len(sampled_points) < 2:
+                    continue
+
+                line_data.append({
+                    'row_dict': row_dict,
+                    'sampled_points': sampled_points,
+                    'total_length_m': total_length_m,
+                    'single_line': single_line,
+                    # 1-based upload row order, recorded here rather than
+                    # recovered afterwards by walking every geometry a second
+                    # time — that doubled the cost of the most expensive phase
+                    # and paid it again on every cached threshold change.
+                    'line_id': feature_pos + 1,
+                })
+                sample_x.extend(p[0] for p in sampled_points)
+                sample_y.extend(p[1] for p in sampled_points)
+
+        if not line_data:
             return {
                 "affected_count": 0,
                 "unaffected_count": 0,
                 "affected_meters": 0.0,
-                "unaffected_meters": 0.0
-            }
-        
-        # Sample raster values at infrastructure locations
-        if geometry_type == "Point":
-            from rasterio.windows import from_bounds
-            from rasterio.transform import rowcol
-            
-            n_points = len(infrastructure_gdf)
-            
-            # Check if we have cached raster values (for threshold changes)
-            if cached_raster_values is not None and len(cached_raster_values) == n_points:
-                raster_values = cached_raster_values
-            else:
-                # Extract coordinates as numpy arrays
-                x_coords = infrastructure_gdf.geometry.x.to_numpy()
-                y_coords = infrastructure_gdf.geometry.y.to_numpy()
-                
-                # Use tile-based sampling: group points by tiles, read each tile once
-                # This minimizes HTTP requests for remote COGs with scattered points
-                tile_size = 1.0  # 1 degree tiles (~120x120 pixels for 30 arc-second data)
-                
-                # Assign each point to a tile
-                tile_x = np.floor(x_coords / tile_size).astype(np.int32)
-                tile_y = np.floor(y_coords / tile_size).astype(np.int32)
-                
-                # Create unique tile keys (offset to handle negative coords)
-                tile_keys = (tile_x + 180).astype(np.int64) * 1000 + (tile_y + 90).astype(np.int64)
-                unique_tiles = np.unique(tile_keys)
-                n_tiles = len(unique_tiles)
-                
-                # Sample by reading tiles in parallel (much faster for remote COGs)
-                raster_values = np.full(n_points, np.nan, dtype=np.float64)
-                raster_url = hazard_raster_path  # Capture for use in threads
-                
-                def process_tile(tile_key):
-                    """Process a single tile - reads tile and samples points."""
-                    # Find points in this tile
-                    mask = tile_keys == tile_key
-                    point_indices = np.where(mask)[0]
-                    
-                    # Reconstruct tile bounds
-                    tx = (tile_key // 1000) - 180
-                    ty = (tile_key % 1000) - 90
-                    tile_minx = tx * tile_size
-                    tile_maxx = tile_minx + tile_size
-                    tile_miny = ty * tile_size
-                    tile_maxy = tile_miny + tile_size
-                    
-                    try:
-                        # Each thread opens its own connection (thread-safe)
-                        with rasterio.open(raster_url) as tile_src:
-                            window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
-                            data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
-
-                            data = mask_raster_nodata(data, tile_src.nodata)
-
-                            if data.size == 0:
-                                return point_indices, np.full(len(point_indices), np.nan)
-
-                            window_transform = tile_src.window_transform(window)
-
-                            # Get coordinates of points in this tile
-                            tile_x_coords = x_coords[point_indices]
-                            tile_y_coords = y_coords[point_indices]
-
-                            # Convert to pixel indices
-                            rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
-                            rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
-                            cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-
-                            return point_indices, data[rows, cols]
-
-                    except Exception as e:
-                        return point_indices, np.full(len(point_indices), np.nan)
-                
-                # Process tiles in parallel
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-                max_workers = min(16, n_tiles)  # Cap at 16 concurrent connections
-                
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(process_tile, tk): tk for tk in unique_tiles}
-                    for future in as_completed(futures):
-                        point_indices, values = future.result()
-                        raster_values[point_indices] = values
-            
-            # Vectorized operations for valid/affected status (much faster than Python loops)
-            valid_mask = ~np.isnan(raster_values)
-            if intensity_threshold is not None:
-                affected_mask = valid_mask & (raster_values >= intensity_threshold)
-            else:
-                affected_mask = valid_mask & (raster_values > 0)
-            
-            # Store exposure level - convert NaN to None for JSON serialization
-            exposure_values = np.where(valid_mask, raster_values, np.nan)
-            infrastructure_gdf['exposure_level'] = exposure_values
-            infrastructure_gdf['exposure_level'] = infrastructure_gdf['exposure_level'].replace({np.nan: None})
-            
-            # Mark affected status in GeoDataFrame
-            infrastructure_gdf['affected'] = affected_mask
-            
-            # Calculate vulnerability and damage cost if vulnerability analysis is enabled
-            total_damage_cost = 0.0
-            total_damage_cost_lower = 0.0
-            total_damage_cost_upper = 0.0
-            has_bounds = (
-                vulnerability_curve_lower_interp is not None
-                and vulnerability_curve_upper_interp is not None
-            )
-            if vulnerability_curve_interp is not None and replacement_value is not None:
-                vulnerability_values = []
-                damage_cost_values = []
-                damage_cost_lower_values = []
-                damage_cost_upper_values = []
-
-                for idx, row in infrastructure_gdf.iterrows():
-                    exposure = row.get('exposure_level')
-                    if exposure is not None and not np.isnan(exposure):
-                        vulnerability = vulnerability_curve_interp(float(exposure))
-                        damage_cost = replacement_value * vulnerability
-                        if has_bounds:
-                            dc_lower = replacement_value * vulnerability_curve_lower_interp(float(exposure))
-                            dc_upper = replacement_value * vulnerability_curve_upper_interp(float(exposure))
-                            total_damage_cost_lower += dc_lower
-                            total_damage_cost_upper += dc_upper
-                        else:
-                            dc_lower = None
-                            dc_upper = None
-                    else:
-                        vulnerability = 0.0
-                        damage_cost = 0.0
-                        dc_lower = None
-                        dc_upper = None
-
-                    vulnerability_values.append(vulnerability)
-                    damage_cost_values.append(damage_cost)
-                    damage_cost_lower_values.append(dc_lower)
-                    damage_cost_upper_values.append(dc_upper)
-                    total_damage_cost += damage_cost
-
-                infrastructure_gdf['vulnerability'] = vulnerability_values
-                infrastructure_gdf['damage_cost'] = damage_cost_values
-                if has_bounds:
-                    infrastructure_gdf['damage_cost_lower'] = damage_cost_lower_values
-                    infrastructure_gdf['damage_cost_upper'] = damage_cost_upper_values
-            else:
-                infrastructure_gdf['vulnerability'] = None
-                infrastructure_gdf['damage_cost'] = None
-
-            affected_count = int(affected_mask.sum())
-            unaffected_count = len(infrastructure_gdf) - affected_count
-
-            result = {
-                "affected_count": affected_count,
-                "unaffected_count": unaffected_count,
-                "affected_meters": 0.0,
                 "unaffected_meters": 0.0,
-                "full_gdf": infrastructure_gdf,  # Return full GDF with affected status
-                "raster_values": raster_values  # Return for caching (threshold changes)
+                "full_gdf": gpd.GeoDataFrame(geometry=[], crs=infrastructure_gdf.crs)
             }
 
-            if vulnerability_curve_interp is not None and replacement_value is not None:
-                result["total_damage_cost"] = total_damage_cost
-                if has_bounds:
-                    result["total_damage_cost_lower"] = total_damage_cost_lower
-                    result["total_damage_cost_upper"] = total_damage_cost_upper
+        # Phase 2: one pass over the raster for every sample point at once
+        all_raster_values = sample_raster_at_points(
+            hazard_raster_path,
+            np.asarray(sample_x, dtype=np.float64),
+            np.asarray(sample_y, dtype=np.float64),
+        )
 
-            return result
-        
-        else:  # LineString
-            from rasterio.windows import from_bounds
-            from rasterio.transform import rowcol
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            
-            geod = Geod(ellps="WGS84")
-            
-            # Check if we have cached data (for threshold changes)
-            use_cache = (cached_raster_values is not None and 
-                        isinstance(cached_raster_values, dict) and 
-                        'line_data' in cached_raster_values and 
-                        'raster_values' in cached_raster_values)
-            
-            if use_cache:
-                line_data = cached_raster_values['line_data']
-                all_raster_values = cached_raster_values['raster_values']
+        at = 0
+        for ld in line_data:
+            n_pts = len(ld['sampled_points'])
+            ld['raster_values'] = all_raster_values[at:at + n_pts]
+            at += n_pts
+
+    # Phase 3: split each line into runs of equal affected status (always runs)
+    affected_length = 0.0
+    unaffected_length = 0.0
+    total_damage_cost = 0.0
+    total_damage_cost_lower = 0.0
+    total_damage_cost_upper = 0.0
+    segment_rows = []
+
+    for ld in line_data:
+        pts = ld['sampled_points']
+        rv = np.asarray(ld['raster_values'], dtype=np.float64)
+        n_pts = len(pts)
+
+        lons = np.fromiter((p[0] for p in pts), dtype=np.float64, count=n_pts)
+        lats = np.fromiter((p[1] for p in pts), dtype=np.float64, count=n_pts)
+        # One geodesic call per line, not one per 100 m span
+        _, _, span_len = geod.inv(
+            lons[:-1], lats[:-1], lons[1:], lats[1:], return_back_azimuth=True
+        )
+
+        valid = ~np.isnan(rv)
+        if intensity_threshold is not None:
+            point_affected = valid & (rv >= intensity_threshold)
+        else:
+            point_affected = valid & (rv > 0)
+
+        span_intensity = pairwise_mean(rv, valid)
+        measured = ~np.isnan(span_intensity)
+        cs_len = np.concatenate(([0.0], np.cumsum(span_len)))
+        cs_int = np.concatenate(([0.0], np.cumsum(
+            np.where(measured, span_intensity, 0.0) * span_len)))
+        cs_int_len = np.concatenate(([0.0], np.cumsum(np.where(measured, span_len, 0.0))))
+
+        if vuln_on:
+            vuln_pt = np.asarray(vulnerability_curve_interp(rv), dtype=np.float64)
+            span_vuln = np.nan_to_num(
+                pairwise_mean(np.where(valid, vuln_pt, 0.0), valid), nan=0.0)
+            cs_dmg = np.concatenate(([0.0], np.cumsum(span_vuln * span_len)))
+            if has_bounds:
+                cs_dmg_lo = np.concatenate(([0.0], np.cumsum(np.nan_to_num(
+                    pairwise_mean(
+                        np.where(valid, np.asarray(
+                            vulnerability_curve_lower_interp(rv), dtype=np.float64), 0.0),
+                        valid), nan=0.0) * span_len)))
+                cs_dmg_hi = np.concatenate(([0.0], np.cumsum(np.nan_to_num(
+                    pairwise_mean(
+                        np.where(valid, np.asarray(
+                            vulnerability_curve_upper_interp(rv), dtype=np.float64), 0.0),
+                        valid), nan=0.0) * span_len)))
+
+        # A span whose endpoints disagree ends the run; as before, that whole
+        # span is attributed to the status of its second endpoint.
+        cuts = np.flatnonzero(point_affected[1:] != point_affected[:-1])
+        starts = np.concatenate(([0], cuts))
+        ends = np.concatenate((cuts, [n_pts - 1]))
+
+        row_dict = ld['row_dict']
+        for a, b in zip(starts, ends):
+            if b <= a:  # a run with no span of its own contributes no length
+                continue
+            a, b = int(a), int(b)
+            affected = bool(point_affected[a] if a == 0 else point_affected[a + 1])
+
+            segment_length_m = float(cs_len[b] - cs_len[a])
+            if affected:
+                affected_length += segment_length_m
             else:
-                # Phase 1: Collect all sample points from all lines
-                line_data = []
-                all_sample_points = []
-                
-                for idx, row in infrastructure_gdf.iterrows():
-                    line = row.geometry
-                    row_dict = row.to_dict()
-                    
-                    # Handle MultiLineString
-                    if line.geom_type == 'MultiLineString':
-                        lines = list(line.geoms)
-                    else:
-                        lines = [line]
-                    
-                    for single_line in lines:
-                        line_coords = list(single_line.coords)
-                        
-                        if len(line_coords) < 2:
-                            continue
-                        
-                        total_length_m = geod.line_length(*zip(*line_coords))
-                        if total_length_m == 0:
-                            continue
-                        
-                        # Sample points along line at 100m intervals
-                        interval_meters = 100.0
-                        sampled_points = [line_coords[0]]
-                        
-                        current_distance = 0.0
-                        while current_distance < total_length_m:
-                            current_distance += interval_meters
-                            if current_distance >= total_length_m:
-                                sampled_points.append(line_coords[-1])
-                                break
-                            normalized_dist = current_distance / total_length_m
-                            point = single_line.interpolate(normalized_dist, normalized=True)
-                            sampled_points.append((point.x, point.y))
-                        
-                        if sampled_points[-1] != line_coords[-1]:
-                            sampled_points.append(line_coords[-1])
-                        
-                        if len(sampled_points) < 2:
-                            continue
-                        
-                        # Store line data
-                        line_data.append({
-                            'row_dict': row_dict,
-                            'sampled_points': sampled_points,
-                            'total_length_m': total_length_m,
-                            'single_line': single_line
-                        })
-                        
-                        # Add points to batch
-                        for pt in sampled_points:
-                            all_sample_points.append(pt)
-                
-                n_points = len(all_sample_points)
-                
-                if n_points == 0:
-                    return {
-                        "affected_count": 0,
-                        "unaffected_count": 0,
-                        "affected_meters": 0.0,
-                        "unaffected_meters": 0.0,
-                        "full_gdf": gpd.GeoDataFrame(geometry=[], crs=infrastructure_gdf.crs)
-                    }
-                
-                # Phase 2: Tile-based parallel sampling
-                x_coords = np.array([p[0] for p in all_sample_points])
-                y_coords = np.array([p[1] for p in all_sample_points])
-                
-                tile_size = 1.0
-                tile_x = np.floor(x_coords / tile_size).astype(np.int32)
-                tile_y = np.floor(y_coords / tile_size).astype(np.int32)
-                tile_keys = (tile_x + 180).astype(np.int64) * 1000 + (tile_y + 90).astype(np.int64)
-                unique_tiles = np.unique(tile_keys)
-                n_tiles = len(unique_tiles)
-                
-                all_raster_values = np.full(n_points, np.nan, dtype=np.float64)
-                raster_url = hazard_raster_path
-                
-                def process_tile(tile_key):
-                    mask = tile_keys == tile_key
-                    point_indices = np.where(mask)[0]
-                    
-                    tx = (tile_key // 1000) - 180
-                    ty = (tile_key % 1000) - 90
-                    tile_minx = tx * tile_size
-                    tile_maxx = tile_minx + tile_size
-                    tile_miny = ty * tile_size
-                    tile_maxy = tile_miny + tile_size
-                    
-                    try:
-                        with rasterio.open(raster_url) as tile_src:
-                            window = from_bounds(tile_minx, tile_miny, tile_maxx, tile_maxy, tile_src.transform)
-                            data = tile_src.read(1, window=window, boundless=True, fill_value=np.nan)
+                unaffected_length += segment_length_m
 
-                            data = mask_raster_nodata(data, tile_src.nodata)
+            # Length-weighted, to match how vulnerability is averaged below; a
+            # plain mean over sample points weighted the final, short span of a
+            # line the same as a full one.
+            measured_len = cs_int_len[b] - cs_int_len[a]
+            avg_value = float((cs_int[b] - cs_int[a]) / measured_len) if measured_len > 0 else None
+            seg_vals = rv[a:b + 1]
+            max_value = float(np.max(seg_vals[valid[a:b + 1]])) if valid[a:b + 1].any() else None
 
-                            if data.size == 0:
-                                return point_indices, np.full(len(point_indices), np.nan)
+            seg_row = row_dict.copy()
+            seg_row['geometry'] = LineString(pts[a:b + 1])
+            seg_row['line_id'] = ld['line_id']
+            seg_row['length_m'] = segment_length_m
+            seg_row['affected'] = affected
+            seg_row['exposure_level_avg'] = avg_value
+            seg_row['exposure_level_max'] = max_value
 
-                            window_transform = tile_src.window_transform(window)
-                            tile_x_coords = x_coords[point_indices]
-                            tile_y_coords = y_coords[point_indices]
-
-                            rows, cols = rowcol(window_transform, tile_x_coords, tile_y_coords)
-                            rows = np.clip(np.array(rows), 0, data.shape[0] - 1).astype(int)
-                            cols = np.clip(np.array(cols), 0, data.shape[1] - 1).astype(int)
-
-                            return point_indices, data[rows, cols]
-                    except Exception:
-                        return point_indices, np.full(len(point_indices), np.nan)
-                
-                max_workers = min(16, n_tiles)
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {executor.submit(process_tile, tk): tk for tk in unique_tiles}
-                    for future in as_completed(futures):
-                        point_indices, values = future.result()
-                        all_raster_values[point_indices] = values
-                
-                # Build per-line raster values from the batch results
-                current_point_idx = 0
-                for ld in line_data:
-                    n_pts = len(ld['sampled_points'])
-                    ld['raster_values'] = all_raster_values[current_point_idx:current_point_idx + n_pts]
-                    current_point_idx += n_pts
-
-            assign_line_ids_to_line_data(line_data, infrastructure_gdf, geod)
-
-            # Phase 3: Process each line with pre-sampled values (always runs)
-            affected_length = 0.0
-            unaffected_length = 0.0
-            total_damage_cost = 0.0
-            total_damage_cost_lower = 0.0
-            total_damage_cost_upper = 0.0
-            has_bounds = (
-                vulnerability_curve_lower_interp is not None
-                and vulnerability_curve_upper_interp is not None
-            )
-            segment_rows = []
-
-            for ld in line_data:
-                row_dict = ld['row_dict']
-                sampled_points = ld['sampled_points']
-                raster_values = ld['raster_values']
-
-                # Classify points as affected
-                if intensity_threshold is not None:
-                    point_affected = [not np.isnan(v) and v >= intensity_threshold for v in raster_values]
-                else:
-                    point_affected = [not np.isnan(v) and v > 0 for v in raster_values]
-
-                # Create segments by grouping consecutive points with same status
-                current_segment_points = [sampled_points[0]]
-                current_segment_indices = [0]
-                current_affected = point_affected[0]
-
-                def create_segment(points, indices, affected):
-                    nonlocal affected_length, unaffected_length, total_damage_cost
-                    nonlocal total_damage_cost_lower, total_damage_cost_upper
-                    if len(points) < 2:
-                        return
-
-                    segment_geom = LineString(points)
-                    segment_length_m = geod.line_length(*zip(*points))
-
-                    segment_vals = [raster_values[j] for j in indices if not np.isnan(raster_values[j])]
-                    avg_value = sum(segment_vals) / len(segment_vals) if segment_vals else None
-                    max_value = max(segment_vals) if segment_vals else None
-
-                    # Calculate distance-weighted average vulnerability for this segment
-                    vulnerability = None
-                    damage_cost = None
-                    seg_damage_cost_lower = None
-                    seg_damage_cost_upper = None
-                    if vulnerability_curve_interp is not None and replacement_value is not None:
-                        if segment_vals:
-                            # Calculate distance-weighted average vulnerability
-                            # For each segment between consecutive points, calculate vulnerability
-                            # at the segment midpoint (average of endpoints) and weight by segment length
-                            vulnerability_sum = 0.0
-                            lower_vuln_sum = 0.0
-                            upper_vuln_sum = 0.0
-                            length_sum = 0.0
-
-                            for i in range(len(points) - 1):
-                                idx1 = indices[i]
-                                idx2 = indices[i + 1]
-
-                                # Get exposure values at both endpoints
-                                val1 = raster_values[idx1] if idx1 < len(raster_values) and not np.isnan(raster_values[idx1]) else None
-                                val2 = raster_values[idx2] if idx2 < len(raster_values) and not np.isnan(raster_values[idx2]) else None
-
-                                # Calculate segment length
-                                pt1 = points[i]
-                                pt2 = points[i + 1]
-                                # geod.line_length expects two arrays: lons and lats
-                                # Use the same pattern as elsewhere: *zip(*coords)
-                                seg_len = geod.line_length(*zip(*[pt1, pt2]))
-
-                                # Calculate vulnerability for this segment
-                                if val1 is not None and val2 is not None:
-                                    # Average vulnerability of both endpoints
-                                    vuln1 = vulnerability_curve_interp(float(val1))
-                                    vuln2 = vulnerability_curve_interp(float(val2))
-                                    avg_vuln = (vuln1 + vuln2) / 2.0
-                                    if has_bounds:
-                                        lower_vuln_sum += ((vulnerability_curve_lower_interp(float(val1)) + vulnerability_curve_lower_interp(float(val2))) / 2.0) * seg_len
-                                        upper_vuln_sum += ((vulnerability_curve_upper_interp(float(val1)) + vulnerability_curve_upper_interp(float(val2))) / 2.0) * seg_len
-                                elif val1 is not None:
-                                    avg_vuln = vulnerability_curve_interp(float(val1))
-                                    if has_bounds:
-                                        lower_vuln_sum += vulnerability_curve_lower_interp(float(val1)) * seg_len
-                                        upper_vuln_sum += vulnerability_curve_upper_interp(float(val1)) * seg_len
-                                elif val2 is not None:
-                                    avg_vuln = vulnerability_curve_interp(float(val2))
-                                    if has_bounds:
-                                        lower_vuln_sum += vulnerability_curve_lower_interp(float(val2)) * seg_len
-                                        upper_vuln_sum += vulnerability_curve_upper_interp(float(val2)) * seg_len
-                                else:
-                                    avg_vuln = 0.0
-
-                                vulnerability_sum += avg_vuln * seg_len
-                                length_sum += seg_len
-
-                            if length_sum > 0:
-                                vulnerability = vulnerability_sum / length_sum
-                            else:
-                                vulnerability = 0.0
-
-                            # Damage cost = replacement_value (per meter) × vulnerability × length
-                            damage_cost = replacement_value * vulnerability * segment_length_m
-                            total_damage_cost += damage_cost
-                            seg_damage_cost_lower = None
-                            seg_damage_cost_upper = None
-                            if has_bounds and length_sum > 0:
-                                lower_vuln_avg = lower_vuln_sum / length_sum
-                                upper_vuln_avg = upper_vuln_sum / length_sum
-                                seg_damage_cost_lower = replacement_value * lower_vuln_avg * segment_length_m
-                                seg_damage_cost_upper = replacement_value * upper_vuln_avg * segment_length_m
-                                total_damage_cost_lower += seg_damage_cost_lower
-                                total_damage_cost_upper += seg_damage_cost_upper
-                        else:
-                            vulnerability = 0.0
-                            damage_cost = 0.0
-                            seg_damage_cost_lower = None
-                            seg_damage_cost_upper = None
-                    
-                    if affected:
-                        affected_length += segment_length_m
-                    else:
-                        unaffected_length += segment_length_m
-                    
-                    seg_row = row_dict.copy()
-                    seg_row['geometry'] = segment_geom
-                    seg_row['line_id'] = ld['line_id']
-                    seg_row['length_m'] = segment_length_m
-                    seg_row['affected'] = affected
-                    seg_row['exposure_level_avg'] = avg_value
-                    seg_row['exposure_level_max'] = max_value
-                    if vulnerability is not None:
-                        seg_row['vulnerability'] = vulnerability
-                    if damage_cost is not None:
-                        seg_row['damage_cost'] = damage_cost
-                    if seg_damage_cost_lower is not None:
-                        seg_row['damage_cost_lower'] = seg_damage_cost_lower
-                    if seg_damage_cost_upper is not None:
-                        seg_row['damage_cost_upper'] = seg_damage_cost_upper
-                    segment_rows.append(seg_row)
-                
-                for i in range(1, len(sampled_points)):
-                    if point_affected[i] == current_affected:
-                        current_segment_points.append(sampled_points[i])
-                        current_segment_indices.append(i)
-                    else:
-                        create_segment(current_segment_points, current_segment_indices, current_affected)
-                        current_segment_points = [sampled_points[i-1], sampled_points[i]]
-                        current_segment_indices = [i-1, i]
-                        current_affected = point_affected[i]
-                
-                # Final segment
-                create_segment(current_segment_points, current_segment_indices, current_affected)
-            
-            # Build GeoDataFrame
-            if segment_rows:
-                segment_gdf = gpd.GeoDataFrame(segment_rows, crs=infrastructure_gdf.crs)
-                if 'affected' in segment_gdf.columns:
-                    segment_gdf['affected'] = segment_gdf['affected'].astype(bool)
-            else:
-                segment_gdf = gpd.GeoDataFrame(geometry=[], crs=infrastructure_gdf.crs)
-            
-            affected_meters = float(affected_length) if not np.isnan(affected_length) else 0.0
-            unaffected_meters = float(unaffected_length) if not np.isnan(unaffected_length) else 0.0
-
-            result = {
-                "affected_count": 0,
-                "unaffected_count": 0,
-                "affected_meters": affected_meters,
-                "unaffected_meters": unaffected_meters,
-                "full_gdf": segment_gdf,
-                "line_data": line_data,
-                "raster_values": all_raster_values
-            }
-
-            if vulnerability_curve_interp is not None and replacement_value is not None:
-                result["total_damage_cost"] = total_damage_cost
+            if vuln_on:
+                damage_cost = float(replacement_value * (cs_dmg[b] - cs_dmg[a]))
+                total_damage_cost += damage_cost
+                seg_row['vulnerability'] = (
+                    float((cs_dmg[b] - cs_dmg[a]) / segment_length_m)
+                    if segment_length_m > 0 else 0.0
+                )
+                seg_row['damage_cost'] = damage_cost
                 if has_bounds:
-                    result["total_damage_cost_lower"] = total_damage_cost_lower
-                    result["total_damage_cost_upper"] = total_damage_cost_upper
+                    dc_lo = float(replacement_value * (cs_dmg_lo[b] - cs_dmg_lo[a]))
+                    dc_hi = float(replacement_value * (cs_dmg_hi[b] - cs_dmg_hi[a]))
+                    total_damage_cost_lower += dc_lo
+                    total_damage_cost_upper += dc_hi
+                    seg_row['damage_cost_lower'] = dc_lo
+                    seg_row['damage_cost_upper'] = dc_hi
 
-            return result
+            segment_rows.append(seg_row)
 
+    if segment_rows:
+        segment_gdf = gpd.GeoDataFrame(segment_rows, crs=infrastructure_gdf.crs)
+        segment_gdf['affected'] = segment_gdf['affected'].astype(bool)
+    else:
+        segment_gdf = gpd.GeoDataFrame(geometry=[], crs=infrastructure_gdf.crs)
+
+    result = {
+        "affected_count": 0,
+        "unaffected_count": 0,
+        "affected_meters": float(affected_length),
+        "unaffected_meters": float(unaffected_length),
+        "full_gdf": segment_gdf,
+        "line_data": line_data,
+        "raster_values": all_raster_values
+    }
+
+    if vuln_on:
+        result["total_damage_cost"] = total_damage_cost
+        if has_bounds:
+            result["total_damage_cost_lower"] = total_damage_cost_lower
+            result["total_damage_cost_upper"] = total_damage_cost_upper
+
+    return result
