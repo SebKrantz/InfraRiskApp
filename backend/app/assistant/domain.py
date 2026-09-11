@@ -33,11 +33,11 @@ from ..utils.geospatial import analyze_intersection
 
 log = logging.getLogger("infrarisk.assistant")
 
-# The app's `_analysis_results_cache` is unbounded, which is fine when entries
-# only appear as fast as a user can click. The assistant can add a dozen in one
-# `compare_hazards` call, and each one holds a full GeoDataFrame — so we keep a
-# bound on OUR OWN entries. Keys the user created through the UI are never
-# evicted; their sidebar export buttons must keep working.
+# The app caps `_analysis_results_cache` as a backstop, but that cap is blind to
+# who made an entry. The assistant can add a dozen in one `compare_hazards`
+# call, and each one holds a full GeoDataFrame — so we keep a bound on OUR OWN
+# entries. Keys the user created through the UI are never evicted by us; their
+# sidebar export buttons must keep working.
 MAX_ASSISTANT_CACHED = 48
 _OURS: OrderedDict[tuple, None] = OrderedDict()
 _OURS_LOCK = threading.Lock()

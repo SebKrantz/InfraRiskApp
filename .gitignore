@@ -11,3 +11,7 @@ backend/.env
 
 __pycache__/
 *.pyc
+
+# Hazard rasters (too large for git) and generated catalog backup
+/data/rasters/
+/data/hazard_layers.remote.csv

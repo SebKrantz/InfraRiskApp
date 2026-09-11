@@ -158,6 +158,68 @@ export default function Sidebar({
     return min + normalized * (max - min)
   }
 
+  // Local (immediate) state for the threshold number input, so an exact value
+  // can be typed instead of only dragged. The parent — and therefore the
+  // analysis — is only updated after a debounce, so typing "1500" doesn't
+  // re-run the analysis once per digit.
+  //
+  // The pending timer is held in a ref rather than driven by an effect's
+  // dependencies: the slider and the input write to the same value, and an
+  // effect-based debounce let a half-typed number land *after* a later drag
+  // and silently overwrite it. Cancelling explicitly makes that unrepresentable.
+  const [thresholdInput, setThresholdInput] = useState<string>('')
+  const thresholdEditing = useRef(false)
+  const thresholdTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelPendingThreshold = () => {
+    if (thresholdTimer.current !== null) {
+      clearTimeout(thresholdTimer.current)
+      thresholdTimer.current = null
+    }
+    thresholdEditing.current = false
+  }
+
+  useEffect(() => cancelPendingThreshold, [])
+
+  // A trailing ".0" is noise in a field you type into; the min/max labels
+  // beside it keep their fixed precision.
+  const formatThreshold = (value: number) =>
+    Number.isFinite(value) ? String(Math.round(value * 10) / 10) : ''
+
+  // Resync when the threshold changes from somewhere else: dragging the
+  // slider, or the reset to the layer minimum when a hazard is selected.
+  useEffect(() => {
+    if (thresholdEditing.current) return
+    setThresholdInput(formatThreshold(intensityThreshold))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intensityThreshold])
+
+  // Parse, clamp to the layer's range, and push. `normalize` is set by Enter
+  // and blur, which are done-editing signals: an empty or half-typed field is
+  // then put back to the live value. The debounce passes false — clearing the
+  // box on the way to retyping is legitimate, and refilling it mid-keystroke
+  // would fight the user.
+  const commitThreshold = (raw: string, normalize: boolean) => {
+    cancelPendingThreshold()
+    const parsed = parseFloat(raw)
+    if (!hazardStats || Number.isNaN(parsed)) {
+      if (normalize) setThresholdInput(formatThreshold(intensityThreshold))
+      return
+    }
+    const next = clamp(parsed, hazardStats.min, hazardStats.max)
+    setThresholdInput(formatThreshold(next))
+    if (next !== intensityThreshold) {
+      onIntensityThresholdChange(next)
+    }
+  }
+
+  const onThresholdTyped = (raw: string) => {
+    thresholdEditing.current = true
+    setThresholdInput(raw)
+    if (thresholdTimer.current !== null) clearTimeout(thresholdTimer.current)
+    thresholdTimer.current = setTimeout(() => commitThreshold(raw, false), 700)
+  }
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -417,6 +479,8 @@ export default function Sidebar({
                     <Slider
                       value={toSliderValue(intensityThreshold, hazardStats.min, hazardStats.max)}
                       onValueChange={(value) => {
+                        // Dragging wins over a half-typed value.
+                        cancelPendingThreshold()
                         onIntensityThresholdChange(
                           fromSliderValue(value, hazardStats.min, hazardStats.max)
                         )
@@ -425,12 +489,29 @@ export default function Sidebar({
                       max={1}
                       step={0.001}
                     />
-                    <div className="flex justify-between text-xs text-gray-400">
+                    <div className="flex items-center justify-between text-xs text-gray-400">
                       <span>{hazardStats.min.toFixed(1)}</span>
-                      <span>
-                        Current: {intensityThreshold.toFixed(1)}
-                        {selectedHazard?.unit ? ` ${selectedHazard.unit}` : ''}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <Input
+                          type="number"
+                          step="any"
+                          min={hazardStats.min}
+                          max={hazardStats.max}
+                          value={thresholdInput}
+                          onChange={(e) => onThresholdTyped(e.target.value)}
+                          onBlur={(e) => commitThreshold(e.target.value, true)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              commitThreshold((e.target as HTMLInputElement).value, true)
+                            }
+                          }}
+                          aria-label="Hazard intensity threshold"
+                          title="Type an exact threshold, or drag the slider"
+                          className="w-24 h-auto rounded-md border-gray-700 bg-gray-800 px-2 py-1 text-xs text-right text-gray-200 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:m-0 [&::-webkit-outer-spin-button]:m-0"
+                        />
+                        {selectedHazard?.unit ? <span>{selectedHazard.unit}</span> : null}
+                      </div>
                       <span>{hazardStats.max.toFixed(1)}</span>
                     </div>
                   </div>
