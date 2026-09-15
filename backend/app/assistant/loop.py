@@ -33,7 +33,41 @@ MAX_PROVIDER_RETRIES = 3
 RETRY_BACKOFF_S = (2.0, 6.0, 15.0)
 
 
+class EmptyTurn(RuntimeError):
+    """The provider returned a well-formed turn with no text and no tool calls.
+
+    Gemini does this on MALFORMED_RESPONSE / MALFORMED_FUNCTION_CALL. Treated as
+    a transient failure: nothing reached the browser, so the attempt can simply
+    be made again.
+    """
+
+
+# Stop reasons that legitimately carry no content — the model declined, or ran
+# out of room. Retrying would burn the same refusal three more times, so these
+# are reported to the user instead.
+TERMINAL_EMPTY_STOPS = {
+    "refusal",
+    "safety",
+    "recitation",
+    "blocklist",
+    "prohibited_content",
+    "spii",
+    "language",
+    "image_safety",
+    "image_prohibited_content",
+    "image_recitation",
+    "max_tokens",
+}
+
+_TERMINAL_EMPTY_MESSAGE = {
+    "max_tokens": "the model hit its output limit before producing an answer — "
+    "ask for a smaller piece of work, or tell me to continue",
+}
+
+
 def _is_transient(exc: Exception) -> bool:
+    if isinstance(exc, EmptyTurn):
+        return True
     text = str(exc).lower()
     return any(marker in text for marker in TRANSIENT_MARKERS)
 
@@ -261,10 +295,31 @@ def run(
                         )
                     elif isinstance(event, schema.TurnEnd):
                         stop, raw = event.stop_reason, event.raw
-                break
             except Exception as exc:  # noqa: BLE001 — provider errors are data
                 failure = exc
             emitted = bool(text_parts or calls)
+            if failure is None:
+                if emitted:
+                    break
+                # A turn with no text and no tool calls. Letting it through
+                # would end the leg silently AND push a content-free assistant
+                # message into the history, which the Anthropic API rejects on
+                # the next call. Either say why, or try again.
+                if stop in TERMINAL_EMPTY_STOPS:
+                    log.info("provider %s returned nothing, stop=%s", provider_name, stop)
+                    yield schema.sse(
+                        "error",
+                        {
+                            "message": _TERMINAL_EMPTY_MESSAGE.get(
+                                stop,
+                                f"the model declined to answer (reason: {stop})",
+                            )
+                        },
+                    )
+                    yield schema.sse("done", {"reason": stop})
+                    return
+                failure = EmptyTurn(f"empty response from the model (stop reason {stop!r})")
+                stop, raw = "end_turn", None  # discard the empty turn before retrying
             retriable = (
                 _is_transient(failure)
                 and not emitted
@@ -280,14 +335,23 @@ def run(
                      provider_name, wait, failure)
             yield schema.sse(
                 "notice",
-                {"message": f"{provider_name} is busy — retrying in {wait:.0f}s"},
+                {
+                    "message": (
+                        "the model returned an empty response"
+                        if isinstance(failure, EmptyTurn)
+                        else f"{provider_name} is busy"
+                    )
+                    + f" — retrying in {wait:.0f}s"
+                },
             )
             deadline = time.time() + wait
             while time.time() < deadline:
                 time.sleep(min(5.0, max(0.0, deadline - time.time())))
                 yield schema.SSE_PING
 
-        # record the assistant turn canonically + raw for replay
+        # Record the assistant turn canonically + raw for replay. The retry
+        # loop above only breaks once something was emitted, so `parts` here is
+        # never empty — no provider is ever handed a content-free message.
         parts = []
         if text_parts:
             parts.append({"type": "text", "text": "".join(text_parts)})
