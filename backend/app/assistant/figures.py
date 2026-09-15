@@ -307,3 +307,44 @@ def custom_map(
         fig.savefig(dest, dpi=200, bbox_inches="tight")
         plt.close(fig)
     return dest
+
+
+def curve_plot(
+    dest: Path,
+    curves: list[dict[str, Any]],
+    title: str | None = None,
+    xlabel: str | None = None,
+) -> Path:
+    """Vulnerability curves on a numeric intensity axis, bounds as a band.
+
+    Each entry is {name, intensity, central, lower?, upper?}. This is the one
+    exhibit `chart()` cannot draw: its x axis is categorical, and a damage curve
+    needs a real intensity scale and a shaded uncertainty ribbon.
+    """
+    import matplotlib.pyplot as plt
+
+    with _LOCK:
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        try:
+            for i, curve in enumerate(curves):
+                color = _FALLBACK[i % len(_FALLBACK)]
+                x = curve["intensity"]
+                ax.plot(x, curve["central"], color=color, linewidth=1.8, label=curve["name"])
+                if curve.get("lower") is not None and curve.get("upper") is not None:
+                    ax.fill_between(
+                        x, curve["lower"], curve["upper"], color=color, alpha=0.15, linewidth=0
+                    )
+            # Headroom above the tallest curve, but never past 1: a proportion
+            # destroyed has no meaning above total loss. A shallow curve keeps a
+            # tight axis so its shape stays readable.
+            peak = max(max(c.get("upper", c["central"])) for c in curves)
+            ax.set_ylim(0, min(1.0, max(peak * 1.15, 1e-3)))
+            ax.margins(x=0)
+            _style(ax, title, xlabel, "Proportion destroyed")
+            if len(curves) > 1 or curves[0]["name"]:
+                _legend(ax, len(curves))
+            fig.tight_layout()
+            fig.savefig(dest, dpi=200, bbox_inches="tight", facecolor="white")
+        finally:
+            plt.close(fig)
+    return dest

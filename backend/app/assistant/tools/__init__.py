@@ -66,6 +66,7 @@ def load() -> None:
     """Import every tool module so the registry is complete. Idempotent."""
     from . import (  # noqa: F401
         analysis,
+        curves,
         data,
         documents,
         guide,

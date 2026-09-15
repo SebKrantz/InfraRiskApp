@@ -16,7 +16,11 @@ from . import tool
     "exact affected-rule, points vs lines, how to choose and justify a "
     "threshold), 'vulnerability_analysis' before any damage-cost work (curve "
     "formats, what replacement_value means, the two caveats that must reach the "
-    "write-up), 'multi_hazard' before comparing return periods or climate "
+    "write-up), 'vulnerability_curves' before choosing or building a curve (the "
+    "unit and range of every hazard layer, how to search the shipped library of "
+    "218 published curves, and the published anchors for constructing one when "
+    "nothing fits — including the landslide and drought layers, which have no "
+    "curves at all), 'multi_hazard' before comparing return periods or climate "
     "scenarios, 'reports' before writing any Word/Excel/CSV deliverable, and "
     "'figures' when choosing what to plot.",
     {
@@ -27,6 +31,7 @@ from . import tool
                 "enum": [
                     "exposure_analysis",
                     "vulnerability_analysis",
+                    "vulnerability_curves",
                     "multi_hazard",
                     "reports",
                     "figures",
