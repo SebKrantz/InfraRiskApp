@@ -117,13 +117,18 @@ Damage = replacement_value x damage_ratio, summed; for lines it is also
 multiplied by segment length. State the basis and the currency every time.
 
 ## Two caveats you must carry into any write-up
-1. **Damage is computed over every feature, not only the "affected" ones.** An
-   asset below the exposure threshold but with a small positive intensity still
-   contributes damage cost through the curve. So total damage cost and the
-   affected count answer different questions, and damage cost does not go to
-   zero just because the threshold is high.
-2. The damage ratio reported on the chart is the mean over affected features
-   (length-weighted for lines), while the cost is the sum over all of them.
+1. **Damage is computed over the AFFECTED features only.** An asset below the
+   exposure threshold takes no damage, whatever the curve says at its intensity
+   — and a curve typically returns a positive damage ratio far below any
+   sensible threshold, so this matters. The threshold is therefore a strong
+   lever on the damage cost, not just on the exposure count: state it beside
+   every damage figure, exactly as you would beside an exposure figure.
+2. **Cost and damage ratio move in OPPOSITE directions.** Both are computed over
+   the same affected set — the cost is their sum, the reported ratio their mean
+   (length-weighted for lines). Raise the threshold and you keep fewer assets,
+   so the total cost falls; but the ones you keep are the worst hit, so the mean
+   ratio rises. That is correct and it surprises readers, so say it in words
+   rather than leaving two numbers moving apart on a chart.
 
 ## What to report
 - Total damage cost with its currency and, when the curve has bounds, the
@@ -543,7 +548,8 @@ Two more things must reach the user, and one setting must be applied:
   They are not the same quantity; mention it in the caveats.
 - Set the exposure threshold to **class >= 2, arguably >= 3**. The default
   "affected if > 0" rule counts class-0 and class-1 pixels whose modelled
-  probability is ~zero.
+  probability is ~zero. This governs the damage cost too, so leaving it at the
+  default inflates the total with assets the model says are not at risk.
 
 ### Drought
 

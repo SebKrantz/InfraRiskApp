@@ -77,8 +77,11 @@ layer's coverage. Flag this when a dataset extends beyond a raster.
 into affected/unaffected segments, giving metres. Polygons were converted to \
 centroids at load time.
 - Damage cost = replacement value x damage ratio from the curve, summed over \
-**all** features (not only the affected ones), and multiplied by segment length \
-for lines. Replacement value is per feature for points, per metre for lines.
+the **affected** features only, and multiplied by segment length for lines. \
+Replacement value is per feature for points, per metre for lines. The threshold \
+governs the damage figures as well as the exposure ones: raise it and the total \
+damage cost falls while the mean damage ratio rises, because the assets it \
+keeps are the badly hit ones.
 - Return periods are annual exceedance probabilities: a 100-year layer is the \
 intensity with a 1% chance of being exceeded in any year.
 - Thresholds are a modelling choice, not a physical certainty. Always state the \
