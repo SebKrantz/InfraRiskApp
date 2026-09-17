@@ -4,8 +4,10 @@ FastAPI backend for Hazard-Infrastructure Analyzer
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Receive, Scope, Send
 import uvicorn
 from typing import Optional
 from pathlib import Path
@@ -27,6 +29,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Endpoints whose bodies are already compressed (PNG). Re-running gzip over
+# them costs CPU on the busiest route in the app and saves nothing.
+ALREADY_COMPRESSED = ("/api/tiles/", "/api/export/")
+
+
+class SelectiveGZipMiddleware(GZipMiddleware):
+    """GZip responses except the ones that are already compressed bytes.
+
+    Starlette's GZipMiddleware has no content-type filter, so on its own it
+    would re-compress every map tile. The upload response is the reason this
+    is here at all: it carries the whole dataset as GeoJSON, which is several
+    hundred KB to a few MB of highly compressible text.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and any(p in scope["path"] for p in ALREADY_COMPRESSED):
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
+app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Include routers
 app.include_router(upload.router, prefix="/api", tags=["upload"])
