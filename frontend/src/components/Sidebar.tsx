@@ -459,8 +459,10 @@ export default function Sidebar({
                 </div>
               </div>
 
-              {/* Intensity Slider (hidden in vulnerability mode) */}
-              {selectedHazard && hazardStats && !vulnerabilityAnalysisEnabled && (
+              {/* Intensity Slider. Shown in vulnerability mode too: the
+                  threshold decides which assets take damage, so hiding it left
+                  a value the user could not see still driving the result. */}
+              {selectedHazard && hazardStats && (
                 <div className="mb-3">
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-sm font-medium text-gray-300">
@@ -519,7 +521,7 @@ export default function Sidebar({
               )}
 
               {/* Horizontal Separator */}
-              <hr className={`border-gray-700 ${selectedHazard && hazardStats && !vulnerabilityAnalysisEnabled ? 'my-4' : 'mt-1 mb-4'}`} />
+              <hr className={`border-gray-700 ${selectedHazard && hazardStats ? 'my-4' : 'mt-1 mb-4'}`} />
 
               {/* Vulnerability Analysis Section */}
               <div className={vulnerabilityAnalysisEnabled ? "mb-2" : "mb-1"}>
@@ -1016,11 +1018,14 @@ export default function Sidebar({
                 <li>
                   <strong>Map:</strong> Infrastructure features are color-coded: <span className="text-red-600 font-semibold">red</span> for affected and <span className="text-green-600 font-semibold">green</span> for unaffected.
                 </li>
+                <li>
+                  <strong>Damage costs:</strong> Only affected assets take damage. Anything below the threshold is excluded from both the damage cost and the average damage ratio, even where the vulnerability curve gives a positive damage ratio at its intensity.
+                </li>
               </ul>
             </div>
             <div className="mt-4 pt-3 border-t border-gray-300">
               <p className="text-xs text-gray-500">
-                <strong>Tip:</strong> Adjust the slider to explore different risk scenarios. A lower threshold means more infrastructure will be considered at risk.
+                <strong>Tip:</strong> Adjust the slider to explore different risk scenarios. A lower threshold means more infrastructure will be considered at risk — and, with vulnerability analysis enabled, a higher total damage cost.
               </p>
             </div>
           </div>
@@ -1208,6 +1213,9 @@ export default function Sidebar({
               <p className="text-sm font-bold text-gray-700 mb-1">What it does:</p>
               <p className="text-sm text-gray-600">
                 When enabled, the analysis applies a vulnerability curve to determine how much of each infrastructure feature would be destroyed at different hazard intensities. Combined with a replacement value, this calculates monetary damage costs.
+              </p>
+              <p className="text-sm text-gray-600 mt-2">
+                The hazard intensity threshold still applies: damage is calculated for <strong>affected assets only</strong>. Raising the threshold narrows the set of assets that take damage and so lowers the total damage cost. What is not exposed suffers no damage, whatever the curve says at that intensity.
               </p>
             </div>
             <div>

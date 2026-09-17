@@ -705,8 +705,14 @@ def analyze_intersection(
         total_damage_cost_upper = 0.0
 
         if vuln_on:
+            # Damage is computed for AFFECTED points only. The curve returns a
+            # positive damage ratio well below the exposure threshold, so summing
+            # it over every point made the total damage cost independent of the
+            # threshold while the reported damage ratio — already averaged over
+            # affected points only — moved with it. What is not exposed takes no
+            # damage; the threshold governs both figures or neither.
             vulnerability_values = np.where(
-                valid_mask,
+                affected_mask,
                 np.asarray(vulnerability_curve_interp(raster_values), dtype=np.float64),
                 0.0,
             )
@@ -717,18 +723,20 @@ def analyze_intersection(
             infrastructure_gdf['damage_cost'] = damage_cost_values
 
             if has_bounds:
-                dc_lower = replacement_value * np.asarray(
-                    vulnerability_curve_lower_interp(raster_values), dtype=np.float64
+                dc_lower = replacement_value * np.where(
+                    affected_mask,
+                    np.asarray(vulnerability_curve_lower_interp(raster_values), dtype=np.float64),
+                    0.0,
                 )
-                dc_upper = replacement_value * np.asarray(
-                    vulnerability_curve_upper_interp(raster_values), dtype=np.float64
+                dc_upper = replacement_value * np.where(
+                    affected_mask,
+                    np.asarray(vulnerability_curve_upper_interp(raster_values), dtype=np.float64),
+                    0.0,
                 )
-                total_damage_cost_lower = float(dc_lower[valid_mask].sum())
-                total_damage_cost_upper = float(dc_upper[valid_mask].sum())
-                for name, arr in (('damage_cost_lower', dc_lower), ('damage_cost_upper', dc_upper)):
-                    infrastructure_gdf[name] = pd.Series(
-                        np.where(valid_mask, arr, np.nan), index=infrastructure_gdf.index
-                    ).replace({np.nan: None})
+                total_damage_cost_lower = float(dc_lower.sum())
+                total_damage_cost_upper = float(dc_upper.sum())
+                infrastructure_gdf['damage_cost_lower'] = dc_lower
+                infrastructure_gdf['damage_cost_upper'] = dc_upper
         else:
             infrastructure_gdf['vulnerability'] = None
             infrastructure_gdf['damage_cost'] = None
@@ -910,16 +918,23 @@ def analyze_intersection(
             seg_row['exposure_level_max'] = max_value
 
             if vuln_on:
-                damage_cost = float(replacement_value * (cs_dmg[b] - cs_dmg[a]))
+                # Damage for AFFECTED segments only — see the note in the point
+                # branch above. Runs are already cut at threshold crossings, so
+                # gating on the run's own status needs no re-averaging and keeps
+                # the boundary span attributed exactly as the exposure figures
+                # attribute it.
+                damage_length = float(cs_dmg[b] - cs_dmg[a]) if affected else 0.0
+                damage_cost = float(replacement_value * damage_length)
                 total_damage_cost += damage_cost
                 seg_row['vulnerability'] = (
-                    float((cs_dmg[b] - cs_dmg[a]) / segment_length_m)
-                    if segment_length_m > 0 else 0.0
+                    damage_length / segment_length_m if segment_length_m > 0 else 0.0
                 )
                 seg_row['damage_cost'] = damage_cost
                 if has_bounds:
-                    dc_lo = float(replacement_value * (cs_dmg_lo[b] - cs_dmg_lo[a]))
-                    dc_hi = float(replacement_value * (cs_dmg_hi[b] - cs_dmg_hi[a]))
+                    dc_lo = float(
+                        replacement_value * (cs_dmg_lo[b] - cs_dmg_lo[a])) if affected else 0.0
+                    dc_hi = float(
+                        replacement_value * (cs_dmg_hi[b] - cs_dmg_hi[a])) if affected else 0.0
                     total_damage_cost_lower += dc_lo
                     total_damage_cost_upper += dc_hi
                     seg_row['damage_cost_lower'] = dc_lo
