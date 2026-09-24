@@ -2,10 +2,12 @@
 FastAPI backend for Hazard-Infrastructure Analyzer
 """
 
+import json
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
 import uvicorn
@@ -62,6 +64,19 @@ app.include_router(export.router, prefix="/api", tags=["export"])
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 ASSETS_DIR = STATIC_DIR / "assets"
+INDEX_PATH = STATIC_DIR / "index.html"
+
+# The built index.html carries a "__CARTO_API_KEY__" placeholder (see
+# frontend/index.html). It is filled in when the page is served rather than at
+# build time, so the key stays in the environment (Posit Connect "Vars") instead
+# of being committed with backend/static.
+_CARTO_KEY_PLACEHOLDER = '"__CARTO_API_KEY__"'
+
+
+def _spa_index_response() -> HTMLResponse:
+    """Serve the SPA shell with the CARTO API key substituted in."""
+    html = INDEX_PATH.read_text(encoding="utf-8")
+    return HTMLResponse(html.replace(_CARTO_KEY_PLACEHOLDER, json.dumps(settings.CARTO_API_KEY)))
 
 if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
@@ -69,9 +84,8 @@ if ASSETS_DIR.exists():
 @app.get("/", include_in_schema=False)
 async def root():
     """Root endpoint"""
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
+    if INDEX_PATH.exists():
+        return _spa_index_response()
     return {"message": "Hazard-Infrastructure Analyzer API", "version": "1.0.0"}
 
 
@@ -92,12 +106,11 @@ def _static_file_path(relative_path: str) -> Optional[Path]:
 @app.get("/{full_path:path}", include_in_schema=False)
 async def spa_fallback(full_path: str):
     static_file = _static_file_path(full_path)
-    if static_file is not None:
+    if static_file is not None and static_file != INDEX_PATH.resolve():
         return FileResponse(static_file)
 
-    index_path = STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(index_path)
+    if INDEX_PATH.exists():
+        return _spa_index_response()
     raise HTTPException(status_code=404, detail="Not Found")
 
 
