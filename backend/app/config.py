@@ -24,6 +24,12 @@ class Settings:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     
+    # CARTO basemap API key — CARTO's raster basemaps (Positron / Dark Matter)
+    # now require ?key=<...>. Used server-side for PNG export basemaps and, where
+    # the backend serves the built SPA, substituted into index.html for the
+    # interactive map. Empty = request unkeyed.
+    CARTO_API_KEY: str = os.getenv("CARTO_API_KEY", "")
+
     # File upload settings
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
     ALLOWED_EXTENSIONS: set = {".shp", ".gpkg", ".zip", ".csv", ".geojson"}
