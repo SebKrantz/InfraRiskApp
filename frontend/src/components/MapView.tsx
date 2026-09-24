@@ -412,12 +412,11 @@ export default function MapView({
         return '<span class="text-gray-400 italic">N/A</span>'
       }
       if (typeof value === 'number') {
-        // Format exposure levels with 2-4 decimal places
-        // Show 4 decimal places, but remove trailing zeros
-        const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-        const base = parseFloat(formatted).toLocaleString('en-US', {
+        // Decimals by magnitude, as on the hazard legend: none from 100, one from 1, two below
+        const abs = Math.abs(value)
+        const base = value.toLocaleString('en-US', {
           minimumFractionDigits: 0,
-          maximumFractionDigits: 4
+          maximumFractionDigits: abs >= 100 ? 0 : abs >= 1 ? 1 : 2
         })
         return unit ? `${base} ${unit}` : base
       }
