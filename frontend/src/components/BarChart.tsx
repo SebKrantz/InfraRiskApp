@@ -212,11 +212,12 @@ export default function BarChart({ data }: BarChartProps) {
                 tick={{ fill: '#9ca3af' }}
                 domain={hasErrorBars ? [0, (v: number) => Math.max(v, damageUpper! * 1.2)] : [0, 'auto']}
                 tickFormatter={(value) => {
+                  // Significant digits, not fraction digits: compact notation with
+                  // 0 decimals would print 650K, 1.3M, 1.95M as $650K, $1M, $2M
                   return value.toLocaleString('en-US', {
                     style: 'currency',
                     currency: 'USD',
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 0,
+                    maximumSignificantDigits: 3,
                     notation: 'compact'
                   })
                 }}
