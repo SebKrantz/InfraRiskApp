@@ -19,13 +19,14 @@ interface MapViewProps {
 
 // CARTO's raster basemaps now require an API key. In production the backend
 // substitutes it into index.html (window.__CARTO_API_KEY__); `vite dev` leaves the
-// placeholder untouched, so fall back to VITE_CARTO_API_KEY there. With no key the
-// tiles are requested unkeyed, exactly as before.
+// placeholder untouched, so fall back to VITE_CARTO_API_KEY there. The fallback is
+// dev-only so a key in frontend/.env.local is never baked into a committed build.
+// With no key the tiles are requested unkeyed, exactly as before.
 const injectedCartoKey = window.__CARTO_API_KEY__
 const CARTO_API_KEY =
   injectedCartoKey && injectedCartoKey !== '__CARTO_API_KEY__'
     ? injectedCartoKey
-    : import.meta.env.VITE_CARTO_API_KEY ?? ''
+    : import.meta.env.DEV ? import.meta.env.VITE_CARTO_API_KEY ?? '' : ''
 
 const cartoTiles = (style: string): string[] => [
   `https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png` +

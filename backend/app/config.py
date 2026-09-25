@@ -26,10 +26,11 @@ class Settings:
     # Ensure directories exist
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-
+    
     # CARTO basemap API key — CARTO's raster basemaps (Positron / Dark Matter)
-    # now require ?key=<...>. Used server-side for PNG export basemaps and handed
-    # to the SPA (see main.py) for the interactive map. Empty = request unkeyed.
+    # now require ?key=<...>. Used server-side for PNG export basemaps and, where
+    # the backend serves the built SPA, substituted into index.html for the
+    # interactive map. Empty = request unkeyed.
     CARTO_API_KEY: str = os.getenv("CARTO_API_KEY", "")
 
     # File upload settings

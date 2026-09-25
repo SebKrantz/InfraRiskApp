@@ -171,7 +171,7 @@ def basemap_tile_url(basemap: str) -> str:
     Tile URL for a basemap name, with the CARTO API key appended.
 
     CARTO's raster basemaps now require ``?key=<...>``; the key comes from the
-    CARTO_API_KEY environment variable (see .env). When it is unset the URL is
+    CARTO_API_KEY environment variable. When it is unset the URL is
     returned unkeyed, and non-CARTO providers are never touched.
     """
     url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
