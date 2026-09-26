@@ -70,8 +70,9 @@ def resolve_dataset(conv: Conversation, ref: str) -> str:
     "(.gpkg), GeoJSON (.geojson) or CSV with coordinates or a WKT geometry "
     "column. Polygons are converted to centroids; the result is either a Point "
     "or a LineString dataset. Returns a file_id to pass to run_analysis, plus "
-    "the attribute columns and a preview of the table. Call ui_show_dataset "
-    "with the file_id afterwards so the user sees it on the map.",
+    "the attribute columns and a preview of the table. In the app's own chat, "
+    "call ui_show_dataset with the file_id afterwards so the user sees it on "
+    "the map.",
     {
         "type": "object",
         "properties": {

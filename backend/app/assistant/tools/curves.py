@@ -173,8 +173,8 @@ def search_curve_library(
     "use_library_curve",
     "Load a curve from the shipped library by its id (e.g. 'F7.1') so it can be "
     "used in an analysis. It is parsed exactly like an uploaded CSV, so pass "
-    "the returned name to run_analysis as `curve`, and to ui_set_vulnerability "
-    "so the app shows the user the same thing. Curves with published lower and "
+    "the returned name to run_analysis as `curve` (and, in the app's own chat, "
+    "to ui_set_vulnerability so the app shows the user the same thing). Curves with published lower and "
     "upper bounds automatically produce a damage-cost range and error bars. "
     "Whenever you use one, state in your answer which curve it is, what asset "
     "it was derived for, where the study was done, and whether that is a good "
