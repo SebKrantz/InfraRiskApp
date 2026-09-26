@@ -64,12 +64,24 @@ _ANALYSIS_PROPS = {
     "split at 100 m sampling into affected and unaffected segments and return "
     "metres. Supply `curve` + `replacement_value` for damage costs (with a "
     "lower/upper band when the curve carries one). The full result — including "
-    "the per-feature/per-segment table — is kept in the Python namespace under "
-    "the returned `stored_as` name; use python_exec to dig into it rather than "
-    "re-running.",
+    "the per-feature/per-segment table — is kept under the returned `stored_as` "
+    "name: include_features=true adds its first 500 rows here, export='csv' / "
+    "'gpkg' writes all of it as an artifact, and get_analysis_table pages "
+    "through it later.",
     {
         "type": "object",
-        "properties": _ANALYSIS_PROPS,
+        "properties": {
+            **_ANALYSIS_PROPS,
+            "include_features": {
+                "type": "boolean",
+                "description": "Add the first 500 rows of the per-feature table.",
+            },
+            "export": {
+                "type": "string",
+                "enum": ["csv", "gpkg"],
+                "description": "Write the whole per-feature table as an artifact.",
+            },
+        },
         "required": ["file_id", "hazard"],
     },
 )
@@ -80,7 +92,11 @@ def run_analysis(
     threshold: Optional[float] = None,
     curve: Optional[str] = None,
     replacement_value: Optional[float] = None,
+    include_features: bool = False,
+    export: Optional[str] = None,
 ) -> dict[str, Any]:
+    from .results import export_table, feature_table, rows_of, stem_for
+
     haz = domain.resolve_hazard(hazard)
     file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
@@ -113,6 +129,17 @@ def run_analysis(
             "per feature" if info["geometry_type"] == "Point" else "per metre"
         )
     out["stored_as"] = conv.store_result("analysis", result)
+    if include_features or export:
+        table = feature_table(result)
+        if include_features:
+            out["features"] = {
+                "rows": rows_of(table, 500),
+                "total": int(len(table)),
+                "truncated": len(table) > 500,
+            }
+        if export:
+            kind = "features" if info["geometry_type"] == "Point" else "segments"
+            out["artifact"] = export_table(conv, table, export, stem_for(result, kind))
     return out
 
 

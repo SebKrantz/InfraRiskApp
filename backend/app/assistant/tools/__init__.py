@@ -72,5 +72,6 @@ def load() -> None:
         guide,
         output,
         query,
+        results,
         ui,
     )

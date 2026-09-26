@@ -172,8 +172,8 @@ assets (points and lines) against global natural-hazard rasters (flood, tropical
 cyclone, earthquake, landslide, drought). Implements AEI MCP contract v1 (v1.1).
 
 Workflow: list_hazards → get data in (below) → run_analysis / compare_hazards → \
-export_analysis_data for per-feature results. read_guide explains the model's \
-exact semantics; call it before vulnerability work.
+get_analysis_table or get_affected_segments for per-feature results. read_guide \
+explains the model's exact semantics; call it before vulnerability work.
 
 Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope header \
 on every call; it maps to conversation id "mcp:<scope>" (no scope = the legacy \
@@ -208,7 +208,8 @@ subprocesses, a read-only view of the dataset store, and a hard stop after \
 
 Artifacts (charts, maps, reports, CSV/GeoPackage exports) are served at the \
 root-relative url each result returns, /api/assistant/artifacts/<id>, on this \
-server's origin. The artifact store keeps the 64 most recent files.
+server's origin; tables take export="csv" | "gpkg" for the full data. The \
+artifact store keeps the 64 most recent files.
 """
 
 
