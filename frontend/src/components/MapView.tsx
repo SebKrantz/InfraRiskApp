@@ -19,17 +19,29 @@ interface MapViewProps {
   onMapReady?: (map: maplibregl.Map) => void
 }
 
+// CARTO's raster basemaps now require an API key. In production the backend
+// substitutes it into index.html (window.__CARTO_API_KEY__); `vite dev` leaves the
+// placeholder untouched, so fall back to VITE_CARTO_API_KEY there. The fallback is
+// dev-only so a key in frontend/.env.local is never baked into a committed build.
+// With no key the tiles are requested unkeyed, exactly as before.
+const injectedCartoKey = window.__CARTO_API_KEY__
+const CARTO_API_KEY =
+  injectedCartoKey && injectedCartoKey !== '__CARTO_API_KEY__'
+    ? injectedCartoKey
+    : import.meta.env.DEV ? import.meta.env.VITE_CARTO_API_KEY ?? '' : ''
+
+const cartoTiles = (style: string): string[] => [
+  `https://basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}.png` +
+    (CARTO_API_KEY ? `?key=${encodeURIComponent(CARTO_API_KEY)}` : '')
+]
+
 const basemapStyles: Record<Basemap, any> = {
   positron: {
     version: 8,
     sources: {
       'carto-positron': {
         type: 'raster',
-        tiles: [
-          'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-          'https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'
-        ],
+        tiles: cartoTiles('light_all'),
         tileSize: 256,
         attribution: '© OpenStreetMap © CARTO'
       }
@@ -49,11 +61,7 @@ const basemapStyles: Record<Basemap, any> = {
     sources: {
       'carto-dark-matter': {
         type: 'raster',
-        tiles: [
-          'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          'https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png',
-          'https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-        ],
+        tiles: cartoTiles('dark_all'),
         tileSize: 256,
         attribution: '© OpenStreetMap © CARTO'
       }
@@ -519,12 +527,11 @@ export default function MapView({
         return '<span class="text-gray-400 italic">N/A</span>'
       }
       if (typeof value === 'number') {
-        // Format exposure levels with 2-4 decimal places
-        // Show 4 decimal places, but remove trailing zeros
-        const formatted = value.toFixed(4).replace(/\.?0+$/, '')
-        const base = parseFloat(formatted).toLocaleString('en-US', {
+        // Decimals by magnitude, as on the hazard legend: none from 100, one from 1, two below
+        const abs = Math.abs(value)
+        const base = value.toLocaleString('en-US', {
           minimumFractionDigits: 0,
-          maximumFractionDigits: 4
+          maximumFractionDigits: abs >= 100 ? 0 : abs >= 1 ? 1 : 2
         })
         return unit ? `${base} ${unit}` : base
       }

@@ -174,7 +174,16 @@ async def get_upload_info(file_id: str):
     if file_id not in uploaded_files:
         raise HTTPException(status_code=404, detail="File not found")
     
-    return JSONResponse(content=uploaded_files[file_id])
+    # The stored entry also holds the GeoDataFrame, which is not JSON-serialisable
+    info = uploaded_files[file_id]
+    return JSONResponse(content={
+        "file_id": file_id,
+        "filename": info["filename"],
+        "geometry_type": info["geometry_type"],
+        "feature_count": info["feature_count"],
+        "crs": info["crs"],
+        "bounds": info["bounds"]
+    })
 
 
 @router.delete("/upload/{file_id}")
