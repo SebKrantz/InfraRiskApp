@@ -190,7 +190,9 @@ or pass the uploaded name straight to run_analysis / compare_hazards as file_id;
 (2) larger files (≤ {config.ASSISTANT_UPLOAD_MAX_MB:g} MB) as the raw request body of \
 POST /api/assistant/conversations/mcp:<scope>/files?filename=<name>, then as (1); \
 (3) multipart POST /api/upload (field "file", ≤ 100 MB) returns a file_id \
-run_analysis accepts directly.
+run_analysis accepts directly; (4) load_features(geojson) for inline features; \
+(5) load_from_url(url) for a file another service exports (≤ \
+{config.ASSISTANT_UPLOAD_MAX_MB:g} MB).
 
 Units and values: thresholds are in the layer's own units (flood mm, PGA cm/s², \
 cyclone km/h, landslide class). replacement_value is per feature for points and \
