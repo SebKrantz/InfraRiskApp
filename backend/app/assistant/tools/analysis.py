@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from ... import config
 from .. import domain, kernel
 from ..conversations import Conversation
 from . import tool
@@ -259,15 +260,21 @@ def sweep_thresholds(
     "python_exec",
     "Run Python in this conversation's persistent namespace (variables survive "
     "across calls). Preloaded: pandas as pd, numpy as np, geopandas as gpd, "
-    "matplotlib.pyplot as plt, rasterio, `uploaded_files` (the app's dataset "
-    "store), `HAZARDS` (the catalogue), the app modules (geospatial, hazards, "
-    "analyze, export, export_data), `uploads` (name -> Path of files uploaded "
-    "to this chat) and save_artifact(obj, filename, title). Results of earlier "
+    "matplotlib.pyplot as plt, rasterio, `uploaded_files` (a read-only view of "
+    "the app's dataset store: file_id -> {filename, geometry_type, "
+    "feature_count, crs, bounds, gdf}, each gdf a copy), `HAZARDS` (the "
+    "catalogue), the app's analysis functions (geospatial, hazards, analyze, "
+    "export, export_data), `uploads` (name -> Path of files uploaded to this "
+    "conversation) and save_artifact(obj, filename, title). Results of earlier "
     "tools are available under their `stored_as` names — an analysis result is "
     "a dict whose 'full_gdf' is the per-feature (points) or per-segment (lines) "
-    "GeoDataFrame. Figures you draw are captured automatically and shown in the "
-    "chat. Print what you want to see; the trailing expression is returned. "
-    "Keep steps small; hard cap ~3 minutes.",
+    "GeoDataFrame. Confined: the current directory is this conversation's "
+    "workdir; files can be read and written only there (the app's data/ "
+    "directory is readable), no subprocesses, no importing the server package. "
+    "Every file the call produces — save_artifact(), figures you draw, and "
+    "files you write into the workdir — is returned under `artifacts` with a "
+    "download url. Print what you want to see; the trailing expression is "
+    f"returned. Stopped after {config.ASSISTANT_EXEC_TIMEOUT:g} s; keep steps small.",
     {
         "type": "object",
         "properties": {
@@ -283,6 +290,7 @@ def python_exec(conv: Conversation, code: str) -> dict[str, Any]:
         "stdout": res["stdout"],
         "result": res["result"],
         "figures": [a.public() for a in res.get("figures", [])],
+        "artifacts": res.get("artifacts", []),
     }
     if not res["ok"]:
         out["error"] = res["error"]
