@@ -7,6 +7,7 @@ single-worker for exactly this reason.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import shutil
 import tempfile
@@ -22,7 +23,9 @@ from . import artifacts
 
 log = logging.getLogger("infrarisk.assistant")
 
-MAX_CONVERSATIONS = 16
+# Browser chats and MCP scopes share this LRU; the MCP contract asks for >= 32
+# so an orchestrator's scopes outlive a session's browser traffic.
+MAX_CONVERSATIONS = 32
 
 
 @dataclass
@@ -48,6 +51,9 @@ class Conversation:
     curves: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Datasets this conversation registered into the app's uploaded_files.
     datasets: list[str] = field(default_factory=list)
+    # Uploads already loaded as datasets: (name, mtime_ns, size) -> file_id, so
+    # passing an upload's name as a file_id loads it once, not on every call.
+    upload_datasets: dict[tuple, str] = field(default_factory=dict)
     # Serialises turns: one running /chat leg per conversation.
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     # Serialises python_exec against itself.
@@ -71,6 +77,36 @@ class Conversation:
 
 _STORE: OrderedDict[str, Conversation] = OrderedDict()
 _LOCK = threading.Lock()
+
+_KINDS = {
+    ".gpkg": "gpkg",
+    ".csv": "csv",
+    ".geojson": "geojson",
+    ".xlsx": "xlsx",
+    ".xls": "xlsx",
+    ".txt": "text",
+    ".md": "text",
+}
+_DIGESTS: dict[tuple, str] = {}
+
+
+def file_kind(name: str) -> str:
+    """The MCP contract's coarse file kind, from the extension."""
+    return _KINDS.get(Path(name).suffix.lower(), "other")
+
+
+def file_digest(path: Path) -> str:
+    """sha256 of a file, cached until it changes."""
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    digest = _DIGESTS.get(key)
+    if digest is None:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        digest = _DIGESTS[key] = h.hexdigest()
+    return digest
 
 
 def get_or_create(conversation_id: str | None) -> Conversation:

@@ -83,6 +83,9 @@ ASSISTANT_TOOL_TIMEOUT = float(os.environ.get("ASSISTANT_TOOL_TIMEOUT", "600"))
 ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))
 # Per-file cap on uploads to the assistant, megabytes.
 ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100"))
+# Per-file cap on MCP upload_file (base64 inside a JSON-RPC body), megabytes
+# decoded. Larger files go through the raw-body REST route above.
+ASSISTANT_MCP_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_MCP_UPLOAD_MAX_MB", "25"))
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"

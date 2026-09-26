@@ -18,18 +18,46 @@ from ..conversations import Conversation
 from . import tool
 
 
+def _upload_name(conv: Conversation, name: str) -> str | None:
+    """The upload called `name`, or the only one it is a prefix of."""
+    if name in conv.uploads:
+        return name
+    matches = [n for n in conv.uploads if n.startswith(name)]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _resolve_upload(conv: Conversation, name: str) -> Path:
-    path = conv.uploads.get(name)
-    if path is None:
-        matches = [p for n, p in conv.uploads.items() if n.startswith(name)]
-        if len(matches) == 1:
-            path = matches[0]
+    found = _upload_name(conv, name)
+    path = conv.uploads.get(found) if found else None
     if path is None or not path.exists():
         raise ValueError(
             f"no uploaded file {name!r}; this conversation has: "
-            f"{sorted(conv.uploads) or 'no uploads yet'}"
+            f"{sorted(conv.uploads) or 'no uploads yet'}. Upload it with "
+            "upload_file (MCP) or the conversation files route first."
         )
     return path
+
+
+def resolve_dataset(conv: Conversation, ref: str) -> str:
+    """A loaded dataset's file_id, or the name of a file uploaded to this
+    conversation — loaded on first use and reused while the file is unchanged."""
+    from ...api.upload import uploaded_files
+
+    if ref in uploaded_files:
+        return ref
+    name = _upload_name(conv, ref)
+    if name is None:
+        raise ValueError(
+            f"no dataset or uploaded file {ref!r}. Loaded datasets: "
+            f"{list(uploaded_files) or 'none'}; files uploaded to this conversation: "
+            f"{sorted(conv.uploads) or 'none'}. Upload a file and pass its name, "
+            "or use load_infrastructure / list_datasets."
+        )
+    st = conv.uploads[name].stat()
+    known = conv.upload_datasets.get((name, st.st_mtime_ns, st.st_size))
+    if known in uploaded_files:
+        return known
+    return load_infrastructure(conv, name)["file_id"]
 
 
 @tool(
@@ -116,6 +144,8 @@ def load_infrastructure(conv: Conversation, file: str) -> dict[str, Any]:
         "gdf": gdf,
     }
     conv.datasets.append(file_id)
+    st = path.stat()
+    conv.upload_datasets[(path.name, st.st_mtime_ns, st.st_size)] = file_id
     conv.namespace[f"gdf_{len(conv.datasets)}"] = gdf
 
     out = domain.dataset_brief(file_id, uploaded_files[file_id])

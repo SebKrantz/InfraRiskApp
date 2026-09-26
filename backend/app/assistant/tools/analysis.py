@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
+from ... import config
 from .. import domain, kernel
 from ..conversations import Conversation
 from . import tool
+from .data import resolve_dataset
 
 
 def _curve(conv: Conversation, name: str | None) -> dict[str, Any] | None:
@@ -28,7 +31,9 @@ def _curve(conv: Conversation, name: str | None) -> dict[str, Any] | None:
 _ANALYSIS_PROPS = {
     "file_id": {
         "type": "string",
-        "description": "Dataset to analyse (from load_infrastructure / list_datasets).",
+        "description": "Dataset to analyse: a file_id (from load_infrastructure, "
+        "list_datasets or POST /api/upload), or the name of a file uploaded to "
+        "this conversation, which is loaded on first use.",
     },
     "hazard": {"type": "string", "description": "hazard_id or layer name."},
     "threshold": {
@@ -77,6 +82,7 @@ def run_analysis(
     replacement_value: Optional[float] = None,
 ) -> dict[str, Any]:
     haz = domain.resolve_hazard(hazard)
+    file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
     vc = _curve(conv, curve)
     if vc is not None and replacement_value is None:
@@ -119,7 +125,8 @@ def run_analysis(
     "to every layer, or one per layer in the same order. Each layer's full "
     "result is cached, so a follow-up run_analysis on any of them is instant. "
     "Remote raster reads dominate the runtime — expect tens of seconds per "
-    "layer on a large network.",
+    "layer on a large network. No new layer is started once the call's time "
+    "budget is spent; those come back under `not_run` to be requested again.",
     {
         "type": "object",
         "properties": {
@@ -150,9 +157,15 @@ def compare_hazards(
     thresholds: Optional[list[float]] = None,
     curve: Optional[str] = None,
     replacement_value: Optional[float] = None,
+    *,
+    _budget_s: Optional[float] = None,
 ) -> dict[str, Any]:
     import pandas as pd
 
+    # Stop starting layers well before the caller's own timeout, so a long
+    # ladder returns what it finished instead of nothing.
+    budget = _budget_s if _budget_s is not None else 0.75 * config.ASSISTANT_TOOL_TIMEOUT
+    started = time.monotonic()
     if not hazards:
         raise ValueError("pass at least one hazard")
     if len(hazards) > 12:
@@ -162,6 +175,7 @@ def compare_hazards(
             f"thresholds has {len(thresholds)} entries but hazards has {len(hazards)}"
         )
 
+    file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
     vc = _curve(conv, curve)
     if (vc is None) != (replacement_value is None):
@@ -169,7 +183,11 @@ def compare_hazards(
 
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    not_run: list[str] = []
     for i, ref in enumerate(hazards):
+        if time.monotonic() - started > budget:
+            not_run = list(hazards[i:])
+            break
         thr = thresholds[i] if thresholds is not None else threshold
         try:
             haz = domain.resolve_hazard(ref)
@@ -190,6 +208,7 @@ def compare_hazards(
         raise ValueError(
             "every layer failed: "
             + "; ".join(f"{f['hazard']}: {f['error']}" for f in failures)
+            + (f"; not run (time budget of {budget:.0f}s spent): {not_run}" if not_run else "")
         )
     df = pd.DataFrame(rows)
     out: dict[str, Any] = {
@@ -201,6 +220,12 @@ def compare_hazards(
     }
     if failures:
         out["failed"] = failures
+    if not_run:
+        out["not_run"] = not_run
+        out["note"] = (
+            f"time budget of {budget:.0f}s spent after {len(rows) + len(failures)} "
+            "layers; call again with the layers under not_run"
+        )
     return out
 
 
@@ -235,6 +260,7 @@ def sweep_thresholds(
         raise ValueError(f"too many thresholds ({len(thresholds)}); use at most 20")
 
     haz = domain.resolve_hazard(hazard)
+    file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
     rows = []
     for thr in sorted(thresholds):
@@ -242,6 +268,7 @@ def sweep_thresholds(
         rows.append(domain.summarise(result, info, haz, thr))
     df = pd.DataFrame(rows)
     return {
+        "file_id": file_id,
         "hazard_id": haz["hazard_id"],
         "unit": domain.hazard_brief(haz)["unit"],
         "geometry_type": info["geometry_type"],
@@ -254,15 +281,21 @@ def sweep_thresholds(
     "python_exec",
     "Run Python in this conversation's persistent namespace (variables survive "
     "across calls). Preloaded: pandas as pd, numpy as np, geopandas as gpd, "
-    "matplotlib.pyplot as plt, rasterio, `uploaded_files` (the app's dataset "
-    "store), `HAZARDS` (the catalogue), the app modules (geospatial, hazards, "
-    "analyze, export, export_data), `uploads` (name -> Path of files uploaded "
-    "to this chat) and save_artifact(obj, filename, title). Results of earlier "
+    "matplotlib.pyplot as plt, rasterio, `uploaded_files` (a read-only view of "
+    "the app's dataset store: file_id -> {filename, geometry_type, "
+    "feature_count, crs, bounds, gdf}, each gdf a copy), `HAZARDS` (the "
+    "catalogue), the app's analysis functions (geospatial, hazards, analyze, "
+    "export, export_data), `uploads` (name -> Path of files uploaded to this "
+    "conversation) and save_artifact(obj, filename, title). Results of earlier "
     "tools are available under their `stored_as` names — an analysis result is "
     "a dict whose 'full_gdf' is the per-feature (points) or per-segment (lines) "
-    "GeoDataFrame. Figures you draw are captured automatically and shown in the "
-    "chat. Print what you want to see; the trailing expression is returned. "
-    "Keep steps small; hard cap ~3 minutes.",
+    "GeoDataFrame. Confined: the current directory is this conversation's "
+    "workdir; files can be read and written only there (the app's data/ "
+    "directory is readable), no subprocesses, no importing the server package. "
+    "Every file the call produces — save_artifact(), figures you draw, and "
+    "files you write into the workdir — is returned under `artifacts` with a "
+    "download url. Print what you want to see; the trailing expression is "
+    f"returned. Stopped after {config.ASSISTANT_EXEC_TIMEOUT:g} s; keep steps small.",
     {
         "type": "object",
         "properties": {
@@ -278,6 +311,7 @@ def python_exec(conv: Conversation, code: str) -> dict[str, Any]:
         "stdout": res["stdout"],
         "result": res["result"],
         "figures": [a.public() for a in res.get("figures", [])],
+        "artifacts": res.get("artifacts", []),
     }
     if not res["ok"]:
         out["error"] = res["error"]

@@ -5,6 +5,7 @@ Analysis endpoints for computing intersections
 import math
 import json
 import asyncio
+import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
@@ -44,21 +45,27 @@ _raster_values_cache: "OrderedDict[Tuple[str, str], any]" = OrderedDict()
 # This allows export to use pre-computed results without recalculation
 _analysis_results_cache: "OrderedDict[Tuple[str, str, Optional[float]], dict]" = OrderedDict()
 
+# The browser, the in-app assistant and any number of MCP callers use these
+# caches from different threads; an LRU move/evict is not atomic.
+CACHE_LOCK = threading.RLock()
+
 
 def _cache_get(cache: OrderedDict, key) -> Optional[any]:
     """Read through an LRU cache, marking the key as most recently used."""
-    if key not in cache:
-        return None
-    cache.move_to_end(key)
-    return cache[key]
+    with CACHE_LOCK:
+        if key not in cache:
+            return None
+        cache.move_to_end(key)
+        return cache[key]
 
 
 def _cache_put(cache: OrderedDict, key, value) -> None:
     """Write to an LRU cache, evicting the least recently used entry."""
-    cache[key] = value
-    cache.move_to_end(key)
-    while len(cache) > _MAX_CACHE_ENTRIES:
-        cache.popitem(last=False)
+    with CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _MAX_CACHE_ENTRIES:
+            cache.popitem(last=False)
 
 
 def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[any]:
@@ -73,14 +80,15 @@ def set_cached_raster_values(file_id: str, hazard_id: str, values: any):
 
 def clear_raster_cache_for_file(file_id: str):
     """Clear cached raster values for a file (called when file is deleted)."""
-    keys_to_remove = [k for k in _raster_values_cache if k[0] == file_id]
-    for key in keys_to_remove:
-        del _raster_values_cache[key]
-    
-    # Also clear analysis results cache
-    keys_to_remove = [k for k in _analysis_results_cache if k[0] == file_id]
-    for key in keys_to_remove:
-        del _analysis_results_cache[key]
+    with CACHE_LOCK:
+        keys_to_remove = [k for k in _raster_values_cache if k[0] == file_id]
+        for key in keys_to_remove:
+            del _raster_values_cache[key]
+
+        # Also clear analysis results cache
+        keys_to_remove = [k for k in _analysis_results_cache if k[0] == file_id]
+        for key in keys_to_remove:
+            del _analysis_results_cache[key]
 
 
 def get_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float]) -> Optional[dict]:

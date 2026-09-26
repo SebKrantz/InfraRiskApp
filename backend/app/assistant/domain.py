@@ -21,6 +21,7 @@ from difflib import get_close_matches
 from typing import Any, Callable, Optional
 
 from ..api.analyze import (
+    CACHE_LOCK,
     _analysis_results_cache,
     get_cached_analysis_result,
     get_cached_raster_values,
@@ -49,7 +50,8 @@ def _remember_cached(key: tuple) -> None:
         _OURS.move_to_end(key)
         while len(_OURS) > MAX_ASSISTANT_CACHED:
             old, _ = _OURS.popitem(last=False)
-            _analysis_results_cache.pop(old, None)
+            with CACHE_LOCK:
+                _analysis_results_cache.pop(old, None)
             log.info("assistant analysis cache evicted: %s", old)
 
 

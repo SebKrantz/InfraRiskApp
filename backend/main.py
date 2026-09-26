@@ -37,7 +37,15 @@ if assistant_api is not None and config.ASSISTANT_MCP_ENABLED:
 
         _MCP = mcp_server.build()
         _MCP_APP = _MCP.streamable_http_app(
-            streamable_http_path="/mcp", stateless_http=True, json_response=True
+            streamable_http_path="/mcp",
+            stateless_http=True,
+            json_response=True,
+            # upload_file carries base64 (4/3 of the file) in the JSON body. Room
+            # for more than the cap, so an oversized upload reaches the tool and
+            # gets its "use the REST route" answer instead of a bare 413.
+            max_request_body_size=int(
+                (config.ASSISTANT_MCP_UPLOAD_MAX_MB * 2 + 16) * 1024 * 1024
+            ),
         )
     except Exception:  # noqa: BLE001
         log.exception("MCP server failed to build; /mcp disabled")

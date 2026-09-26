@@ -598,15 +598,24 @@ def export_analysis_data(
 
 @tool(
     "list_files",
-    "Files uploaded to this conversation and artifacts generated in it, plus "
-    "the variables currently in the python namespace.",
+    "Files uploaded to this conversation (name, bytes, sha256, kind) and "
+    "artifacts generated in it, plus the variables currently in the python "
+    "namespace.",
     {"type": "object", "properties": {}},
 )
 def list_files(conv: Conversation) -> dict[str, Any]:
+    from ..conversations import file_digest, file_kind
+
     return {
         "uploads": [
-            {"name": n, "bytes": p.stat().st_size if p.exists() else 0}
+            {
+                "name": n,
+                "bytes": p.stat().st_size,
+                "sha256": file_digest(p),
+                "kind": file_kind(n),
+            }
             for n, p in conv.uploads.items()
+            if p.exists()
         ],
         "curves": sorted(conv.curves),
         "artifacts": [a.public() for a in artifacts.for_conversation(conv.id)],
