@@ -7,8 +7,10 @@ package, reaching into interpreter internals — and it can stop a runaway
 script. A subprocess sandbox is the step after this one.
 
 Mechanism: a `sys.addaudithook` hook that acts only on threads registered in
-`_POLICIES` (the python_exec worker and any thread it starts), a restricted
-`__import__` in the namespace's builtins, and an AST check before execution.
+`_POLICIES` (the python_exec worker and any thread it starts), guards on the
+GDAL entry points (pyogrio, rasterio) whose native file access no audit event
+sees, a restricted `__import__` in the namespace's builtins, and an AST check
+before execution.
 Allowed: read/write in the scope's workdir and the system temp directory
 (except other conversations' workdirs); read-only in the app's data/
 directory and the Python installation (library code reads its own files).
@@ -19,7 +21,9 @@ from __future__ import annotations
 import ast
 import builtins
 import ctypes
+import functools
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -226,6 +230,15 @@ def _audit(event: str, args: tuple) -> None:
             raise pol.refuse("read", src)
         if dst is not None and not pol.can_write(dst):
             raise pol.refuse("write", dst)
+    elif event == "sqlite3.connect":  # a GeoPackage is a SQLite file
+        db = args[0]
+        if isinstance(db, (str, bytes, os.PathLike)):
+            name = os.fsdecode(db)
+            if name.startswith("file:"):
+                name = name[5:].split("?", 1)[0]
+            path = _path(name) if name not in ("", ":memory:") else None
+            if path is not None and not pol.can_write(path):
+                raise pol.refuse("open the database", path)
     elif event == "import":
         name = str(args[0])
         if name.split(".")[0] in ("app", "main"):
@@ -254,6 +267,109 @@ def _start(self: threading.Thread) -> None:
     _real_start(self)
 
 
+# ---- native (GDAL) file access ---------------------------------------------- #
+# GDAL opens files in C, so gpd.read_file / to_file and rasterio.open never
+# raise an audit event. Their Python entry points are guarded instead.
+
+_REMOTE = re.compile(r"^(https?|s3|gs|gcs|az|azure|ftp)://", re.I)
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+_VSI_REMOTE = frozenset(
+    {"vsimem", "vsicurl", "vsicurl_streaming", "vsis3", "vsis3_streaming", "vsigs",
+     "vsigs_streaming", "vsiaz", "vsiaz_streaming", "vsiadls", "vsioss",
+     "vsioss_streaming", "vsiswift", "vsiswift_streaming", "vsiwebhdfs", "vsihdfs"}
+)
+# name -> (position, keyword, access); access is read | write | list | deny
+_GDAL_ENTRY_POINTS = {
+    "read_dataframe": (0, "path_or_buffer", "read"),
+    "read_arrow": (0, "path_or_buffer", "read"),
+    "open_arrow": (0, "path_or_buffer", "read"),
+    "read_info": (0, "path_or_buffer", "read"),
+    "read_bounds": (0, "path_or_buffer", "read"),
+    "list_layers": (0, "path_or_buffer", "read"),
+    "read": (0, "path_or_buffer", "read"),
+    "write_dataframe": (1, "path", "write"),
+    "write_arrow": (1, "path", "write"),
+    "write": (0, "path", "write"),
+    "vsi_listtree": (0, "path", "list"),
+    "vsi_rmtree": (0, "path", "write"),
+    "vsi_unlink": (0, "path", "write"),
+    "set_gdal_config_options": (0, "options", "deny"),
+}
+
+
+def _native_path(value) -> str | None:
+    """The local path a GDAL open would touch; None for remote URLs, GDAL's
+    in-memory files, bytes and file objects."""
+    if not isinstance(value, (str, os.PathLike)):
+        return None
+    text = os.fsdecode(os.fspath(value))
+    if _REMOTE.match(text):
+        return None
+    match = _SCHEME.match(text)  # zip://, file://
+    if match:
+        text = text[match.end():]
+    while text.startswith("/vsi"):  # /vsizip//abs/a.zip/inner.shp and friends
+        head, _, rest = text[1:].partition("/")
+        if head in _VSI_REMOTE:
+            return None
+        text = rest
+    return os.path.realpath(text or ".")
+
+
+def _guard(fn, position: int, keyword: str, access: str):
+    @functools.wraps(fn)
+    def guarded(*args, **kwargs):
+        pol = _POLICIES.get(threading.get_ident())
+        if pol is not None:
+            if access == "deny":
+                raise pol.refuse(f"call {fn.__name__}")
+            target = args[position] if len(args) > position else kwargs.get(keyword)
+            path = _native_path(target)
+            allowed = {"read": pol.can_read, "write": pol.can_write, "list": pol.can_list}
+            if path is not None and not allowed[access](path):
+                raise pol.refuse("list" if access == "list" else access, path)
+        return fn(*args, **kwargs)
+
+    return guarded
+
+
+def _guard_rasterio_open(fn):
+    @functools.wraps(fn)
+    def guarded(fp, mode="r", *args, **kwargs):
+        pol = _POLICIES.get(threading.get_ident())
+        if pol is not None:
+            path = _native_path(fp)
+            writes = str(mode) != "r"
+            if path is not None and not (pol.can_write(path) if writes else pol.can_read(path)):
+                raise pol.refuse("write" if writes else "read", path)
+        return fn(fp, mode, *args, **kwargs)
+
+    return guarded
+
+
+def _guard_native_io() -> None:
+    try:
+        import pyogrio
+        import pyogrio.core
+        import pyogrio.geopandas
+        import pyogrio.raw
+    except ImportError:
+        pyogrio = None
+    if pyogrio is not None:
+        wrapped: dict[int, object] = {}
+        for module in (pyogrio, pyogrio.raw, pyogrio.core, pyogrio.geopandas):
+            for name, spec in _GDAL_ENTRY_POINTS.items():
+                fn = getattr(module, name, None)
+                if callable(fn):
+                    guard = wrapped.setdefault(id(fn), _guard(fn, *spec))
+                    setattr(module, name, guard)
+    try:
+        import rasterio
+    except ImportError:
+        return
+    rasterio.open = _guard_rasterio_open(rasterio.open)
+
+
 _INSTALLED = False
 _INSTALL_LOCK = threading.Lock()
 
@@ -268,6 +384,7 @@ def install() -> None:
 
         mimetypes.init()  # reads /etc files; do it now, not inside user code
         _LIBRARIES = _library_roots()
+        _guard_native_io()
         threading.Thread.start = _start  # type: ignore[method-assign]
         sys.addaudithook(_audit)
         _INSTALLED = True
