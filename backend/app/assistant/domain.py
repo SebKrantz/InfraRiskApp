@@ -149,6 +149,89 @@ def dataset_brief(file_id: str, info: dict) -> dict[str, Any]:
     }
 
 
+def check_id_column(info: dict, column: str) -> None:
+    """An id column must exist and name every feature exactly once."""
+    gdf = info["gdf"]
+    if column not in gdf.columns:
+        raise ValueError(
+            f"no column {column!r} for id_column; columns: "
+            f"{[c for c in gdf.columns if c != 'geometry'][:40]}"
+        )
+    ids = gdf[column]
+    if ids.isna().any():
+        raise ValueError(f"id_column {column!r} is empty for {int(ids.isna().sum())} features")
+    dup = ids[ids.duplicated()]
+    if len(dup):
+        raise ValueError(
+            f"id_column {column!r} is not unique — repeated values: "
+            f"{sorted({str(v) for v in dup})[:10]}"
+        )
+
+
+def _key(value: Any) -> str:
+    """A map key for an attribute value: 3.0 and "3" both become "3"."""
+    if value is None or (isinstance(value, float) and value != value):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def replacement_values(
+    info: dict,
+    column: str,
+    mapping: Optional[dict] = None,
+    default: Optional[float] = None,
+) -> tuple[Any, dict[str, Any]]:
+    """One replacement value per feature: the numbers in `column`, or — with
+    `mapping` — the value its keys give each feature's `column` entry (an asset
+    type, say). `default` fills features left without one. Returns the array,
+    aligned with the dataset's rows, and a summary for the tool result."""
+    import numpy as np
+    import pandas as pd
+
+    gdf = info["gdf"]
+    if column not in gdf.columns:
+        raise ValueError(
+            f"no column {column!r} for replacement values; columns: "
+            f"{[c for c in gdf.columns if c != 'geometry'][:40]}"
+        )
+    raw = gdf[column]
+    if mapping:
+        try:
+            lookup = {_key(k): float(v) for k, v in mapping.items()}
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"replacement_value_map values must be numbers: {exc}") from exc
+        values = raw.map(_key).map(lookup)
+    else:
+        values = pd.to_numeric(raw, errors="coerce")
+    values = values.astype(float)
+    missing = ~np.isfinite(values.to_numpy())
+    if missing.any():
+        if default is None:
+            what = (
+                f"unmapped values {sorted({_key(v) for v in raw[missing]})[:10]}"
+                if mapping
+                else "empty or non-numeric entries"
+            )
+            raise ValueError(
+                f"{int(missing.sum())} of {len(raw)} features get no replacement value "
+                f"from {column!r} ({what}); extend replacement_value_map or pass "
+                "replacement_value as the default for them"
+            )
+        values[missing] = float(default)
+    if (values < 0).any():
+        raise ValueError(f"replacement values from {column!r} must not be negative")
+    arr = values.to_numpy(dtype=float)
+    return arr, {
+        "column": column,
+        "mapped": bool(mapping),
+        "defaulted": int(missing.sum()),
+        "min": float(arr.min()),
+        "max": float(arr.max()),
+    }
+
+
 # ---- analysis -------------------------------------------------------------- #
 
 
@@ -157,11 +240,12 @@ def run_exposure(
     hazard: dict,
     threshold: Optional[float] = None,
     vulnerability_curve_interp: Optional[Callable[[float], float]] = None,
-    replacement_value: Optional[float] = None,
+    replacement_value: Any = None,
     vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
     vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
 ) -> dict[str, Any]:
     """Run one analysis exactly as POST /api/analyze would, and cache it there.
+    `replacement_value` is a scalar or one value per dataset row.
 
     Returns the raw `analyze_intersection` dict (with `full_gdf`, `raster_values`
     and, for lines, `line_data`).

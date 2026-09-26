@@ -542,9 +542,10 @@ def export_csv(
     "attributes, hazard intensity and (in vulnerability mode) damage ratio and "
     "cost; 'csv_lines_aggregate' — one row per input line with its "
     "length-weighted intensity and summed damage; 'gpkg_lines_split' — a "
-    "GeoPackage of the affected/unaffected segments as actually split by the "
-    "analysis. Use these when the user wants the underlying data rather than a "
-    "summary table.",
+    "GeoPackage of the ~100 m sampling spans along each line with their "
+    "intensity and the input line's attributes. Use these when the user wants "
+    "the underlying data rather than a summary table (get_analysis_table gives "
+    "the affected/unaffected segments themselves).",
     {
         "type": "object",
         "properties": {
@@ -573,7 +574,9 @@ def export_analysis_data(
 
     haz = domain.resolve_hazard(hazard)
     try:
-        body, filename, _mime = _run_data_export(file_id, haz["hazard_id"], threshold, mode)
+        body, filename, _mime = _run_data_export(
+            file_id, haz["hazard_id"], threshold, mode, keep_attributes=True
+        )
     except ValueError as exc:
         code = str(exc)
         if code == "NO_ANALYSIS_CACHE":

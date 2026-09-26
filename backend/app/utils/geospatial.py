@@ -648,6 +648,9 @@ def analyze_intersection(
         geometry_type: Geometry type ("Point" or "LineString") from stored metadata
         intensity_threshold: Optional threshold for filtering hazard intensity
         cached_raster_values: Optional pre-sampled raster values (for threshold changes)
+        replacement_value: One value for every asset, or an array with one value
+            per row of infrastructure_gdf (per feature for points, per metre for
+            lines)
 
     Returns:
         Dictionary with analysis results:
@@ -833,6 +836,9 @@ def analyze_intersection(
             at += n_pts
 
     # Phase 3: split each line into runs of equal affected status (always runs)
+    # A per-row replacement value is looked up through each line's 1-based
+    # upload row (line_id); a scalar applies to every line.
+    per_row_value = vuln_on and np.ndim(replacement_value) > 0
     affected_length = 0.0
     unaffected_length = 0.0
     total_damage_cost = 0.0
@@ -889,6 +895,9 @@ def analyze_intersection(
         ends = np.concatenate((cuts, [n_pts - 1]))
 
         row_dict = ld['row_dict']
+        line_value = (
+            float(replacement_value[ld['line_id'] - 1]) if per_row_value else replacement_value
+        )
         for a, b in zip(starts, ends):
             if b <= a:  # a run with no span of its own contributes no length
                 continue
@@ -924,7 +933,7 @@ def analyze_intersection(
                 # the boundary span attributed exactly as the exposure figures
                 # attribute it.
                 damage_length = float(cs_dmg[b] - cs_dmg[a]) if affected else 0.0
-                damage_cost = float(replacement_value * damage_length)
+                damage_cost = float(line_value * damage_length)
                 total_damage_cost += damage_cost
                 seg_row['vulnerability'] = (
                     damage_length / segment_length_m if segment_length_m > 0 else 0.0
@@ -932,9 +941,9 @@ def analyze_intersection(
                 seg_row['damage_cost'] = damage_cost
                 if has_bounds:
                     dc_lo = float(
-                        replacement_value * (cs_dmg_lo[b] - cs_dmg_lo[a])) if affected else 0.0
+                        line_value * (cs_dmg_lo[b] - cs_dmg_lo[a])) if affected else 0.0
                     dc_hi = float(
-                        replacement_value * (cs_dmg_hi[b] - cs_dmg_hi[a])) if affected else 0.0
+                        line_value * (cs_dmg_hi[b] - cs_dmg_hi[a])) if affected else 0.0
                     total_damage_cost_lower += dc_lo
                     total_damage_cost_upper += dc_hi
                     seg_row['damage_cost_lower'] = dc_lo

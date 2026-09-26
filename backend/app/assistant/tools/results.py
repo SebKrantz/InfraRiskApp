@@ -153,6 +153,18 @@ def _resolve(
 
 
 _EXPORT = {"type": "string", "enum": ["csv", "gpkg"]}
+_ID_COLUMN = {
+    "type": "string",
+    "description": "Attribute with a unique id per input feature, used as `id` "
+    "(points) / `line_id` (segments). Default: the id_column run_analysis was "
+    "given, else the 1-based input row.",
+}
+
+
+def _table(result: dict[str, Any], id_column: Optional[str]):
+    if id_column:
+        domain.check_id_column(domain.get_dataset(result["_assistant_meta"]["file_id"]), id_column)
+    return feature_table(result, id_column)
 
 
 @tool(
@@ -182,6 +194,7 @@ _EXPORT = {"type": "string", "enum": ["csv", "gpkg"]}
                 "description": "Only these columns ('geometry' gives WKT). Default: all "
                 "but geometry.",
             },
+            "id_column": _ID_COLUMN,
             "export": {**_EXPORT, "description": "Also write the whole table as an artifact."},
         },
     },
@@ -195,10 +208,11 @@ def get_analysis_table(
     limit: int = 500,
     offset: int = 0,
     columns: Optional[list[str]] = None,
+    id_column: Optional[str] = None,
     export: Optional[str] = None,
 ) -> dict[str, Any]:
     result = _resolve(conv, stored_as, file_id, hazard, threshold)
-    table = feature_table(result)
+    table = _table(result, id_column)
     rows = rows_of(table, limit, offset, columns)
     out: dict[str, Any] = {
         "total": int(len(table)),
@@ -221,8 +235,9 @@ def get_analysis_table(
     "hand-off to a transport model (e.g. flooded links to disable). Each row is "
     "one continuous affected run of an input line: id, line_id (the input line), "
     "length_m, exposure_level_avg / _max, damage_cost when a curve was used, "
-    "every original attribute, and the geometry. Runs the exposure analysis if "
-    "it has not been run at this threshold. Returns counts, the affected "
+    "every original attribute, and the geometry; with id_column, line_id is "
+    "your own id. Runs the exposure analysis if it has not been run at this "
+    "threshold. Returns counts, the affected "
     "line_ids and, by default, a GeoPackage artifact of the segments "
     "(export='csv' for a table, 'none' for rows inline).",
     {
@@ -239,6 +254,7 @@ def get_analysis_table(
                 "type": "number",
                 "description": "Drop affected runs shorter than this, metres. Default 0.",
             },
+            "id_column": _ID_COLUMN,
             "export": {"type": "string", "enum": ["gpkg", "csv", "none"]},
         },
         "required": ["file_id", "hazard"],
@@ -250,6 +266,7 @@ def get_affected_segments(
     hazard: str,
     threshold: Optional[float] = None,
     min_length_m: float = 0.0,
+    id_column: Optional[str] = None,
     export: str = "gpkg",
 ) -> dict[str, Any]:
     result = _resolve(conv, None, file_id, hazard, threshold, run_if_missing=True)
@@ -259,7 +276,7 @@ def get_affected_segments(
             "get_affected_segments is for line datasets; for points use "
             "get_analysis_table and keep the rows with affected = true"
         )
-    table = feature_table(result)
+    table = _table(result, id_column)
     if len(table):
         table = table[table["affected"].astype(bool) & (table["length_m"] >= float(min_length_m))]
     line_ids = list(dict.fromkeys(table["line_id"].tolist())) if len(table) else []

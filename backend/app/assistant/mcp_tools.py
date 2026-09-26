@@ -1,5 +1,5 @@
-"""Tools only an external MCP caller needs: files in without a browser, and
-forgetting a scope.
+"""Tools only an external MCP caller needs: files in without a browser,
+forgetting a scope, and removing a dataset.
 
 Kept out of the shared registry on purpose — the in-app assistant has the
 browser for uploads and no business resetting its own conversation — but built
@@ -122,3 +122,26 @@ def reset_scope(conv: Conversation) -> dict[str, Any]:
         clear_raster_cache_for_file(fid)
     conversations.drop(conv.id)
     return {"scope": conv.id, "reset": True, "datasets_deleted": dropped}
+
+
+@mcp_tool(
+    "delete_dataset",
+    "Remove a loaded dataset from the app, with its cached analyses — the same "
+    "as DELETE /api/upload/{file_id}. Datasets are shared by every scope and the "
+    "browser UI, so delete only ones you loaded.",
+    {
+        "type": "object",
+        "properties": {"file_id": {"type": "string", "description": "Dataset to remove."}},
+        "required": ["file_id"],
+    },
+)
+def delete_dataset(conv: Conversation, file_id: str) -> dict[str, Any]:
+    from ..api.analyze import clear_raster_cache_for_file
+    from ..api.upload import uploaded_files
+
+    if uploaded_files.pop(file_id, None) is None:
+        raise ValueError(f"no dataset {file_id!r}; loaded datasets: {list(uploaded_files) or 'none'}")
+    clear_raster_cache_for_file(file_id)
+    if file_id in conv.datasets:
+        conv.datasets.remove(file_id)
+    return {"deleted": file_id}

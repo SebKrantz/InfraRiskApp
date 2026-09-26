@@ -94,8 +94,10 @@ def _run_data_export(
     hazard_id: str,
     intensity_threshold: Optional[float],
     mode: str,
+    keep_attributes: bool = False,
 ) -> tuple[bytes, str, str]:
-    """Returns (body, filename, media_type). Raises ValueError for bad input."""
+    """Returns (body, filename, media_type). Raises ValueError for bad input.
+    keep_attributes adds the input lines' attributes to gpkg_lines_split."""
     if file_id not in uploaded_files:
         raise ValueError("UPLOAD_NOT_FOUND")
 
@@ -143,7 +145,7 @@ def _run_data_export(
                 np.asarray(vi, dtype=np.float64),
                 np.asarray(vp, dtype=np.float64),
             )
-        body = lines_split_to_gpkg_bytes(line_data, interp, repl)
+        body = lines_split_to_gpkg_bytes(line_data, interp, repl, keep_attributes)
         return body, f"lines_split_{short_f}_{short_h}.gpkg", "application/geopackage+sqlite3"
 
     raise ValueError("INVALID_MODE")

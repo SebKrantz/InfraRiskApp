@@ -50,9 +50,53 @@ _ANALYSIS_PROPS = {
     "replacement_value": {
         "type": "number",
         "description": "Asset value driving the damage cost: per FEATURE for "
-        "point datasets, per METRE for line datasets. Required with `curve`.",
+        "point datasets, per METRE for line datasets. With `curve`, give this "
+        "or replacement_value_column; alongside the column it is the default "
+        "for features the column leaves without a value.",
+    },
+    "replacement_value_column": {
+        "type": "string",
+        "description": "Attribute holding each feature's own replacement value "
+        "(same units as replacement_value), or — with replacement_value_map — "
+        "the attribute whose values the map's keys name (e.g. an asset type).",
+    },
+    "replacement_value_map": {
+        "type": "object",
+        "description": "{attribute value: replacement value}, looked up in "
+        "replacement_value_column, e.g. {\"rail\": 5000, \"road\": 800}.",
     },
 }
+
+
+def _damage_inputs(
+    conv: Conversation,
+    info: dict,
+    curve: Optional[str],
+    replacement_value: Optional[float],
+    column: Optional[str],
+    mapping: Optional[dict],
+) -> tuple[Optional[dict], Any, Optional[dict]]:
+    """The curve, the replacement value(s) — a scalar or one per feature — and
+    a summary of per-feature values, after checking they belong together."""
+    vc = _curve(conv, curve)
+    if mapping and not column:
+        raise ValueError(
+            "replacement_value_map needs replacement_value_column — the attribute "
+            "whose values its keys name"
+        )
+    if vc is None and (replacement_value is not None or column):
+        raise ValueError("a `curve` is required whenever replacement values are given")
+    if vc is not None and replacement_value is None and not column:
+        raise ValueError(
+            "a vulnerability curve needs replacement_value or replacement_value_column "
+            "(per feature for points, per metre for lines)"
+        )
+    if replacement_value is not None and replacement_value <= 0:
+        raise ValueError("replacement_value must be greater than zero")
+    if column:
+        values, summary = domain.replacement_values(info, column, mapping, replacement_value)
+        return vc, values, summary
+    return vc, replacement_value, None
 
 
 @tool(
@@ -63,7 +107,11 @@ _ANALYSIS_PROPS = {
     "numbers agree exactly. Points return affected/unaffected counts; lines are "
     "split at 100 m sampling into affected and unaffected segments and return "
     "metres. Supply `curve` + `replacement_value` for damage costs (with a "
-    "lower/upper band when the curve carries one). The full result — including "
+    "lower/upper band when the curve carries one); replacement_value_column "
+    "(optionally with replacement_value_map) gives each asset its own value. "
+    "id_column names an attribute that identifies each input feature: it "
+    "becomes `id` (points) or `line_id` (line segments) in the per-feature "
+    "table, so results join back onto your own ids. The full result — including "
     "the per-feature/per-segment table — is kept under the returned `stored_as` "
     "name: include_features=true adds its first 500 rows here, export='csv' / "
     "'gpkg' writes all of it as an artifact, and get_analysis_table pages "
@@ -72,6 +120,10 @@ _ANALYSIS_PROPS = {
         "type": "object",
         "properties": {
             **_ANALYSIS_PROPS,
+            "id_column": {
+                "type": "string",
+                "description": "Attribute with a unique id per input feature.",
+            },
             "include_features": {
                 "type": "boolean",
                 "description": "Add the first 500 rows of the per-feature table.",
@@ -92,6 +144,9 @@ def run_analysis(
     threshold: Optional[float] = None,
     curve: Optional[str] = None,
     replacement_value: Optional[float] = None,
+    replacement_value_column: Optional[str] = None,
+    replacement_value_map: Optional[dict] = None,
+    id_column: Optional[str] = None,
     include_features: bool = False,
     export: Optional[str] = None,
 ) -> dict[str, Any]:
@@ -100,34 +155,34 @@ def run_analysis(
     haz = domain.resolve_hazard(hazard)
     file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
-    vc = _curve(conv, curve)
-    if vc is not None and replacement_value is None:
-        raise ValueError(
-            "replacement_value is required with a vulnerability curve "
-            "(per feature for points, per metre for lines)"
-        )
-    if replacement_value is not None and vc is None:
-        raise ValueError("a `curve` is required whenever replacement_value is given")
-    if replacement_value is not None and replacement_value <= 0:
-        raise ValueError("replacement_value must be greater than zero")
+    vc, values, per_feature = _damage_inputs(
+        conv, info, curve, replacement_value, replacement_value_column, replacement_value_map
+    )
+    if id_column:
+        domain.check_id_column(info, id_column)
 
     result = domain.run_exposure(
         file_id,
         haz,
         threshold=threshold,
         vulnerability_curve_interp=vc["interp"] if vc else None,
-        replacement_value=replacement_value,
+        replacement_value=values,
         vulnerability_curve_lower_interp=vc["lower"] if vc else None,
         vulnerability_curve_upper_interp=vc["upper"] if vc else None,
     )
+    result["_assistant_meta"]["id_column"] = id_column
     out = domain.summarise(result, info, haz, threshold)
     out["file_id"] = file_id
     if vc is not None:
         out["curve"] = curve
         out["replacement_value"] = replacement_value
+        if per_feature:
+            out["replacement_values"] = per_feature
         out["replacement_value_basis"] = (
             "per feature" if info["geometry_type"] == "Point" else "per metre"
         )
+    if id_column:
+        out["id_column"] = id_column
     out["stored_as"] = conv.store_result("analysis", result)
     if include_features or export:
         table = feature_table(result)
@@ -172,6 +227,8 @@ def run_analysis(
             },
             "curve": _ANALYSIS_PROPS["curve"],
             "replacement_value": _ANALYSIS_PROPS["replacement_value"],
+            "replacement_value_column": _ANALYSIS_PROPS["replacement_value_column"],
+            "replacement_value_map": _ANALYSIS_PROPS["replacement_value_map"],
         },
         "required": ["file_id", "hazards"],
     },
@@ -184,6 +241,8 @@ def compare_hazards(
     thresholds: Optional[list[float]] = None,
     curve: Optional[str] = None,
     replacement_value: Optional[float] = None,
+    replacement_value_column: Optional[str] = None,
+    replacement_value_map: Optional[dict] = None,
     *,
     _budget_s: Optional[float] = None,
 ) -> dict[str, Any]:
@@ -204,9 +263,9 @@ def compare_hazards(
 
     file_id = resolve_dataset(conv, file_id)
     info = domain.get_dataset(file_id)
-    vc = _curve(conv, curve)
-    if (vc is None) != (replacement_value is None):
-        raise ValueError("`curve` and `replacement_value` must be given together")
+    vc, values, per_feature = _damage_inputs(
+        conv, info, curve, replacement_value, replacement_value_column, replacement_value_map
+    )
 
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
@@ -223,7 +282,7 @@ def compare_hazards(
                 haz,
                 threshold=thr,
                 vulnerability_curve_interp=vc["interp"] if vc else None,
-                replacement_value=replacement_value,
+                replacement_value=values,
                 vulnerability_curve_lower_interp=vc["lower"] if vc else None,
                 vulnerability_curve_upper_interp=vc["upper"] if vc else None,
             )
@@ -245,6 +304,8 @@ def compare_hazards(
         "table": rows,
         "stored_as": conv.store_result("comparison", df),
     }
+    if per_feature:
+        out["replacement_values"] = per_feature
     if failures:
         out["failed"] = failures
     if not_run:

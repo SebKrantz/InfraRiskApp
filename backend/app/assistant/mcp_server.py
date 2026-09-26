@@ -196,7 +196,9 @@ run_analysis accepts directly; (4) load_features(geojson) for inline features; \
 
 Units and values: thresholds are in the layer's own units (flood mm, PGA cm/s², \
 cyclone km/h, landslide class). replacement_value is per feature for points and \
-per metre for lines, one scalar per call. Hazard layers are remote COGs: expect 5-60 s per layer \
+per metre for lines — one scalar, or per feature via replacement_value_column \
+(numbers) / replacement_value_map (keyed by an attribute such as asset type). \
+id_column carries your own feature ids into the result tables. Hazard layers are remote COGs: expect 5-60 s per layer \
 for the first read of a dataset, near-instant re-thresholding after that.
 
 Limits: every call has a {config.ASSISTANT_TOOL_TIMEOUT:g} s server-side timeout; \
