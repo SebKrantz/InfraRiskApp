@@ -78,6 +78,9 @@ ASSISTANT_PROVIDER_TIMEOUT = float(os.environ.get("ASSISTANT_PROVIDER_TIMEOUT", 
 # Wall-clock cap on one server-side tool call, seconds. Remote COG reads are
 # slow and occasionally never return.
 ASSISTANT_TOOL_TIMEOUT = float(os.environ.get("ASSISTANT_TOOL_TIMEOUT", "600"))
+# Wall-clock cap on one background job (start_run_analysis /
+# start_compare_hazards over MCP), seconds.
+ASSISTANT_JOB_TIMEOUT = float(os.environ.get("ASSISTANT_JOB_TIMEOUT", "3600"))
 # Wall-clock cap on one python_exec call, seconds. Generous: sampling a remote
 # COG over a large network is minutes of work, not seconds.
 ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))

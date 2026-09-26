@@ -120,7 +120,8 @@ async def _run(spec: tools.ToolSpec, ctx: Context | None, args: dict[str, Any]) 
     except TimeoutError as exc:
         raise ToolError(
             f"{spec.name} timed out after {timeout:.0f}s (server-side limit); the work "
-            "may still finish in the background; split the work into smaller calls."
+            "may still finish in the background. Use start_run_analysis / "
+            "start_compare_hazards with get_job for long analyses, or split the call."
         ) from exc
     except ToolError:
         raise
@@ -178,7 +179,7 @@ explains the model's exact semantics; call it before vulnerability work.
 Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope header \
 on every call; it maps to conversation id "mcp:<scope>" (no scope = the legacy \
 shared scope "mcp-shared-scope"). A scope isolates uploads, vulnerability curves, \
-the python_exec namespace and workdir, stored results and artifacts \
+the python_exec namespace and workdir, stored results, jobs and artifacts \
 (list_files shows only the calling scope's). NOT isolated, shared by every scope \
 and by the browser UI: the loaded datasets (file_ids, list_datasets) and the \
 analysis/raster caches. reset_scope forgets a scope and deletes the datasets it \
@@ -203,7 +204,9 @@ for the first read of a dataset, near-instant re-thresholding after that.
 
 Limits: every call has a {config.ASSISTANT_TOOL_TIMEOUT:g} s server-side timeout; \
 compare_hazards stops starting new layers when its time budget runs out and \
-reports the rest as not run. There is no solve budget. python_exec runs confined to the \
+reports the rest as not run. Long work: start_run_analysis / \
+start_compare_hazards return {{job_id, estimate_s}} at once; poll get_job(job_id) \
+for progress and the result; cancel_job(job_id). There is no solve budget. python_exec runs confined to the \
 scope's workdir (cwd) with the app's data/ directory read-only, no \
 subprocesses, a read-only view of the dataset store, and a hard stop after \
 {config.ASSISTANT_EXEC_TIMEOUT:g} s.

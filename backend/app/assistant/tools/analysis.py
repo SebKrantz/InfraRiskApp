@@ -245,6 +245,7 @@ def compare_hazards(
     replacement_value_map: Optional[dict] = None,
     *,
     _budget_s: Optional[float] = None,
+    _job: Any = None,
 ) -> dict[str, Any]:
     import pandas as pd
 
@@ -270,10 +271,16 @@ def compare_hazards(
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
     not_run: list[str] = []
+    cancelled = False
     for i, ref in enumerate(hazards):
+        if _job is not None and _job.cancel.is_set():
+            not_run, cancelled = list(hazards[i:]), True
+            break
         if time.monotonic() - started > budget:
             not_run = list(hazards[i:])
             break
+        if _job is not None:
+            _job.report(i / len(hazards), f"layer {i + 1}/{len(hazards)}: {ref}")
         thr = thresholds[i] if thresholds is not None else threshold
         try:
             haz = domain.resolve_hazard(ref)
@@ -311,7 +318,9 @@ def compare_hazards(
     if not_run:
         out["not_run"] = not_run
         out["note"] = (
-            f"time budget of {budget:.0f}s spent after {len(rows) + len(failures)} "
+            f"cancelled after {len(rows) + len(failures)} layers"
+            if cancelled
+            else f"time budget of {budget:.0f}s spent after {len(rows) + len(failures)} "
             "layers; call again with the layers under not_run"
         )
     return out

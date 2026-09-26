@@ -1,5 +1,5 @@
 """Tools only an external MCP caller needs: files in without a browser,
-forgetting a scope, and removing a dataset.
+forgetting a scope, removing a dataset, and job handles for long analyses.
 
 Kept out of the shared registry on purpose — the in-app assistant has the
 browser for uploads and no business resetting its own conversation — but built
@@ -14,9 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from .. import config
-from . import conversations
+from . import conversations, jobs
 from .conversations import Conversation, file_digest, file_kind
-from .tools import ToolSpec
+from .tools import REGISTRY, ToolSpec
+from .tools import load as load_tools
+
+load_tools()  # the start_* tools reuse the blocking tools' schemas
 
 _SPECS: list[ToolSpec] = []
 
@@ -117,6 +120,7 @@ def reset_scope(conv: Conversation) -> dict[str, Any]:
     from ..api.analyze import clear_raster_cache_for_file
     from ..api.upload import uploaded_files
 
+    jobs.cancel_all(conv.id)
     dropped = [fid for fid in conv.datasets if uploaded_files.pop(fid, None) is not None]
     for fid in dropped:
         clear_raster_cache_for_file(fid)
@@ -145,3 +149,99 @@ def delete_dataset(conv: Conversation, file_id: str) -> dict[str, Any]:
     if file_id in conv.datasets:
         conv.datasets.remove(file_id)
     return {"deleted": file_id}
+
+
+def _estimate(conv: Conversation, file_id: str, hazards: list[str]) -> float:
+    """Rough seconds: a first read of a remote layer costs tens of seconds, a
+    layer already sampled for this dataset about one."""
+    from ..api.analyze import get_cached_raster_values
+    from . import domain
+
+    total = 0.0
+    for ref in hazards:
+        try:
+            hid = domain.resolve_hazard(ref)["hazard_id"]
+        except ValueError:
+            continue
+        total += 1.0 if get_cached_raster_values(file_id, hid) is not None else 20.0
+    return total
+
+
+@mcp_tool(
+    "start_compare_hazards",
+    "compare_hazards as a background job: same arguments, returns {job_id, "
+    "estimate_s} at once. Poll get_job(job_id) for progress (one step per layer) "
+    "and the result — the same result compare_hazards returns; cancel_job stops "
+    f"it before its next layer. A job may run up to {config.ASSISTANT_JOB_TIMEOUT:g} s.",
+    REGISTRY["compare_hazards"].params,
+)
+def start_compare_hazards(conv: Conversation, file_id: str, hazards: list[str], **args: Any) -> dict[str, Any]:
+    from .tools.analysis import compare_hazards
+    from .tools.data import resolve_dataset
+
+    if not hazards or len(hazards) > 12:
+        raise ValueError(f"pass 1 to 12 hazards, got {len(hazards or [])}")
+    fid = resolve_dataset(conv, file_id)
+    estimate = _estimate(conv, fid, hazards)
+    job = jobs.start(
+        conv,
+        "compare_hazards",
+        lambda job: compare_hazards(
+            conv, fid, hazards, **args, _budget_s=0.9 * config.ASSISTANT_JOB_TIMEOUT, _job=job
+        ),
+        estimate,
+    )
+    return {"job_id": job.id, "estimate_s": estimate, "status": job.status}
+
+
+@mcp_tool(
+    "start_run_analysis",
+    "run_analysis as a background job: same arguments, returns {job_id, "
+    "estimate_s} at once; poll get_job(job_id) for the result — the same result "
+    "run_analysis returns. For large datasets on a layer not yet sampled.",
+    REGISTRY["run_analysis"].params,
+)
+def start_run_analysis(conv: Conversation, file_id: str, hazard: str, **args: Any) -> dict[str, Any]:
+    from .tools.analysis import run_analysis
+    from .tools.data import resolve_dataset
+
+    fid = resolve_dataset(conv, file_id)
+    estimate = _estimate(conv, fid, [hazard])
+    job = jobs.start(
+        conv, "run_analysis", lambda job: run_analysis(conv, fid, hazard, **args), estimate
+    )
+    return {"job_id": job.id, "estimate_s": estimate, "status": job.status}
+
+
+@mcp_tool(
+    "get_job",
+    "Status of a background job started in this scope: status (queued, "
+    "running, done, error, cancelled), progress 0-1, a message, elapsed and "
+    "estimated seconds, and — once done — the tool's result.",
+    {
+        "type": "object",
+        "properties": {"job_id": {"type": "string"}},
+        "required": ["job_id"],
+    },
+)
+def get_job(conv: Conversation, job_id: str) -> dict[str, Any]:
+    return jobs.get(conv, job_id).public()
+
+
+@mcp_tool(
+    "cancel_job",
+    "Cancel a background job of this scope. compare_hazards stops before its "
+    "next layer and keeps the layers it finished; a run_analysis already "
+    "sampling finishes in the background but its result is dropped.",
+    {
+        "type": "object",
+        "properties": {"job_id": {"type": "string"}},
+        "required": ["job_id"],
+    },
+)
+def cancel_job(conv: Conversation, job_id: str) -> dict[str, Any]:
+    job = jobs.get(conv, job_id)
+    if job.status not in ("queued", "running"):
+        return {"cancelled": False, "status": job.status}
+    job.cancel.set()
+    return {"cancelled": True, "status": job.status}
