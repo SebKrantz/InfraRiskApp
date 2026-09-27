@@ -6,6 +6,17 @@ import os
 from pathlib import Path
 from typing import Optional
 
+# backend/.env (gitignored) holds the API keys: CARTO_API_KEY below and the
+# assistant's keys further down. Load it before anything reads the environment
+# — Settings' attributes are evaluated once, when the class is defined.
+# Variables already set in the environment win over the file.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+except ImportError:  # python-dotenv missing; the environment alone applies
+    pass
+
 class Settings:
     """Application settings"""
     
@@ -40,16 +51,9 @@ settings = Settings()
 # --------------------------------------------------------------------------- #
 # AI assistant (app/assistant/)
 #
-# Keys live in backend/.env, which is gitignored. Nothing here is ever
-# serialised outward — /api/meta reports availability booleans only.
+# Keys live in backend/.env (loaded at the top of this file). Nothing here is
+# ever serialised outward — /api/meta reports availability booleans only.
 # --------------------------------------------------------------------------- #
-
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-except ImportError:  # assistant deps not installed; the app runs without it
-    pass
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
