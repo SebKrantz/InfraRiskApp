@@ -14,9 +14,13 @@ import type { AssistantMeta } from '../../types/assistant'
 import AssistantFab from './AssistantFab'
 import AssistantPanel from './AssistantPanel'
 
+// `?assistant=1` opens the panel on load (AGUI's agent links use it). Read once at module
+// load, before the app can rewrite location.search to mirror its own state.
+const OPEN_ON_LOAD = new URLSearchParams(window.location.search).get('assistant') === '1'
+
 export default function Assistant({ bindings }: { bindings: BindingsRef }) {
   const [meta, setMeta] = useState<AssistantMeta | null>(null)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(OPEN_ON_LOAD)
 
   useEffect(() => {
     let live = true
