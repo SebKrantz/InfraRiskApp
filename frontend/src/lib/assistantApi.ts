@@ -10,6 +10,8 @@ export interface ChatRequest {
   conversation_id?: string
   provider?: string
   model?: string
+  effort?: string
+  service_tier?: 'standard' | 'flex'
   message?: string
   tool_results?: ClientToolOutcome[]
   files?: string[]

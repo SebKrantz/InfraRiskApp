@@ -6,10 +6,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { pushAppState, streamChat, uploadAssistantFile } from '../lib/assistantApi'
+import { pushAppState, streamChat, uploadAssistantFile, type ChatRequest } from '../lib/assistantApi'
 import { executeClientTool, snapshot, type BindingsRef } from '../lib/assistantTools'
 import type {
   AssistantArtifact,
+  AssistantChoice,
   AssistantEvent,
   ClientToolOutcome,
   PendingToolCall,
@@ -22,7 +23,7 @@ export interface UseAssistant {
   items: TranscriptItem[]
   streaming: boolean
   conversationId: string | null
-  send: (text: string, files: File[], provider?: string, model?: string) => void
+  send: (text: string, files: File[], choice: AssistantChoice) => void
   stop: () => void
   clear: () => void
 }
@@ -33,8 +34,8 @@ export function useAssistant(bindings: BindingsRef, enabled: boolean): UseAssist
   const [conversationId, setConversationId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const conversationRef = useRef<string | null>(null)
-  // provider/model choice lives with the panel; it passes them per send()
-  const choiceRef = useRef<{ provider?: string; model?: string }>({})
+  // the model / effort / execution choice lives with the panel; it passes it per send()
+  const choiceRef = useRef<Pick<ChatRequest, 'provider' | 'model' | 'effort' | 'service_tier'>>({})
 
   // Debounced app-state push, for external MCP clients. Idempotent under
   // StrictMode double-mount; skips identical snapshots.
@@ -172,9 +173,14 @@ export function useAssistant(bindings: BindingsRef, enabled: boolean): UseAssist
   )
 
   const send = useCallback(
-    (text: string, files: File[], provider?: string, model?: string) => {
+    (text: string, files: File[], choice: AssistantChoice) => {
       if (streaming || (!text.trim() && files.length === 0)) return
-      choiceRef.current = { provider, model }
+      choiceRef.current = {
+        provider: choice.provider,
+        model: choice.model,
+        effort: choice.effort ?? undefined,
+        service_tier: choice.tier,
+      }
       setStreaming(true)
       abortRef.current = new AbortController()
       void (async () => {
