@@ -5,34 +5,33 @@ import { useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import { Eraser, Loader2, Paperclip, Send, Square, X } from 'lucide-react'
 
 import type { UseAssistant } from '../../hooks/useAssistant'
-import type { AssistantMeta } from '../../types/assistant'
+import type { AssistantChoice, AssistantMeta } from '../../types/assistant'
 import MessageList from './MessageList'
+import ModelPicker from './ModelPicker'
 
 export default function AssistantPanel({
   assistant,
   meta,
+  choice,
+  onChoice,
   onClose,
 }: {
   assistant: UseAssistant
   meta: AssistantMeta
+  choice: AssistantChoice
+  onChoice: (choice: AssistantChoice) => void
   onClose: () => void
 }) {
   const { items, streaming, send, stop, clear } = assistant
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [dragOver, setDragOver] = useState(false)
-  const providers = meta.providers.filter((p) => p.available)
-  const [choice, setChoice] = useState(() => {
-    const p = providers.find((x) => x.id === meta.default_provider) ?? providers[0]
-    return p ? `${p.id}:${p.default_model}` : ''
-  })
   const fileInput = useRef<HTMLInputElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
 
   const submit = () => {
     if (streaming || (!text.trim() && files.length === 0)) return
-    const [provider, model] = choice.split(':')
-    send(text.trim(), files, provider, model)
+    send(text.trim(), files, choice)
     setText('')
     setFiles([])
     if (textarea.current) textarea.current.style.height = 'auto'
@@ -70,22 +69,9 @@ export default function AssistantPanel({
       }}
     >
       {/* header */}
-      <div className="flex items-center gap-2 border-b border-gray-800 px-3 py-2">
+      <div className="relative flex items-center gap-2 border-b border-gray-800 px-3 py-2">
         <span className="text-sm font-semibold text-gray-100">Assistant</span>
-        <select
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-          disabled={streaming}
-          className="min-w-0 flex-1 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-[11px] text-gray-300 disabled:opacity-50"
-        >
-          {providers.map((p) =>
-            p.models.map((m) => (
-              <option key={`${p.id}:${m}`} value={`${p.id}:${m}`}>
-                {p.label} · {m}
-              </option>
-            )),
-          )}
-        </select>
+        <ModelPicker meta={meta} choice={choice} onChange={onChoice} disabled={streaming} />
         <button
           type="button"
           title="Clear conversation"
