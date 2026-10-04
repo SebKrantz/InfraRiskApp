@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import threading
 import time
 from typing import Any, Iterator
@@ -21,6 +22,7 @@ from .providers import get as get_provider
 log = logging.getLogger("infrarisk.assistant")
 
 MAX_RESULT_CHARS = 60_000  # cap on one serialized tool result fed to the model
+PING_EVERY = 15  # seconds of silence from the provider before an SSE comment goes out
 
 # Providers rate-limit and shed load; a multi-step analysis is long enough that
 # one blip should not throw away the whole turn.
@@ -170,6 +172,46 @@ def _tool_with_pings(
         yield schema.SSE_PING
 
 
+def _provider_with_pings(source: Iterator[Any]) -> Iterator[Any]:
+    """The provider's events, consumed on a worker thread, with an SSE comment after every
+    PING_EVERY s of silence: a flex request can back off ~30 s and then think for minutes
+    before its first byte, and the browser or a proxy must not take the quiet stream for a
+    dead one."""
+    q: queue.Queue[tuple[str, Any]] = queue.Queue()  # unbounded: the pump never blocks
+    stop = threading.Event()
+
+    def pump() -> None:
+        try:
+            for ev in source:
+                q.put(("ev", ev))
+                if stop.is_set():  # the consumer is gone (client left)
+                    break
+            q.put(("end", None))
+        except BaseException as exc:  # noqa: BLE001 — re-raised on the consuming side
+            q.put(("err", exc))
+        finally:
+            close = getattr(source, "close", None)
+            if close is not None:
+                close()  # same thread that iterated it
+
+    threading.Thread(target=pump, daemon=True, name="provider-stream").start()
+    try:
+        while True:
+            try:
+                kind, payload = q.get(timeout=PING_EVERY)
+            except queue.Empty:
+                yield schema.SSE_PING
+                continue
+            if kind == "ev":
+                yield payload
+            elif kind == "err":
+                raise payload
+            else:
+                return
+    finally:
+        stop.set()
+
+
 def _tool_result_message(results: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "role": "user",
@@ -286,14 +328,19 @@ def run(
         for attempt in range(MAX_PROVIDER_RETRIES + 1):
             failure: Exception | None = None
             try:
-                for event in provider.stream_turn(
-                    model=model,
-                    system=system,
-                    messages=conv.messages,
-                    tools=toolset,
-                    effort=effort,
-                    service_tier=service_tier,
+                for event in _provider_with_pings(
+                    provider.stream_turn(
+                        model=model,
+                        system=system,
+                        messages=conv.messages,
+                        tools=toolset,
+                        effort=effort,
+                        service_tier=service_tier,
+                    )
                 ):
+                    if isinstance(event, str):  # a keep-alive comment: straight to the wire
+                        yield event
+                        continue
                     if isinstance(event, schema.TextDelta):
                         text_parts.append(event.text)
                         yield schema.sse("text", {"delta": event.text})

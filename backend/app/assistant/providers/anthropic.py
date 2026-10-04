@@ -17,7 +17,7 @@ from ... import config
 from .. import schema
 from ..tools import ToolSpec
 
-MAX_TOKENS = 16_000
+MAX_TOKENS = 32_000  # AGUI's cap: thinking at the deeper effort levels counts against it
 
 
 def _tool_defs(tools: list[ToolSpec]) -> list[dict[str, Any]]:
