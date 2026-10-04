@@ -3,9 +3,9 @@
 Every tool is declared once with a name, a description, a JSON schema and a
 side. Server tools carry a function `(conv, **args) -> dict`; client tools are
 schema-only — the browser executes them against App.tsx setters. The registry
-feeds the Anthropic adapter, the Gemini adapter and the MCP server.
+feeds the Anthropic, Gemini and OpenAI adapters and the MCP server.
 
-Schemas stay in the simple dialect all three accept: object / string / number /
+Schemas stay in the simple dialect all of them accept: object / string / number /
 integer / boolean / array / enum + required. No oneOf, no additionalProperties,
 no $ref.
 """

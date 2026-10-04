@@ -69,6 +69,8 @@ def _is_transient(exc: Exception) -> bool:
     if isinstance(exc, EmptyTurn):
         return True
     text = str(exc).lower()
+    if "insufficient_quota" in text:  # OpenAI's 429 for an exhausted quota: waiting won't help
+        return False
     return any(marker in text for marker in TRANSIENT_MARKERS)
 
 
@@ -211,11 +213,20 @@ def run(
     file_parts: list[dict[str, Any]] | None = None,
     tool_results: list[dict[str, Any]] | None = None,
     app_state: dict[str, Any] | None = None,
+    effort: str | None = None,
+    service_tier: str | None = None,
 ) -> Iterator[str]:
-    """One SSE leg. Exactly one of user_message / tool_results drives it."""
+    """One SSE leg. Exactly one of user_message / tool_results drives it. `effort` and
+    `service_tier` are validated (models.choose) and handed to the provider as given."""
     yield schema.sse(
         "start",
-        {"conversation_id": conv.id, "provider": provider_name, "model": model},
+        {
+            "conversation_id": conv.id,
+            "provider": provider_name,
+            "model": model,
+            "effort": effort,
+            "service_tier": service_tier or "standard",
+        },
     )
 
     if user_message is not None:
@@ -276,7 +287,12 @@ def run(
             failure: Exception | None = None
             try:
                 for event in provider.stream_turn(
-                    model=model, system=system, messages=conv.messages, tools=toolset
+                    model=model,
+                    system=system,
+                    messages=conv.messages,
+                    tools=toolset,
+                    effort=effort,
+                    service_tier=service_tier,
                 ):
                     if isinstance(event, schema.TextDelta):
                         text_parts.append(event.text)
