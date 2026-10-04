@@ -17,7 +17,7 @@ from ... import config
 from .. import schema
 from ..tools import ToolSpec
 
-MAX_TOKENS = 16_000
+MAX_TOKENS = 32_000  # AGUI's cap: thinking at the deeper effort levels counts against it
 
 
 def _tool_defs(tools: list[ToolSpec]) -> list[dict[str, Any]]:
@@ -101,13 +101,21 @@ class AnthropicProvider:
         system: str,
         messages: list[dict[str, Any]],
         tools: list[ToolSpec],
+        effort: str | None = None,
+        service_tier: str | None = None,
     ) -> Iterator[schema.ProviderEvent]:
+        """`effort` is the effort level (`output_config`); none leaves the model's
+        default. `service_tier` is ignored: Claude has no flex tier (models.SERVICE_TIERS)."""
+        kwargs: dict[str, Any] = {}
+        if effort:
+            kwargs["output_config"] = {"effort": effort}
         with self.client.messages.stream(
             model=model,
             max_tokens=MAX_TOKENS,
             system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
             tools=_tool_defs(tools),
             messages=_messages(messages),
+            **kwargs,
         ) as stream:
             for event in stream:
                 if event.type == "content_block_delta":

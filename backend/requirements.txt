@@ -32,6 +32,7 @@ cachetools>=5.3.0
 # --------------------------------------------------------------------------- #
 anthropic>=1          # Claude provider
 google-genai          # Gemini provider
+openai>=3             # OpenAI provider (Responses API)
 mcp>=2                # MCP server grafted at /mcp
 python-docx           # Word report generation
 openpyxl              # Excel export

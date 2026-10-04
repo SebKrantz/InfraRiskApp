@@ -57,22 +57,18 @@ settings = Settings()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
-# The single source of model names. A provider is offered iff its key is set;
-# defaults are env-overridable so nothing here needs editing when models move on.
-ASSISTANT_PROVIDERS = {
-    "anthropic": {
-        "label": "Claude",
-        "models": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
-        "default": os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
-    },
-    "gemini": {
-        "label": "Gemini",
-        "models": ["gemini-3.1-pro-preview", "gemini-3-flash-preview", "gemini-3.1-flash-lite"],
-        "default": os.environ.get("GEMINI_MODEL", "gemini-3.1-pro-preview"),
-    },
+# The model table (providers, models, effort, tiers) is app/assistant/models.py. A provider
+# is offered iff its key is set. These env overrides pick the default MODEL of a provider
+# and count only when they name a model of its table.
+ASSISTANT_MODEL_ENV = {
+    "anthropic": os.environ.get("ANTHROPIC_MODEL", "").strip(),
+    "gemini": os.environ.get("GEMINI_MODEL", "").strip(),
+    "openai": os.environ.get("OPENAI_MODEL", "").strip(),
 }
-ASSISTANT_DEFAULT_PROVIDER = os.environ.get("ASSISTANT_DEFAULT_PROVIDER", "anthropic")
+# Unset: the first keyed of anthropic, gemini, openai.
+ASSISTANT_DEFAULT_PROVIDER = os.environ.get("ASSISTANT_DEFAULT_PROVIDER", "").strip()
 
 # Tool round-trips allowed per user turn before the loop gives up.
 ASSISTANT_MAX_ITERATIONS = int(os.environ.get("ASSISTANT_MAX_ITERATIONS", "30"))

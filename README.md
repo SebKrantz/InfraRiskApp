@@ -206,12 +206,19 @@ export buttons.
 
 ```bash
 cd backend
-cp .env.example .env      # then add ANTHROPIC_API_KEY and/or GEMINI_API_KEY
+cp .env.example .env      # then add ANTHROPIC_API_KEY, GEMINI_API_KEY and/or OPENAI_API_KEY
 pip install -r requirements.txt
 ```
 
 Without a key the assistant is simply absent: the button never renders and the app behaves exactly
 as before. A provider appears in the model picker only when its key is set.
+
+**Assistant model defaults** (optional; the same four variables in every AEI Labs app):
+`ASSISTANT_DEFAULT_PROVIDER` is the provider the assistant starts on (`anthropic`, `gemini` or
+`openai`), used only when that provider has a key; unset, it is the first keyed of anthropic,
+gemini, openai. `ANTHROPIC_MODEL`, `GEMINI_MODEL` and `OPENAI_MODEL` replace that provider's
+default model, honoured only when the value is one of the provider's models in the assistant's
+model table; any other value is ignored with a warning in the log.
 
 ### What it can do
 
@@ -250,7 +257,7 @@ Set `ASSISTANT_MCP_ENABLED=0` to turn it off.
 - `HOST`: Server host (default: `0.0.0.0`)
 - `PORT`: Server port (default: `8000`)
 - `DEBUG`: Debug mode (default: `False`)
-- `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`: enable the AI assistant (read from `backend/.env`)
+- `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`: enable the AI assistant (read from `backend/.env`)
 - `ASSISTANT_MAX_ITERATIONS` (30), `ASSISTANT_EXEC_TIMEOUT` (180 s), `ASSISTANT_UPLOAD_MAX_MB` (100), `ASSISTANT_MCP_ENABLED` (1)
 
 The frontend dev proxy targets `http://localhost:8000`; override with `BACKEND_URL` if that port is

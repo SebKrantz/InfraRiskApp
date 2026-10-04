@@ -1,11 +1,28 @@
 // Types for the AI assistant: availability, SSE events, transcript, client tools.
 
+// Served by GET /api/assistant/meta from backend/app/assistant/models.py (the one table;
+// keep it in step with AGUI backend/agui/config.py).
 export interface AssistantProvider {
   id: string
   label: string
   models: string[]
   default_model: string
   available: boolean
+  /** reasoning levels per model; an empty list: the model takes none */
+  efforts: Record<string, string[]>
+  /** the level shown as "Default (x)" per model; null: no effort control */
+  effort_default: Record<string, string | null>
+  /** "standard", and "flex" where the provider has it */
+  tiers: string[]
+}
+
+/** The assistant's current setting: what the next chat request carries. */
+export interface AssistantChoice {
+  provider: string
+  model: string
+  /** null: the model's default */
+  effort: string | null
+  tier: 'standard' | 'flex'
 }
 
 export interface AssistantMeta {
