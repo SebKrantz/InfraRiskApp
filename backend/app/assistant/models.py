@@ -9,9 +9,12 @@ Checked against each vendor's model list on 2026-10-04.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, NamedTuple
 
 from .. import config
+
+log = logging.getLogger("infrarisk.assistant")
 
 # In display order; the first model is the provider's default unless an env override
 # (config.ASSISTANT_MODEL_ENV) names another model of the same list. A model that is not
@@ -37,12 +40,12 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 # The reasoning levels a request may pick, by provider ("*") with per-model exceptions; an
 # empty list means the model has no effort control. Claude takes `output_config.effort`,
 # GPT-6 `reasoning.effort`, Gemini 3 `thinking_level`. Haiku 4.5 does not take the
-# parameter; Gemini 3.1 Pro preview may reject the levels between low and high.
+# parameter; Gemini 3.8 Flash and 3.1 Pro answer `minimal` with a 400, only Flash-Lite takes it.
 EFFORT_LEVELS: dict[str, dict[str, list[str]]] = {
     "anthropic": {"*": ["low", "medium", "high", "xhigh", "max"], "claude-haiku-4-5": []},
     "gemini": {
-        "*": ["minimal", "low", "medium", "high"],
-        "gemini-3.1-pro-preview": ["low", "high"],
+        "*": ["low", "medium", "high"],
+        "gemini-3.5-flash-lite": ["minimal", "low", "medium", "high"],
     },
     "openai": {"*": ["low", "medium", "high", "xhigh", "max"]},
 }
@@ -83,10 +86,28 @@ def default_provider() -> str | None:
     return avail[0] if avail else None
 
 
+_MODEL_VAR = {"anthropic": "ANTHROPIC_MODEL", "gemini": "GEMINI_MODEL", "openai": "OPENAI_MODEL"}
+_warned: set[tuple[str, str]] = set()
+
+
 def default_model(provider: str) -> str:
+    """The model a provider opens on: its *_MODEL variable if that names one of the
+    provider's models in the table, else the table's default. Any other value is ignored,
+    with one logged warning per (variable, value)."""
     spec = PROVIDERS[provider]
     override = config.ASSISTANT_MODEL_ENV.get(provider, "")
-    return override if override in spec["models"] else spec["default"]
+    if not override:
+        return spec["default"]
+    if override in spec["models"]:
+        return override
+    var = _MODEL_VAR[provider]
+    if (var, override) not in _warned:
+        _warned.add((var, override))
+        log.warning(
+            "%s=%r is not one of %s's models (%s); using %s",
+            var, override, spec["label"], ", ".join(spec["models"]), spec["default"],
+        )
+    return spec["default"]
 
 
 def effort_levels(provider: str, model: str) -> list[str]:
@@ -156,7 +177,10 @@ def choose(
     if provider not in PROVIDERS or not keys().get(provider):
         raise ValueError(f"provider {provider!r} is not available")
     if model not in PROVIDERS[provider]["models"]:
-        model = default_model(provider)
+        fallback = default_model(provider)
+        if model:  # a model that was named but is not on offer; none named is the normal case
+            log.warning("chat: model %r is not offered for %s; using %s", model, provider, fallback)
+        model = fallback
     level = effort if effort in effort_levels(provider, model) else None
     flex = service_tier == "flex" and "flex" in service_tiers(provider)
     return Choice(provider, model, level or EFFORT_SENT.get(model), "flex" if flex else "standard")

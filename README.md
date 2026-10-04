@@ -213,6 +213,13 @@ pip install -r requirements.txt
 Without a key the assistant is simply absent: the button never renders and the app behaves exactly
 as before. A provider appears in the model picker only when its key is set.
 
+**Assistant model defaults** (optional; the same four variables in every AEI Labs app):
+`ASSISTANT_DEFAULT_PROVIDER` is the provider the assistant starts on (`anthropic`, `gemini` or
+`openai`), used only when that provider has a key; unset, it is the first keyed of anthropic,
+gemini, openai. `ANTHROPIC_MODEL`, `GEMINI_MODEL` and `OPENAI_MODEL` replace that provider's
+default model, honoured only when the value is one of the provider's models in the assistant's
+model table; any other value is ignored with a warning in the log.
+
 ### What it can do
 
 | | |

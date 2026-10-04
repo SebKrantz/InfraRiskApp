@@ -7,6 +7,7 @@ Run from backend/ with the repo's venv:  python -m unittest discover -s tests
 from __future__ import annotations
 
 import sys
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -61,14 +62,15 @@ class ModelTable(unittest.TestCase):
 
     def test_effort_levels_and_defaults(self):
         five = ["low", "medium", "high", "xhigh", "max"]
+        three = ["low", "medium", "high"]  # 3.8 Flash and 3.1 Pro answer `minimal` with a 400
         cases = {
             ("anthropic", "claude-opus-5-5"): (five, "medium"),
             ("anthropic", "claude-fable-5-1"): (five, "high"),
             ("anthropic", "claude-sonnet-5-5"): (five, "high"),
             ("anthropic", "claude-haiku-4-5"): ([], None),
-            ("gemini", "gemini-3.8-flash"): (["minimal", "low", "medium", "high"], "high"),
-            ("gemini", "gemini-3.5-flash-lite"): (["minimal", "low", "medium", "high"], "high"),
-            ("gemini", "gemini-3.1-pro-preview"): (["low", "high"], "high"),
+            ("gemini", "gemini-3.8-flash"): (three, "high"),
+            ("gemini", "gemini-3.5-flash-lite"): (["minimal", *three], "high"),
+            ("gemini", "gemini-3.1-pro-preview"): (three, "high"),
             ("openai", "gpt-6-luna"): (five, "high"),
             ("openai", "gpt-6.1-sol"): (five, "medium"),
             ("openai", "gpt-6-astra"): (five, "medium"),
@@ -109,6 +111,28 @@ class ModelTable(unittest.TestCase):
             self.assertEqual(models.default_model("gemini"), "gemini-3.1-pro-preview")
             self.assertEqual(models.default_model("openai"), "gpt-6-luna")
 
+    def test_ignored_model_override_warns_once_per_variable_and_value(self):
+        env = {"anthropic": "", "gemini": "gemini-3-flash-preview", "openai": ""}
+        models._warned.clear()
+        with mock.patch.object(config, "ASSISTANT_MODEL_ENV", env):
+            with self.assertLogs("infrarisk.assistant", level="WARNING") as cm:
+                for _ in range(3):  # /meta asks on every request: still one line
+                    self.assertEqual(models.default_model("gemini"), "gemini-3.8-flash")
+            self.assertEqual(len(cm.records), 1)
+            msg = cm.records[0].getMessage()
+            self.assertIn("GEMINI_MODEL='gemini-3-flash-preview' is not one of Gemini's models", msg)
+            self.assertIn("gemini-3.8-flash, gemini-3.1-pro-preview", msg)
+            self.assertTrue(msg.endswith("using gemini-3.8-flash"))
+            # another value is another line; a valid or empty override is silent
+            env["gemini"] = "gemini-2.5-pro"
+            with self.assertLogs("infrarisk.assistant", level="WARNING") as cm:
+                models.default_model("gemini")
+            self.assertEqual(len(cm.records), 1)
+            env["gemini"] = "gemini-3.5-flash-lite"
+            with self.assertNoLogs("infrarisk.assistant", level="WARNING"):
+                self.assertEqual(models.default_model("gemini"), "gemini-3.5-flash-lite")
+                self.assertEqual(models.default_model("openai"), "gpt-6-luna")
+
     def test_choose_validates(self):
         with with_keys(**ALL_KEYS):
             # nothing asked: default provider and model, nothing sent
@@ -121,11 +145,19 @@ class ModelTable(unittest.TestCase):
             )
             self.assertEqual(
                 models.choose("gemini", "gemini-3.1-pro-preview", "medium", "flex"),
-                ("gemini", "gemini-3.1-pro-preview", None, "flex"),  # 3.1 Pro: low/high only
+                ("gemini", "gemini-3.1-pro-preview", "medium", "flex"),  # 3.1 Pro takes medium
+            )
+            self.assertEqual(  # `minimal` is a 400 on 3.8 Flash and 3.1 Pro: dropped
+                models.choose("gemini", "gemini-3.8-flash", "minimal", "flex"),
+                ("gemini", "gemini-3.8-flash", None, "flex"),
             )
             self.assertEqual(
-                models.choose("gemini", "gemini-3.8-flash", "minimal", "flex"),
-                ("gemini", "gemini-3.8-flash", "minimal", "flex"),
+                models.choose("gemini", "gemini-3.1-pro-preview", "minimal"),
+                ("gemini", "gemini-3.1-pro-preview", None, "standard"),
+            )
+            self.assertEqual(  # only Flash-Lite takes it
+                models.choose("gemini", "gemini-3.5-flash-lite", "minimal"),
+                ("gemini", "gemini-3.5-flash-lite", "minimal", "standard"),
             )
             self.assertEqual(
                 models.choose("anthropic", "claude-haiku-4-5", "high"),
@@ -152,6 +184,20 @@ class ModelTable(unittest.TestCase):
                 models.choose("openai", "gpt-6-luna", "max", "flex"),
                 ("openai", "gpt-6-luna", "max", "flex"),
             )
+        with with_keys(**ALL_KEYS):
+            # C: a named model outside the table: the default, with ONE warning line ...
+            with self.assertLogs("infrarisk.assistant", level="WARNING") as cm:
+                models.choose("gemini", "gemini-3-flash-preview")
+            self.assertEqual(
+                [r.getMessage() for r in cm.records],
+                ["chat: model 'gemini-3-flash-preview' is not offered for gemini; "
+                 "using gemini-3.8-flash"],
+            )
+            # ... and none when no model was named, or a listed one
+            with self.assertNoLogs("infrarisk.assistant", level="WARNING"):
+                models.choose("gemini", None)
+                models.choose("gemini", "")
+                models.choose("gemini", "gemini-3.1-pro-preview")
         with with_keys(GEMINI_API_KEY="g"):
             with self.assertRaises(ValueError):
                 models.choose("anthropic", None)
@@ -189,7 +235,11 @@ class MetaEndpoint(unittest.TestCase):
         self.assertEqual(by_id["anthropic"]["efforts"]["claude-haiku-4-5"], [])
         self.assertIsNone(by_id["anthropic"]["effort_default"]["claude-haiku-4-5"])
         self.assertEqual(by_id["anthropic"]["effort_default"]["claude-opus-5-5"], "medium")
-        self.assertEqual(by_id["gemini"]["efforts"]["gemini-3.1-pro-preview"], ["low", "high"])
+        self.assertEqual(by_id["gemini"]["efforts"]["gemini-3.1-pro-preview"], ["low", "medium", "high"])
+        self.assertEqual(by_id["gemini"]["efforts"]["gemini-3.8-flash"], ["low", "medium", "high"])
+        self.assertEqual(
+            by_id["gemini"]["efforts"]["gemini-3.5-flash-lite"], ["minimal", "low", "medium", "high"]
+        )
         self.assertEqual(by_id["openai"]["effort_default"]["gpt-6-luna"], "high")
         self.assertEqual(by_id["openai"]["tiers"], ["standard", "flex"])
         self.assertEqual(by_id["anthropic"]["tiers"], ["standard"])
@@ -266,6 +316,10 @@ class AnthropicAdapter(unittest.TestCase):
         prov.client = SimpleNamespace(messages=SimpleNamespace(stream=stream))
         list(prov.stream_turn("claude-opus-5-5", "sys", [], [], **opts))
         return captured
+
+    def test_output_cap_is_agui_s(self):
+        self.assertEqual(anthropic_provider.MAX_TOKENS, 32_000)
+        self.assertEqual(self._kwargs()["max_tokens"], 32_000)
 
     def test_effort_goes_to_output_config(self):
         self.assertEqual(self._kwargs(effort="xhigh")["output_config"], {"effort": "xhigh"})
@@ -538,6 +592,87 @@ class LoopHandsOverTheChoice(unittest.TestCase):
     def test_exhausted_quota_is_not_retried(self):
         self.assertFalse(loop._is_transient(RuntimeError("Error code: 429 - insufficient_quota")))
         self.assertTrue(loop._is_transient(RuntimeError("Error code: 429 - rate limit")))
+
+
+class KeepAlive(unittest.TestCase):
+    """F: the SSE stream is not silent while the provider is (flex backoff, long thinking)."""
+
+    def _run(self, provider):
+        conv = SimpleNamespace(
+            id="c", messages=[], pending_calls=[], buffered_results=[], provider=None, model=None
+        )
+        with mock.patch.object(loop, "PING_EVERY", 0.05), mock.patch.object(
+            loop, "get_provider", lambda name: provider
+        ), mock.patch.object(loop, "RETRY_BACKOFF_S", (0.0,)):
+            return list(loop.run(conv, "openai", "gpt-6-luna", user_message="hi"))
+
+    def test_ping_comes_before_a_slow_first_event(self):
+        class Slow:
+            def stream_turn(self, **kw):
+                time.sleep(0.4)  # a flex request still waiting for its first byte
+                yield schema.TextDelta("ok")
+                yield schema.TurnEnd(stop_reason="end_turn")
+
+        out = self._run(Slow())
+        first_text = next(i for i, c in enumerate(out) if c.startswith("event: text"))
+        self.assertIn(schema.SSE_PING, out[:first_text])
+        self.assertGreaterEqual(out[:first_text].count(schema.SSE_PING), 2)
+        self.assertEqual(out[-1], schema.sse("done", {"reason": "end_turn"}))
+
+    def test_a_quick_provider_adds_no_ping(self):
+        class Quick:
+            def stream_turn(self, **kw):
+                yield schema.TextDelta("ok")
+                yield schema.TurnEnd(stop_reason="end_turn")
+
+        with mock.patch.object(loop, "PING_EVERY", 5.0):
+            out = self._run(Quick())
+        self.assertNotIn(schema.SSE_PING, out)
+
+    def test_a_provider_error_still_reaches_the_loops_error_handling(self):
+        class Boom:
+            def stream_turn(self, **kw):
+                time.sleep(0.15)
+                raise RuntimeError("boom")
+                yield  # pragma: no cover
+
+        out = self._run(Boom())
+        self.assertIn(schema.SSE_PING, out)
+        self.assertEqual(out[-2:], [schema.sse("error", {"message": "openai: boom"}),
+                                    schema.sse("done", {"reason": "error"})])
+
+    def test_a_transient_error_is_still_retried(self):
+        attempts = []
+
+        class Flaky:
+            def stream_turn(self, **kw):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise RuntimeError("503 unavailable")
+                yield schema.TextDelta("ok")
+                yield schema.TurnEnd(stop_reason="end_turn")
+
+        out = self._run(Flaky())
+        self.assertEqual(len(attempts), 2)
+        self.assertTrue(any(c.startswith("event: notice") for c in out))
+        self.assertEqual(out[-1], schema.sse("done", {"reason": "end_turn"}))
+
+    def test_the_pump_stops_when_the_consumer_leaves(self):
+        closed = []
+
+        def source():
+            try:
+                for i in range(1000):
+                    time.sleep(0.01)
+                    yield i
+            finally:
+                closed.append(True)
+
+        gen = loop._provider_with_pings(source())
+        self.assertEqual(next(gen), 0)
+        gen.close()  # the client left
+        time.sleep(0.2)
+        self.assertEqual(closed, [True])
 
 
 if __name__ == "__main__":
