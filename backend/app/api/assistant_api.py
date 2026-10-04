@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import config
-from ..assistant import artifacts, conversations, loop, schema, tools
+from ..assistant import artifacts, conversations, loop, models, schema, tools
 
 log = logging.getLogger("infrarisk.assistant")
 
@@ -41,60 +41,40 @@ _VISION_MIMES = {
 
 
 def assistant_meta() -> dict[str, Any]:
-    """Availability booleans only — never the keys themselves."""
-    keys = {
-        "anthropic": bool(config.ANTHROPIC_API_KEY),
-        "gemini": bool(config.GEMINI_API_KEY),
-    }
-    providers = [
-        {
-            "id": pid,
-            "label": p["label"],
-            "models": p["models"],
-            "default_model": p["default"],
-            "available": keys.get(pid, False),
-        }
-        for pid, p in config.ASSISTANT_PROVIDERS.items()
-    ]
-    available = [p["id"] for p in providers if p["available"]]
-    default = (
-        config.ASSISTANT_DEFAULT_PROVIDER
-        if config.ASSISTANT_DEFAULT_PROVIDER in available
-        else (available[0] if available else None)
-    )
-    return {
-        "available": bool(available),
-        "default_provider": default,
-        "providers": providers,
-    }
+    """The model table and which providers have a key (booleans only, never the keys)."""
+    return models.meta()
 
 
 @router.get("/meta")
 def meta() -> dict[str, Any]:
-    """What the frontend needs to decide whether to show the assistant at all."""
+    """What the frontend needs to decide whether to show the assistant at all, and to
+    fill the model / effort / execution popover."""
     return assistant_meta()
 
 
-def _pick_model(body: dict[str, Any]) -> tuple[str, str]:
-    info = assistant_meta()
-    provider = body.get("provider") or info["default_provider"]
-    if not provider:
-        raise HTTPException(
-            503,
-            "no assistant provider configured — set ANTHROPIC_API_KEY or "
-            "GEMINI_API_KEY in backend/.env",
+def _pick_model(body: dict[str, Any]) -> models.Choice:
+    try:
+        return models.choose(
+            body.get("provider"),
+            body.get("model"),
+            body.get("effort"),
+            body.get("service_tier"),
         )
-    prov = next((p for p in info["providers"] if p["id"] == provider), None)
-    if prov is None or not prov["available"]:
-        raise HTTPException(422, f"provider {provider!r} is not available")
-    model = body.get("model") or prov["default_model"]
-    return provider, str(model)
+    except ValueError as exc:
+        if not models.default_provider() and not body.get("provider"):
+            raise HTTPException(
+                503,
+                "no assistant provider configured — set ANTHROPIC_API_KEY, "
+                "GEMINI_API_KEY or OPENAI_API_KEY in backend/.env",
+            ) from exc
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.post("/chat")
 async def chat(request: Request) -> StreamingResponse:
-    """Body: {conversation_id?, provider?, model?, message? | tool_results?,
-    files?, app_state?}. Returns an SSE stream (see assistant/loop.py)."""
+    """Body: {conversation_id?, provider?, model?, effort?, service_tier?,
+    message? | tool_results?, files?, app_state?}. Returns an SSE stream (see
+    assistant/loop.py); effort and service_tier are checked against /meta's table."""
     try:
         body = await request.json()
     except Exception as exc:  # noqa: BLE001
@@ -106,7 +86,7 @@ async def chat(request: Request) -> StreamingResponse:
     if (message is None) == (tool_results is None):
         raise HTTPException(422, "pass exactly one of `message` or `tool_results`")
 
-    provider, model = _pick_model(body)
+    choice = _pick_model(body)
     conv = conversations.get_or_create(body.get("conversation_id"))
 
     # Uploads attached to this message: images and PDFs become multimodal file
@@ -139,12 +119,14 @@ async def chat(request: Request) -> StreamingResponse:
         try:
             yield from loop.run(
                 conv,
-                provider,
-                model,
+                choice.provider,
+                choice.model,
                 user_message=message,
                 file_parts=file_parts,
                 tool_results=tool_results,
                 app_state=body.get("app_state"),
+                effort=choice.effort,
+                service_tier=choice.service_tier,
             )
         finally:
             conv.turn_lock.release()

@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-from ... import config
+from .. import models
 
 
 def available() -> dict[str, bool]:
-    return {
-        "anthropic": bool(config.ANTHROPIC_API_KEY),
-        "gemini": bool(config.GEMINI_API_KEY),
-    }
+    return models.keys()
 
 
 def get(name: str):
@@ -24,4 +21,8 @@ def get(name: str):
         from .gemini import GeminiProvider
 
         return GeminiProvider()
+    if name == "openai":
+        from .openai import OpenAIProvider
+
+        return OpenAIProvider()
     raise ValueError(f"unknown provider {name!r}")

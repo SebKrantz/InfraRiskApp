@@ -9,17 +9,36 @@ thought signatures inside it for multi-turn function calling.
 
 from __future__ import annotations
 
+import logging
+import time
 import uuid
 from typing import Any, Iterator
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 
 from ... import config
 from .. import schema
 from ..tools import ToolSpec
 
+log = logging.getLogger("infrarisk.assistant")
+
 _SCHEMA_KEYS = {"type", "description", "enum", "items", "properties", "required"}
+# `effort` (models.EFFORT_LEVELS) as Gemini 3's thinking level; none leaves the model's
+# default (high).
+_THINKING = {
+    "minimal": types.ThinkingLevel.MINIMAL,
+    "low": types.ThinkingLevel.LOW,
+    "medium": types.ThinkingLevel.MEDIUM,
+    "high": types.ThinkingLevel.HIGH,
+}
+# Flex: half price, best-effort, 1-15 min latency, and no fallback of its own. A flex
+# request refused for capacity (503, or 429) is backed off FLEX_RETRIES times (2, 4, 8,
+# 16 s), then sent at the standard tier; the client waits up to FLEX_TIMEOUT_MS.
+FLEX_RETRIES = 4
+FLEX_TIMEOUT_MS = 900_000
+_CAPACITY = (429, 503)
+_sleep = time.sleep  # a seam for the tests
 
 
 def _clean_schema(node: Any) -> Any:
@@ -96,21 +115,71 @@ class GeminiProvider:
             ),
         )
 
+    def _open(
+        self, model: str, contents: list[types.Content], cfg: types.GenerateContentConfig
+    ) -> Iterator[types.GenerateContentResponse]:
+        """The response stream, its first chunk already read: the SDK sends the request on
+        the first read, so a refusal surfaces here, before anything was shown. A flex
+        request refused for capacity is backed off, then sent at the standard tier."""
+        tries = 0
+        while True:
+            flex = cfg.service_tier == types.ServiceTier.FLEX
+            stream = self.client.models.generate_content_stream(
+                model=model, contents=contents, config=cfg
+            )
+            try:
+                first = next(stream)
+            except StopIteration:
+                return iter(())
+            except errors.APIError as exc:
+                if not flex or exc.code not in _CAPACITY:
+                    raise
+                if tries < FLEX_RETRIES:
+                    tries += 1
+                    log.info(
+                        "gemini flex: no capacity (%s); retrying in %.0f s (%d of %d)",
+                        exc.code, 2.0**tries, tries, FLEX_RETRIES,
+                    )
+                    _sleep(2.0**tries)
+                else:
+                    log.warning(
+                        "gemini flex: no capacity after %d retries; sending the request "
+                        "at the standard tier", FLEX_RETRIES,
+                    )
+                    cfg = cfg.model_copy(update={"service_tier": None, "http_options": None})
+                continue
+
+            def chunks(first=first, stream=stream) -> Iterator[types.GenerateContentResponse]:
+                yield first
+                yield from stream
+
+            return chunks()
+
     def stream_turn(
         self,
         model: str,
         system: str,
         messages: list[dict[str, Any]],
         tools: list[ToolSpec],
+        effort: str | None = None,
+        service_tier: str | None = None,
     ) -> Iterator[schema.ProviderEvent]:
+        """`effort` is the thinking level (_THINKING); `service_tier="flex"` asks for flex
+        processing, with a long client timeout (FLEX_RETRIES)."""
+        flex = service_tier == "flex"
         cfg = types.GenerateContentConfig(
             system_instruction=system,
             tools=[types.Tool(function_declarations=_declarations(tools))] if tools else None,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+            thinking_config=(
+                types.ThinkingConfig(thinking_level=_THINKING[effort])
+                if effort in _THINKING
+                else None
+            ),
+            service_tier=types.ServiceTier.FLEX if flex else None,
+            http_options=types.HttpOptions(timeout=FLEX_TIMEOUT_MS) if flex else None,
         )
-        stream = self.client.models.generate_content_stream(
-            model=model, contents=_contents(messages), config=cfg
-        )
+        stream = self._open(model, _contents(messages), cfg)
         collected: list[types.Part] = []
         calls: list[schema.ToolCall] = []
         usage = None

@@ -206,7 +206,7 @@ export buttons.
 
 ```bash
 cd backend
-cp .env.example .env      # then add ANTHROPIC_API_KEY and/or GEMINI_API_KEY
+cp .env.example .env      # then add ANTHROPIC_API_KEY, GEMINI_API_KEY and/or OPENAI_API_KEY
 pip install -r requirements.txt
 ```
 
@@ -250,7 +250,7 @@ Set `ASSISTANT_MCP_ENABLED=0` to turn it off.
 - `HOST`: Server host (default: `0.0.0.0`)
 - `PORT`: Server port (default: `8000`)
 - `DEBUG`: Debug mode (default: `False`)
-- `ANTHROPIC_API_KEY` / `GEMINI_API_KEY`: enable the AI assistant (read from `backend/.env`)
+- `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`: enable the AI assistant (read from `backend/.env`)
 - `ASSISTANT_MAX_ITERATIONS` (30), `ASSISTANT_EXEC_TIMEOUT` (180 s), `ASSISTANT_UPLOAD_MAX_MB` (100), `ASSISTANT_MCP_ENABLED` (1)
 
 The frontend dev proxy targets `http://localhost:8000`; override with `BACKEND_URL` if that port is
