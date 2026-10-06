@@ -176,7 +176,8 @@ Workflow: list_hazards → get data in (below) → run_analysis / compare_hazard
 get_analysis_table or get_affected_segments for per-feature results; \
 expected_annual_damage integrates a family's return-period losses (flood, cyclone, \
 pga) into an EAD per climate variant — a lower bound by default. read_guide \
-explains the model's exact semantics; call it before vulnerability work.
+explains the model's exact semantics; call it before vulnerability work. \
+A report follows read_guide('reports') and read_guide('figures').
 
 Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope header \
 on every call; it maps to conversation id "mcp:<scope>" (no scope = the legacy \
