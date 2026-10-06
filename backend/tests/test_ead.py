@@ -130,6 +130,8 @@ class Tool(unittest.TestCase):
 
     def tearDown(self):
         uploaded_files.pop(FILE_ID, None)
+        for file_id in self.conv.datasets:
+            uploaded_files.pop(file_id, None)
         conversations._cleanup(self.conv)
 
     def ead(self, **kw):
@@ -195,6 +197,23 @@ class Tool(unittest.TestCase):
         self.assertAlmostEqual(v["ead_curve_upper"], 2.0)
         self.assertEqual([x["analysis"] for x in v["losses"]], names)
         self.assertEqual((out["threshold"], out["curve"]), (100.0, "rail"))
+
+    def test_reused_analyses_of_an_upload_named_by_file_name(self):
+        path = self.conv.workdir / "line.gpkg"
+        uploaded_files[FILE_ID]["gdf"].to_file(path)
+        self.conv.uploads["line.gpkg"] = path
+        names = [
+            analysis.run_analysis(
+                self.conv, "line.gpkg", f"flood_hazard_{t}_years_existing_climate",
+                threshold=100, curve="rail", replacement_value=500,
+            )["stored_as"]
+            for t in RPS
+        ]
+        out = self.ead(analyses=names, file_id="line.gpkg")
+        self.assertEqual(out["file_id"], self.conv.datasets[0])
+        self.assertAlmostEqual(out["variants"][0]["ead_central"], 1.0)
+        with self.assertRaisesRegex(ValueError, "the analyses are of"):
+            self.ead(analyses=names, file_id=FILE_ID)
 
     def test_refuses_a_single_return_period(self):
         with self.assertRaisesRegex(ValueError, "single return period"):

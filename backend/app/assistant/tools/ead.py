@@ -290,7 +290,8 @@ def expected_annual_damage(
                 "with `analyses`, the threshold, curve and replacement value are the "
                 "analyses' own — leave them out"
             )
-        points, setting = _reused(conv, analyses, file_id)
+        # An uploaded file's name names the dataset its analyses were run on.
+        points, setting = _reused(conv, analyses, file_id and resolve_dataset(conv, file_id))
         info = domain.get_dataset(setting["file_id"])
     else:
         if not file_id:
