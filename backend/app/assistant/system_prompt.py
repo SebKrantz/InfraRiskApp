@@ -58,9 +58,9 @@ try again; never repeat a failing call unchanged.
 - GUIDES ARE MANDATORY: read_guide('exposure_analysis') before your first \
 analysis, read_guide('vulnerability_analysis') before any damage-cost work, \
 read_guide('vulnerability_curves') before choosing or building a curve, \
-read_guide('multi_hazard') before comparing layers, read_guide('reports') \
-before writing any deliverable, read_guide('figures') when choosing what to \
-plot. They carry the required workflow, the exact model semantics and the \
+read_guide('multi_hazard') before comparing layers or computing expected \
+annual damage, read_guide('reports') before writing any deliverable, \
+read_guide('figures') when choosing what to plot. They carry the required workflow, the exact model semantics and the \
 quality bar.
 - Uploaded documents (Word, Markdown, CSV, Excel, PDF) are CONTEXT: a preview \
 rides with the message; read_document returns the full text. Read them before \

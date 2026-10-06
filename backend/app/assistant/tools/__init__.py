@@ -69,6 +69,7 @@ def load() -> None:
         curves,
         data,
         documents,
+        ead,
         guide,
         output,
         query,

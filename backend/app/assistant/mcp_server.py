@@ -173,7 +173,9 @@ assets (points and lines) against global natural-hazard rasters (flood, tropical
 cyclone, earthquake, landslide, drought). Implements AEI MCP contract v1 (v1.1).
 
 Workflow: list_hazards → get data in (below) → run_analysis / compare_hazards → \
-get_analysis_table or get_affected_segments for per-feature results. read_guide \
+get_analysis_table or get_affected_segments for per-feature results; \
+expected_annual_damage integrates a family's return-period losses (flood, cyclone, \
+pga) into an EAD per climate variant — a lower bound by default. read_guide \
 explains the model's exact semantics; call it before vulnerability work.
 
 Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope header \
@@ -206,7 +208,9 @@ Limits: every call has a {config.ASSISTANT_TOOL_TIMEOUT:g} s server-side timeout
 compare_hazards stops starting new layers when its time budget runs out and \
 reports the rest as not run. Long work: start_run_analysis / \
 start_compare_hazards return {{job_id, estimate_s}} at once; poll get_job(job_id) \
-for progress and the result; cancel_job(job_id). There is no solve budget. python_exec runs confined to the \
+for progress and the result; cancel_job(job_id). expected_annual_damage reruns every \
+layer of a family (9 for flood) but reuses the rasters already sampled, so on a large \
+network warm them with start_compare_hazards first. There is no solve budget. python_exec runs confined to the \
 scope's workdir (cwd) with the app's data/ directory read-only, no \
 subprocesses, a read-only view of the dataset store, and a hard stop after \
 {config.ASSISTANT_EXEC_TIMEOUT:g} s.
