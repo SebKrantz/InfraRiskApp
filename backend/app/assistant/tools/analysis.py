@@ -101,6 +101,11 @@ def run_analysis(
     out = domain.summarise(result, info, haz, threshold)
     out["file_id"] = file_id
     if vc is not None:
+        # expected_annual_damage reuses this result only beside others that
+        # share the curve and replacement value.
+        result["_assistant_meta"].update(
+            curve=curve, curve_path=str(vc["path"]), replacement_value=replacement_value
+        )
         out["curve"] = curve
         out["replacement_value"] = replacement_value
         out["replacement_value_basis"] = (

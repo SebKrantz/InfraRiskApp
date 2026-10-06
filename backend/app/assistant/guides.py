@@ -18,7 +18,9 @@ EXPOSURE_ANALYSIS = """\
    the intensity range before choosing a threshold.
 3. `run_analysis`. Then `ui_select_hazard` + `ui_set_threshold` so the map shows
    the same thing your numbers describe.
-4. Figures: `make_barchart` and `make_map` (the app's own exhibits).
+4. Figures: `make_barchart` and `make_map` (the app's own exhibits), for each
+   hazard the asset is exposed to — read_guide('figures') says when to leave
+   one out.
 5. `write_report_docx` if a deliverable was asked for — read_guide('reports') first.
 
 ## What the model actually computes (be precise about this)
@@ -132,7 +134,9 @@ multiplied by segment length. State the basis and the currency every time.
 
 ## What to report
 - Total damage cost with its currency and, when the curve has bounds, the
-  lower-upper band — as a range, not a false-precision single number.
+  lower-upper band — as a range, not a false-precision single number. It is
+  the loss of ONE event at the layer's return period, not an annual figure;
+  for an annual one use `expected_annual_damage` (read_guide('multi_hazard')).
 - The mean damage ratio, and the exposure share, clearly labelled as different.
 - The replacement value used, its basis (per feature / per metre) and where it
   came from (the user, an uploaded document, or your own stated assumption).
@@ -193,6 +197,47 @@ state both thresholds, and note explicitly that the return periods differ
 (250-975 years for PGA vs 25-100 for flood). Do not add exposures across
 hazards into a single "total" — assets exposed to two hazards would be
 double-counted.
+
+## Expected annual damage (EAD)
+A damage cost from one layer is an EVENT loss: what the 100-year flood would
+cost if it happened. **Never present it as annual**, and never divide it by the
+return period to make it so. The annual figure is the expected annual damage:
+the damage at each return period plotted against its annual exceedance
+probability p = 1/T, and the area under that curve. `expected_annual_damage`
+computes it — one analysis per return-period layer with the SAME threshold,
+curve and replacement value (it refuses mixed ones, and a single return
+period), integrated by the trapezoid rule. Pass `family` ('flood', 'cyclone',
+'pga') for every layer of a family, `hazards` for a subset, or `analyses` to
+reuse run_analysis results you already have.
+
+The conventions, which go into the method section with the number:
+- **Lower bound (the default).** No loss at events more frequent than the
+  smallest return period, as if the asset were protected up to it. Flood and
+  cyclone layers start at 25 years and PGA at 250, so for an unprotected asset
+  this understates — call it a lower bound. When a protection or design
+  standard is known, pass it as `protection_rp`: losses at return periods up
+  to it count as zero.
+- **Tail.** The largest return period's loss is held for every rarer event,
+  down to p = 0.
+- **Upper bound.** `upper_bound=true` instead joins the curve linearly from a
+  zero loss at T = 1 (the yearly event). Label it the upper bound; the two
+  together bracket what the frequent events could add.
+- **One EAD per climate variant.** Existing climate, SSP1 and SSP5 each get
+  their own, reported side by side as a range — never averaged.
+- **Two different bands.** With a bounded curve the result also carries
+  `ead_curve_lower` / `ead_curve_upper`, the curve's uncertainty. That is not
+  the lower/upper-bound convention above; name each band for what it is.
+- **Money.** The EAD is in the replacement value's currency and price basis —
+  pass `currency` and `price_basis` and state both with the figure.
+
+EADs of different hazards add only as an approximation: it assumes the events
+are rare and independent, and the sum is capped at the replacement value. Say
+so whenever you add them.
+
+Landslide susceptibility has no return period, so it has no EAD. It can be
+annualised only with an assumed annual frequency for its scenario, which the
+user states: scenario loss x that frequency, labelled as an assumption.
+Drought has no damage curve, so no EAD either.
 """
 
 REPORTS = """\
@@ -210,13 +255,18 @@ REPORTS = """\
    why, and — for damage — the curve and replacement value. State that assets
    are sampled at their location, lines every 100 m, and polygons at centroids.
 4. **Results**: tables and figures, each with one short interpreting paragraph.
-   Say what the number MEANS, not that it "is shown in the table".
+   Say what the number MEANS, not that it "is shown in the table". The app's
+   map and barchart go in once per hazard the asset is exposed to: a hazard
+   reaching under about 1 % of it gets one sentence and its table row, no map
+   and no barchart; one reaching all of it gets its map but no barchart
+   (read_guide('figures')).
 5. **Caveats and limitations**: never skip this. The standard set for this app:
    raster resolution vs asset size; centroid treatment of polygons; the
    threshold is a modelling choice, not a physical certainty; no-data areas
    count as unaffected; damage curves are engineering judgements; return periods
-   are annual exceedance probabilities; nothing here models cascading failure,
-   redundancy or repair time.
+   are annual exceedance probabilities, so one layer's damage is an event loss,
+   not an annual one; nothing here models cascading failure, redundancy or
+   repair time.
 6. **Conclusion**: brief and decisive. What the analysis shows, which assets or
    corridors deserve attention first, and what would most change the answer.
    No new numbers the body has not shown.
@@ -289,7 +339,16 @@ FIGURES = """\
   basemap with the infrastructure coloured by exposure (or damage ratio).
   Frames itself on the dataset. Pick `basemap='esri-imagery'` when the physical
   setting matters, `positron` (default) otherwise.
-These two belong in essentially every report: one chart, one map, per hazard.
+These two belong in essentially every report: one map and one chart per hazard
+the asset is EXPOSED to. Check the affected share before drawing either:
+- **None, or almost none, exposed** (under about 1 % of the length or the
+  features): no map and no barchart. The map would show nothing and the bar
+  would be empty. Give that hazard one sentence and its row in the results
+  table — e.g. "Flood (100-yr, existing climate) reaches 0.09 % of the line,
+  0.4 km at >= 100 mm."
+- **All of it exposed**: the map, but no barchart. One bar at 100 % says
+  nothing a sentence does not.
+- **Anything in between**: both.
 
 ## The general tools — for anything comparative
 - `make_chart` — exposure across return periods, climate scenarios, hazard
