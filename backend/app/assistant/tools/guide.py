@@ -21,8 +21,8 @@ from . import tool
     "218 published curves, and the published anchors for constructing one when "
     "nothing fits — including the landslide and drought layers, which have no "
     "curves at all), 'multi_hazard' before comparing return periods or climate "
-    "scenarios, 'reports' before writing any Word/Excel/CSV deliverable, and "
-    "'figures' when choosing what to plot.",
+    "scenarios or computing expected annual damage, 'reports' before writing any "
+    "Word/Excel/CSV deliverable, and 'figures' when choosing what to plot.",
     {
         "type": "object",
         "properties": {
