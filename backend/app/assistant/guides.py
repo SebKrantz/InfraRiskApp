@@ -205,18 +205,22 @@ return period to make it so. The annual figure is the expected annual damage:
 the damage at each return period plotted against its annual exceedance
 probability p = 1/T, and the area under that curve. `expected_annual_damage`
 computes it — one analysis per return-period layer with the SAME threshold,
-curve and replacement value (it refuses mixed ones, and a single return
-period), integrated by the trapezoid rule. Pass `family` ('flood', 'cyclone',
-'pga') for every layer of a family, `hazards` for a subset, or `analyses` to
-reuse run_analysis results you already have.
+curve and replacement value (it refuses mixed ones, a single return period,
+and layers from more than one family), integrated by the trapezoid rule. Pass
+`family` ('flood', 'cyclone', 'pga') for every layer of a family, `hazards`
+for a subset of one, or `analyses` to reuse run_analysis results you already
+have.
 
 The conventions, which go into the method section with the number:
 - **Lower bound (the default).** No loss at events more frequent than the
-  smallest return period, as if the asset were protected up to it. Flood and
-  cyclone layers start at 25 years and PGA at 250, so for an unprotected asset
-  this understates — call it a lower bound. When a protection or design
-  standard is known, pass it as `protection_rp`: losses at return periods up
-  to it count as zero.
+  smallest return period, which itself does its full loss. Flood and cyclone
+  layers start at 25 years and PGA at 250, so for an unprotected asset this
+  understates — call it a lower bound. When a protection or design standard is
+  known, pass it as `protection_rp`: losses at return periods up to AND
+  including it count as zero, rising linearly to the next layer's. A standard
+  equal to the smallest return period therefore gives LESS than the default,
+  which keeps that return period's loss: the default assumes no protection,
+  not protection to the smallest return period.
 - **Tail.** The largest return period's loss is held for every rarer event,
   down to p = 0.
 - **Upper bound.** `upper_bound=true` instead joins the curve linearly from a
@@ -224,9 +228,12 @@ The conventions, which go into the method section with the number:
   together bracket what the frequent events could add.
 - **One EAD per climate variant.** Existing climate, SSP1 and SSP5 each get
   their own, reported side by side as a range — never averaged.
-- **Two different bands.** With a bounded curve the result also carries
-  `ead_curve_lower` / `ead_curve_upper`, the curve's uncertainty. That is not
-  the lower/upper-bound convention above; name each band for what it is.
+- **Three kinds of "bound".** `estimate` names the frequency convention that
+  produced the number (lower or upper bound, above). With a bounded curve the
+  result also carries `ead_curve_lower` / `ead_curve_upper`, the curve's
+  uncertainty. And the flood layers' "SSP1 Lower bound" and "SSP5 Upper bound"
+  are the ends of the climate-scenario range. They are three different things:
+  name each for what it is, never just "the lower bound".
 - **Money.** The EAD is in the replacement value's currency and price basis —
   pass `currency` and `price_basis` and state both with the figure.
 
@@ -340,14 +347,18 @@ FIGURES = """\
   Frames itself on the dataset. Pick `basemap='esri-imagery'` when the physical
   setting matters, `positron` (default) otherwise.
 These two belong in essentially every report: one map and one chart per hazard
-the asset is EXPOSED to. Check the affected share before drawing either:
+the asset is EXPOSED to. Check the affected share before drawing either —
+the rule is the same in exposure and damage mode:
 - **None, or almost none, exposed** (under about 1 % of the length or the
   features): no map and no barchart. The map would show nothing and the bar
   would be empty. Give that hazard one sentence and its row in the results
   table — e.g. "Flood (100-yr, existing climate) reaches 0.09 % of the line,
   0.4 km at >= 100 mm."
 - **All of it exposed**: the map, but no barchart. One bar at 100 % says
-  nothing a sentence does not.
+  nothing a sentence does not. In damage mode the barchart would add only the
+  damage cost, its band and the mean damage ratio: put those in the sentence
+  and the table, and chart damage across return periods or scenarios with
+  `make_chart` instead.
 - **Anything in between**: both.
 
 ## The general tools — for anything comparative

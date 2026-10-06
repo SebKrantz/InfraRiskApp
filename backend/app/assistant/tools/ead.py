@@ -52,11 +52,13 @@ def ead(
 
     The losses are integrated over the annual exceedance probability p = 1/T
     by the trapezoid rule, and the largest-T loss is held down to p = 0. By
-    default there is no loss at events more frequent than the smallest T, as if
-    the asset were protected up to it: a lower bound. `protection_rp` sets a
-    known protection standard instead — losses at return periods up to it are
-    zero, and the curve rises linearly from a zero loss at it. `upper_bound`
-    joins the curve linearly from a zero loss at T = 1 instead.
+    default there is no loss at events more frequent than the smallest T, which
+    itself does its full loss: a lower bound for an asset without protection.
+    `protection_rp` sets a known protection standard instead — the losses at
+    return periods up to AND including it are zero, and the curve rises linearly
+    from a zero loss at it to the next return period's. One equal to the
+    smallest T therefore comes out below the default, which keeps that loss.
+    `upper_bound` joins the curve linearly from a zero loss at T = 1 instead.
     """
     t = np.asarray(return_periods, dtype=float)
     d = np.asarray(losses, dtype=float)
@@ -111,19 +113,34 @@ def return_period(name: str) -> tuple[Optional[float], str]:
 
 
 def _point(haz: dict) -> dict[str, Any]:
-    name = domain._clean(haz.get("hazard")) or haz["hazard_id"]
+    hid = haz["hazard_id"]
+    name = domain._clean(haz.get("hazard")) or hid
     rp, variant = return_period(name)
     if rp is None:
         raise ValueError(
             f"{name!r} has no return period, so it cannot enter an expected annual "
             f"damage. {LANDSLIDE_NOTE if 'landslide' in name.lower() else ''}".strip()
         )
-    return {"hazard_id": haz["hazard_id"], "hazard": name, "return_period": rp,
-            "variant": variant}
+    family = next((f for f, prefix in FAMILIES.items() if hid.startswith(prefix)), None)
+    return {"hazard_id": hid, "hazard": name, "return_period": rp, "variant": variant,
+            "family": family}
 
 
 def _group(points: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    """Points by climate variant, each sorted by return period and checked."""
+    """Points by climate variant, each sorted by return period and checked, all
+    from one family — one curve cannot fit flood depth and wind speed."""
+    outside = [pt["hazard"] for pt in points if pt["family"] is None]
+    if outside:
+        raise ValueError(
+            f"{outside} belong to no return-period family; expected annual damage "
+            f"takes the layers of one of {sorted(FAMILIES)}"
+        )
+    families = sorted({pt["family"] for pt in points})
+    if len(families) > 1:
+        raise ValueError(
+            f"the layers span the {' and '.join(families)} families; expected annual "
+            "damage integrates one family, under one curve — run one per family"
+        )
     groups: dict[str, list[dict[str, Any]]] = {}
     for pt in points:
         groups.setdefault(pt["variant"], []).append(pt)
@@ -194,9 +211,9 @@ def _losses(result: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
             "hazards": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Return-period layers (hazard_ids or names) instead "
-                "of a whole family; grouped by climate variant, at least two return "
-                "periods in each.",
+                "description": "Return-period layers (hazard_ids or names) of one "
+                "family instead of all of it; grouped by climate variant, at least two "
+                "return periods in each.",
             },
             "analyses": {
                 "type": "array",
@@ -227,7 +244,9 @@ def _losses(result: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
             "protection_rp": {
                 "type": "number",
                 "description": "A known protection or design standard in years: "
-                "losses at return periods up to it are zero.",
+                "losses at return periods up to and including it are zero, so one "
+                "equal to the smallest return period gives less than the default, "
+                "which keeps that return period's loss.",
             },
             "upper_bound": {
                 "type": "boolean",
@@ -343,7 +362,7 @@ def expected_annual_damage(
             "losses": [
                 {
                     "annual_exceedance_probability": 1.0 / pt["return_period"],
-                    **{k: v for k, v in pt.items() if k != "variant"},
+                    **{k: v for k, v in pt.items() if k not in ("variant", "family")},
                 }
                 for pt in pts
             ],
@@ -374,13 +393,14 @@ def expected_annual_damage(
         estimate = f"protected to {protection_rp:g} years"
         below = (
             f"Protection standard {protection_rp:g} years: no loss at return periods up "
-            "to it; the loss rises linearly from zero there to the next layer's."
+            "to and including it; the loss rises linearly from zero there to the next "
+            "layer's."
         )
     else:
         estimate = "lower bound"
         below = (
-            f"Lower bound: no loss at events more frequent than the {t_min:g}-year, as "
-            "if the asset were protected up to it."
+            f"Lower bound: no loss at events more frequent than the {t_min:g}-year, "
+            "which itself does its full loss."
         )
     geometry_type = info["geometry_type"]
     table = pd.DataFrame(
@@ -388,6 +408,7 @@ def expected_annual_damage(
     )
     out: dict[str, Any] = {
         "file_id": setting["file_id"],
+        "family": points[0]["family"],
         "geometry_type": geometry_type,
         "threshold": setting["threshold"],
         "curve": setting["curve"],
@@ -413,7 +434,9 @@ def expected_annual_damage(
             f"Tail: the {t_max:g}-year loss is held for every rarer event, down to p = 0.",
             "One EAD per climate variant; never average them across SSPs.",
             "ead_curve_lower / ead_curve_upper integrate the curve's lower and upper "
-            "damage bounds — the curve's uncertainty, not the frequency convention.",
+            "damage bounds — the curve's uncertainty, not the frequency convention, and "
+            "not the climate range the 'SSP1 Lower bound' / 'SSP5 Upper bound' layers "
+            "span.",
             "A damage figure from one layer is an event loss, never an annual one.",
         ],
         "variants": variants,
