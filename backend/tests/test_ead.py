@@ -80,6 +80,14 @@ class Trapezoid(unittest.TestCase):
         # plus the 0.4 tail.
         self.assertAlmostEqual(ead([25, 50, 100], [10, 20, 40], protection_rp=50), 0.6)
 
+    def test_protection_at_the_smallest_return_period_is_below_the_default(self):
+        # Protected to 25 years: the 25-year loss is dropped, not kept —
+        # (0.04 - 0.02) x (0 + 20) / 2 = 0.2, + 0.3 + 0.4 = 0.9 < 1.0.
+        self.assertAlmostEqual(ead([25, 50, 100], [10, 20, 40], protection_rp=25), 0.9)
+        # Just short of it the default comes back: the 25-year loss stays.
+        self.assertAlmostEqual(ead([25, 50, 100], [10, 20, 40], protection_rp=24.999), 1.0,
+                               places=3)
+
     def test_upper_bound_joins_from_zero_at_one_year(self):
         # + (1 - 0.04) x (0 + 10) / 2 = 4.8
         self.assertAlmostEqual(ead([25, 50, 100], [10, 20, 40], upper_bound=True), 5.8)
@@ -153,7 +161,7 @@ class Tool(unittest.TestCase):
             self.assertAlmostEqual(v["ead_central"], scale * 1.0)
             self.assertAlmostEqual(v["ead_curve_lower"], scale * 0.5)
             self.assertAlmostEqual(v["ead_curve_upper"], scale * 2.0)
-        self.assertEqual(out["estimate"], "lower bound")
+        self.assertEqual((out["estimate"], out["family"]), ("lower bound", "flood"))
         self.assertTrue(out["curve_has_bounds"])
         self.assertEqual(out["replacement_value"], {
             "value": 500, "basis": "per metre", "currency": "USD", "price_basis": "2024 prices",
@@ -206,6 +214,26 @@ class Tool(unittest.TestCase):
                  self.analyse("flood_hazard_50_years_existing_climate", threshold=100.0)]
         # (0.04 - 0.02) x (10 + 20) / 2 + 0.02 x 20
         self.assertAlmostEqual(self.ead(analyses=names)["variants"][0]["ead_central"], 0.7)
+
+    def test_refuses_layers_of_two_families(self):
+        with self.assertRaisesRegex(ValueError, "span the cyclone and flood families"):
+            self.ead(file_id=FILE_ID, curve="rail", replacement_value=500, hazards=[
+                "flood_hazard_25_years_existing_climate",
+                "flood_hazard_50_years_existing_climate",
+                "tropical_cyclone_wind_25_years",
+                "tropical_cyclone_wind_50_years",
+            ])
+        names = [self.analyse("flood_hazard_25_years_existing_climate"),
+                 self.analyse("tropical_cyclone_wind_50_years")]
+        with self.assertRaisesRegex(ValueError, "span the cyclone and flood families"):
+            self.ead(analyses=names)
+        with self.assertRaisesRegex(ValueError, "no return-period family"):
+            self.ead(file_id=FILE_ID, curve="rail", replacement_value=500, hazards=[
+                "drought_hazard_spi_6_5_year_return_period_existing_climate",
+                "flood_hazard_25_years_existing_climate",
+            ])
+        calls = self.run_exposure.call_count
+        self.assertEqual(calls, 2)  # the two analyses above; EAD itself read nothing
 
     def test_refuses_mixed_thresholds(self):
         names = [self.analyse("flood_hazard_25_years_existing_climate", threshold=100),
