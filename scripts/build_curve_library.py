@@ -28,6 +28,9 @@ Re-run after updating the source repo:
 
 `--check` rebuilds into a temp directory and diffs against the committed
 library instead of overwriting it.
+
+`README.md` and `house/` (the hand-written defaults, with their own index) are
+not generated: the build leaves both alone and `--check` ignores both.
 """
 
 from __future__ import annotations
@@ -47,6 +50,7 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = REPO.parent / "VulnerabilityCurves"
 TARGET = REPO / "data" / "vulnerability_curves"
+HAND_WRITTEN = {"README.md", "house"}
 
 # Source hazard folder -> (library folder, app hazard family, matching app layers).
 # Only these three share an intensity metric AND a unit with a layer in
@@ -208,10 +212,10 @@ def build(source: Path, target: Path) -> dict:
         token, bound = parsed
         families[(path.parent.parent.name, path.parent.name, token)][bound or "c"] = path
 
-    # Clear the generated content but keep README.md, which is written by hand.
+    # Clear the generated content but keep what is written by hand.
     if target.exists():
         for child in target.iterdir():
-            if child.name == "README.md":
+            if child.name in HAND_WRITTEN:
                 continue
             shutil.rmtree(child) if child.is_dir() else child.unlink()
     target.mkdir(parents=True, exist_ok=True)
@@ -433,10 +437,11 @@ def main() -> int:
             stats = build(args.source, out)
             import subprocess
 
-            # README.md is hand-written and deliberately not regenerated;
-            # .DS_Store is macOS litter.
+            # README.md and house/ are hand-written and deliberately not
+            # regenerated; .DS_Store is macOS litter.
             diff = subprocess.run(
-                ["diff", "-r", "-x", "README.md", "-x", ".DS_Store", str(TARGET), str(out)],
+                ["diff", "-r", "-x", "README.md", "-x", "house", "-x", ".DS_Store",
+                 str(TARGET), str(out)],
                 capture_output=True,
                 text=True,
             )

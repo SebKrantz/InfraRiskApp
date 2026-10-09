@@ -61,7 +61,9 @@ def _register(
 @tool(
     "search_curve_library",
     "Find a published vulnerability curve for an asset type, from the 218 "
-    "curves that ship with the app (Nirandjan et al. 2024). ALWAYS try this "
+    "curves that ship with the app (Nirandjan et al. 2024), plus AEI-RAIL-PGA, "
+    "the house default for railway track and formation under PGA (a proxy, with "
+    "its limitations in the result). ALWAYS try this "
     "before asking the user for a curve — the point of the library is that they "
     "should not have to supply one. Pass the hazard LAYER you are analysing "
     "against and a plain description of the asset ('fibre optic backbone', "
@@ -206,6 +208,7 @@ def use_library_curve(
             "'damage factor 0-1'."
         )
     label = (name or row["curve_id"]).strip()
+    house = bool(row.get("_house"))
     provenance = {
         "kind": "library",
         "curve_id": row["curve_id"],
@@ -214,8 +217,10 @@ def use_library_curve(
         "geography": row["geography"],
         "source": row["source"],
         "derivation": row["derivation"],
-        "citation": "Nirandjan et al. (2024), NHESS 24, 4341-4369",
+        "citation": row["source"] if house else "Nirandjan et al. (2024), NHESS 24, 4341-4369",
     }
+    if house:
+        provenance["limitations"] = row["limitations"]
     out = _register(conv, label, curve_library.path_for(row), provenance)
     out.update(
         {
@@ -234,7 +239,9 @@ def use_library_curve(
             ),
         }
     )
-    if row["central_basis"] != "published":
+    if house:
+        out["limitations"] = row["limitations"]
+    if row["central_basis"] not in ("published", "house default"):
         out["caveat"] = (
             f"the central curve is the {row['central_basis']} — the source published "
             "only bounds"
