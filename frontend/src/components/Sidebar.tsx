@@ -264,18 +264,6 @@ export default function Sidebar({
                 <h1 className="min-w-0 flex-1 text-xl font-bold leading-tight text-white">
                   Infrastructure Risk Analyzer
                 </h1>
-                <div className="shrink-0">
-                  <a
-                    href="/infra-risk-analyzer-guide.pdf"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title="Open user guide (PDF)"
-                    aria-label="Open user guide (PDF)"
-                    className="inline-flex items-center justify-center rounded-md border-0 px-3 py-1 text-sm font-medium bg-blue-600 text-white no-underline transition-colors hover:bg-blue-500"
-                  >
-                    Guide
-                  </a>
-                </div>
               </div>
               <Button variant="ghost" size="sm" onClick={onToggle} className="shrink-0 text-gray-300 hover:text-white hover:bg-gray-800">
                 <ChevronLeft className="h-4 w-4" />

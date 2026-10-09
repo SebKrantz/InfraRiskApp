@@ -418,7 +418,7 @@ export default function MapView({
         new maplibregl.AttributionControl({
           compact: true,
           customAttribution:
-            'Created by <a href="https://sebastiankrantz.com/" target="_blank" rel="noopener noreferrer">Sebastian Krantz</a>, funded by the World Bank',
+            'Created by <a href="https://sebastiankrantz.com/" target="_blank" rel="noopener noreferrer">Sebastian Krantz</a>',
         }),
         'bottom-right'
       )
