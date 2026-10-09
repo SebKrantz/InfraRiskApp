@@ -1,13 +1,17 @@
 """Expected annual damage: a hazard family's return-period losses, integrated
 over annual exceedance probability.
 
-`ead()` is the arithmetic and matches AGUI's `aei.cba.ead`: the losses against
-p = 1/T by the trapezoid rule, the largest-T loss held down to p = 0, and — the
-default — no loss at events more frequent than the smallest return period, a
-lower bound. The tool gathers one damage figure per return-period layer, by
-running the analyses or by reusing run_analysis results, and refuses anything
-that would make the points incomparable: one return period, or a threshold,
-curve or replacement value that differs between them.
+`ead()` is the arithmetic: the losses against p = 1/T by the trapezoid rule, the
+largest-T loss held down to p = 0, and — the default — no loss at events more
+frequent than the smallest return period, a lower bound that matches AGUI's
+`aei.cba.ead`. The upper bound does NOT: it extends the loss line log-linearly in
+T to where it reaches zero (see `_extend_frequent`), not linearly in p from zero
+loss at T = 1, which gave 7-13 % of an asset a year. The tool gathers one damage
+figure per return-period layer, by running the analyses or by reusing
+run_analysis results, and refuses anything that would make the points
+incomparable: one return period, or a threshold, curve or replacement value that
+differs between them. Each EAD also comes with its share of the asset's
+replacement value and a plausibility flag.
 """
 
 from __future__ import annotations
@@ -37,9 +41,16 @@ _RP = re.compile(r"(\d+)[\s-]*years?\b", re.IGNORECASE)
 LANDSLIDE_NOTE = (
     "Landslide susceptibility has no return period, so it has no EAD. It can be "
     "annualised only by assuming an annual frequency for its scenario, which the "
-    "caller must state: EAD = scenario loss x that frequency, labelled as an "
-    "assumption."
+    "caller must state: EAD = scenario loss x that frequency (central 1/20, range "
+    "1/50-1/10 unless the brief gives one), labelled as an assumption."
 )
+
+# The upper bound looks no further than this factor below the smallest return
+# period, and never under one year.
+EXTENSION_FACTOR = 10.0
+# Above this share of the asset's replacement value a year, an EAD is not a figure
+# to plan with: the asset would be lost to hazards in under a century.
+PLAUSIBLE_SHARE = 0.01
 
 
 def ead(
@@ -58,7 +69,8 @@ def ead(
     return periods up to AND including it are zero, and the curve rises linearly
     from a zero loss at it to the next return period's. One equal to the
     smallest T therefore comes out below the default, which keeps that loss.
-    `upper_bound` joins the curve linearly from a zero loss at T = 1 instead.
+    `upper_bound` instead carries the curve on to more frequent events: see
+    `_extend_frequent`.
     """
     t = np.asarray(return_periods, dtype=float)
     d = np.asarray(losses, dtype=float)
@@ -93,11 +105,36 @@ def ead(
         t = np.concatenate(([protection_rp], t[keep]))
         d = np.concatenate(([0.0], d[keep]))
     elif upper_bound:
-        t = np.concatenate(([1.0], t))
-        d = np.concatenate(([0.0], d))
+        t, d = _extend_frequent(t, d)
     p = 1.0 / t
     area = ((p[:-1] - p[1:]) * (d[:-1] + d[1:])).sum() / 2
     return float(area + p[-1] * d[-1])
+
+
+def _extend_frequent(t: np.ndarray, d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """The upper bound: (T, loss) with the loss line carried on past the smallest
+    return period to more frequent events (t sorted, d the losses).
+
+    The line is straight in ln T through the two smallest return periods — losses
+    shrink by a fixed amount per halving of T, as they do between the layers — and
+    runs down to where it reaches zero, but no further than EXTENSION_FACTOR below
+    the smallest return period and never under 1 year. Below that there is no loss,
+    as in the lower bound. It assumes the trend between the two most frequent
+    layers continues. (Joining zero loss at T = 1 linearly in p instead credited
+    frequent events with losses no layer shows: 7-13 % of a railway a year.) The
+    span is cut into short steps so the trapezoid follows the curve, which is
+    convex in p.
+    """
+    if d[0] <= 0:
+        return t, d
+    slope = max(0.0, (d[1] - d[0]) / np.log(t[1] / t[0]))  # loss per e-fold of T
+    zero = t[0] * np.exp(-d[0] / slope) if slope > 0 else 0.0
+    reach = max(zero, t[0] / EXTENSION_FACTOR, 1.0)
+    if reach >= t[0]:
+        return t, d
+    grid = np.geomspace(reach, t[0], 41)[:-1]
+    loss = np.maximum(0.0, d[0] - slope * np.log(t[0] / grid))
+    return np.concatenate((grid, t)), np.concatenate((loss, d))
 
 
 def return_period(name: str) -> tuple[Optional[float], str]:
@@ -187,6 +224,40 @@ def _losses(result: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _asset_value(result: dict[str, Any], info: dict, values: Any) -> Optional[float]:
+    """Replacement value of the whole dataset, in the EAD's currency: what a year's
+    EAD is a share of. `values` is the scalar or per-row array the analyses used;
+    a line's is per metre, so its length comes from the analysis's segments."""
+    v = np.asarray(values, dtype=float)
+    if info["geometry_type"] == "Point":
+        return float(v.sum() if v.ndim else v * info["feature_count"])
+    if v.ndim == 0:
+        return float(v * (result["affected_meters"] + result["unaffected_meters"]))
+    segments = result["full_gdf"]
+    rows = segments["line_id"].to_numpy(dtype=int) - 1
+    return float((v[rows] * segments["length_m"].to_numpy(dtype=float)).sum())
+
+
+def _plausibility(ead_value: float, asset_value: float) -> dict[str, Any]:
+    """The EAD as a share of the asset's replacement value per year, and a flag
+    when that is more than PLAUSIBLE_SHARE."""
+    share = ead_value / asset_value
+    out: dict[str, Any] = {
+        "ead_pct_of_asset_per_year": float(f"{100 * share:.3g}"),
+        "plausibility": "ok" if share <= PLAUSIBLE_SHARE else "high",
+    }
+    if share > PLAUSIBLE_SHARE:
+        out["plausibility_note"] = (
+            f"{100 * share:.1f} % of the replacement value every year is more than "
+            f"{100 * PLAUSIBLE_SHARE:g} % a year: as if the whole asset were lost to "
+            f"this hazard in {1 / share:.0f} years. It is not a planning bound and "
+            "not a stress case. Check the curve, the threshold, the replacement value "
+            "and the frequency convention, and report it as implausible rather than "
+            "as an upper figure."
+        )
+    return out
+
+
 @tool(
     "expected_annual_damage",
     "Expected annual damage (EAD) of a dataset from one hazard family's "
@@ -197,12 +268,18 @@ def _losses(result: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
     "as `hazards`, or as `analyses` — run_analysis results to reuse, which must "
     "share one threshold, curve and replacement value. Returns one EAD per "
     "climate variant, never averaged, with the per-return-period losses, and "
-    "a lower/upper range when the curve has bounds. Default is a LOWER BOUND: "
-    "no loss at events more frequent than the smallest return period; "
-    "`protection_rp` sets a known protection standard, `upper_bound` joins the "
-    "curve from zero loss at T = 1 instead. The largest return period's loss is "
-    "held to p = 0. Read read_guide('multi_hazard') first. Runs every layer it "
-    "has not sampled before: tens of seconds each.",
+    "a lower/upper range when the curve has bounds. Default (the central "
+    "figure) is a LOWER BOUND: no loss at events more frequent than the smallest "
+    "return period; `protection_rp` sets a known protection standard; "
+    "`upper_bound` instead extends the loss line to more frequent events, "
+    "straight in ln T through the two smallest return periods, down to where it "
+    "reaches zero (at most 10 times below the smallest return period, never under "
+    "1 year). The largest return period's loss is held to p = 0. Each result also "
+    "gives the EAD as a share of the asset's replacement value per year "
+    "(ead_pct_of_asset_per_year) and a `plausibility` flag: above about 1 % a year "
+    "it is not a planning figure and not a bound. EADs of different hazards add "
+    "(capped at the replacement value); read read_guide('multi_hazard') first. "
+    "Runs every layer it has not sampled before: tens of seconds each.",
     {
         "type": "object",
         "properties": {
@@ -250,8 +327,10 @@ def _losses(result: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
             },
             "upper_bound": {
                 "type": "boolean",
-                "description": "Join the curve linearly from zero loss at T = 1 "
-                "(the yearly event) instead of the lower-bound default.",
+                "description": "Upper bound instead of the lower-bound default: extend "
+                "the loss line to events more frequent than the smallest return "
+                "period, log-linearly in return period, to where it reaches zero "
+                "(no further than 10 times below it, never under 1 year).",
             },
         },
     },
@@ -342,6 +421,7 @@ def expected_annual_damage(
                 vulnerability_curve_upper_interp=vc["upper"],
             )
             pt.update(_losses(result, domain.summarise(result, info, haz, threshold)))
+        asset_value = _asset_value(result, info, values)
         setting = {
             "file_id": file_id,
             "threshold": threshold,
@@ -352,6 +432,8 @@ def expected_annual_damage(
             "per_feature": per_feature,
             "provenance": vc.get("provenance"),
         }
+    else:
+        asset_value = setting["asset_value"]
 
     bounded = all("damage_cost_lower" in pt for pts in groups.values() for pt in pts)
     variants = []
@@ -370,6 +452,12 @@ def expected_annual_damage(
         }
         central = [pt["damage_cost"] for pt in pts]
         entry["ead_central"] = ead(rps, central, protection_rp, upper_bound)
+        if upper_bound:
+            reach = _extend_frequent(np.asarray(rps, dtype=float), np.asarray(central))[0][0]
+            if reach < rps[0]:
+                entry["upper_bound_extends_to_years"] = round(float(reach), 1)
+        if asset_value:
+            entry.update(_plausibility(entry["ead_central"], asset_value))
         if bounded:
             for side in ("lower", "upper"):
                 entry[f"ead_curve_{side}"] = ead(
@@ -387,8 +475,12 @@ def expected_annual_damage(
     if upper_bound:
         estimate = "upper bound"
         below = (
-            f"Upper bound: the loss rises linearly from zero at T = 1 year (the yearly "
-            f"event) to the {t_min:g}-year loss."
+            f"Upper bound: the loss line through the two smallest return periods is "
+            f"extended to more frequent events, straight in ln T, down to where it "
+            f"reaches zero (per variant: upper_bound_extends_to_years) — at most "
+            f"{EXTENSION_FACTOR:g} times below the {t_min:g}-year, never under 1 year; "
+            "no loss beyond that. A bound on what the frequent events could add, "
+            "not a forecast."
         )
     elif protection_rp is not None:
         estimate = f"protected to {protection_rp:g} years"
@@ -420,6 +512,7 @@ def expected_annual_damage(
             "basis": "per feature" if geometry_type == "Point" else "per metre",
             "currency": currency,
             "price_basis": price_basis,
+            "asset_total": asset_value,
             **{
                 k: setting[k]
                 for k in ("replacement_value_column", "replacement_value_map", "per_feature")
@@ -438,6 +531,13 @@ def expected_annual_damage(
             "damage bounds — the curve's uncertainty, not the frequency convention, and "
             "not the climate range the 'SSP1 Lower bound' / 'SSP5 Upper bound' layers "
             "span.",
+            "ead_pct_of_asset_per_year is the central EAD over the whole dataset's "
+            "replacement value (asset_total); above about "
+            f"{100 * PLAUSIBLE_SHARE:g} % a year `plausibility` is 'high' and the figure "
+            "is not a planning bound.",
+            "EADs of different hazards add (rare, independent events; the sum is "
+            "capped at the replacement value). Event losses at given return periods "
+            "do not.",
             "A damage figure from one layer is an event loss, never an annual one.",
         ],
         "variants": variants,
@@ -458,7 +558,7 @@ def _reused(
     the dataset, threshold, curve and replacement value."""
     from .output import _analysis
 
-    points, settings = [], []
+    points, settings, results = [], [], []
     for name in names:
         result = _analysis(conv, name)
         meta = result.get("_assistant_meta", {})
@@ -474,6 +574,7 @@ def _reused(
         pt["analysis"] = name
         points.append(pt)
         settings.append(meta)
+        results.append(result)
 
     for key, what in (
         ("file_id", "datasets"),
@@ -497,7 +598,17 @@ def _reused(
     if file_id and file_id != first["file_id"]:
         raise ValueError(f"the analyses are of {first['file_id']!r}, not {file_id!r}")
     curve = conv.curves.get(first["curve"], {})
+    info = domain.get_dataset(first["file_id"])
+    column = first.get("replacement_value_column")
+    values = (
+        domain.replacement_values(
+            info, column, first.get("replacement_value_map"), first["replacement_value"]
+        )[0]
+        if column
+        else first["replacement_value"]
+    )
     return points, {
+        "asset_value": _asset_value(results[0], info, values),
         "file_id": first["file_id"],
         "threshold": first["threshold"],
         "curve": first["curve"],
