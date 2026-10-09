@@ -48,7 +48,10 @@ number without the threshold that produced it.
   ground-level equipment), ~1000 mm+ (severe structural damage).
 - Tropical cyclone layers are gust speed in **km/h**: ~120 km/h is roughly the
   threshold for damage to overhead lines and masts, ~180 km/h for severe damage.
-- PGA layers are in **cm/s²**: ~50 is a light-damage threshold, ~200 moderate.
+- PGA layers are in **cm/s²**: the default exposure threshold is **0.1 g (98
+  cm/s²)** when the brief gives none, the same in every run so that exposure
+  figures compare; ~200 is moderate damage. The defaults for all layers are
+  listed in `read_guide('multi_hazard')`.
 - Landslide layers are a susceptibility **class 1-5**, not a physical quantity;
   threshold at a class boundary (e.g. >= 4) and call it "high susceptibility".
 - Drought layers are indices, event counts or days — read `get_hazard` for the
@@ -81,6 +84,10 @@ numbers and must never be conflated.
    curves and the tools to build one when none fits, so a request for
    vulnerability analysis is answerable straight away:
    - the user uploaded a CSV → `load_vulnerability_curve`;
+   - a railway under a PGA layer and no curve from the user →
+     `use_library_curve('AEI-RAIL-PGA')`, the house default, so that every
+     analysis of a railway uses the same curve (any other curve is a
+     sensitivity: run it beside the default, say why, and report both);
    - otherwise → `search_curve_library(hazard=<layer>, asset=<description>)`
      then `use_library_curve(curve_id)`;
    - nothing fits, or the layer has no curves at all (landslide, drought) →
@@ -101,6 +108,18 @@ numbers and must never be conflated.
    ratio ramp. `plot_curve` shows the curve itself — include it whenever you
    chose or built the curve rather than the user.
 6. Drive the UI too: `ui_set_vulnerability` with the curve and replacement value.
+
+## A damage cost for every hazard the asset is exposed to
+An asset exposed to a layer gets a map, a chart and a row for it, so it gets a
+damage cost too. Where no library curve fits (the earthquake-triggered landslide
+layer is the usual case), do not leave the cost out: apply the closest curve as
+a labelled proxy with bounds. `read_guide('vulnerability_curves')` gives the
+landslide-class curves, and the same table serves the earthquake-triggered layer
+as a proxy; call the figure a proxy wherever it appears. If you really cannot
+cost a layer, leave it out of the maps and charts as well, so that nothing is
+shown without a cost, and say in one sentence why. Drought is the exception: it
+does not damage the asset directly (`read_guide('vulnerability_curves')`), so
+report its exposure and say that it has no damage cost.
 
 ## The curve file
 Two accepted layouts, header optional:
@@ -136,7 +155,8 @@ multiplied by segment length. State the basis and the currency every time.
 - Total damage cost with its currency and, when the curve has bounds, the
   lower-upper band — as a range, not a false-precision single number. It is
   the loss of ONE event at the layer's return period, not an annual figure;
-  for an annual one use `expected_annual_damage` (read_guide('multi_hazard')).
+  for an annual one use `expected_annual_damage` (read_guide('multi_hazard')),
+  whose total and split by hazard are the headline of an appraisal.
 - The mean damage ratio, and the exposure share, clearly labelled as different.
 - The replacement value used, its basis (per feature / per metre) and where it
   came from (the user, an uploaded document, or your own stated assumption).
@@ -194,9 +214,25 @@ Discipline about what these are:
 Comparing flood exposure with seismic exposure is comparing different units at
 different return periods. Only ever compare the SHARE of the network exposed,
 state both thresholds, and note explicitly that the return periods differ
-(250-975 years for PGA vs 25-100 for flood). Do not add exposures across
-hazards into a single "total" — assets exposed to two hazards would be
-double-counted.
+(250-975 years for PGA vs 25-100 for flood). Do not add exposed lengths or
+counts across hazards into a single "total" — assets exposed to two hazards
+would be double-counted. Expected annual damages are another matter: they add
+(below).
+
+## Defaults when the brief gives none
+Use these, state them in the method section, and change one only when the user
+does, so that runs of the same asset compare:
+- **PGA exposure threshold: 0.1 g (98 cm/s²).**
+- **Flood: the central case is the existing-climate layer.** SSP1 and SSP5 are
+  the ends of a range around it: show them beside it, never average them, never
+  pin them to a year.
+- **Landslide: the scenario loss is conditional** (a damage given the trigger),
+  not an annual expectation. Annualise it only with a stated scenario frequency,
+  central 1/20 a year and range 1/50 to 1/10, and say that it is an assumption.
+- **EAD: the lower bound is the central figure**; the upper bound and the
+  curve's bounds are ranges around it.
+- **Railway under PGA: the curve is `AEI-RAIL-PGA`**
+  (`read_guide('vulnerability_curves')`).
 
 ## Expected annual damage (EAD)
 A damage cost from one layer is an EVENT loss: what the 100-year flood would
@@ -223,9 +259,22 @@ The conventions, which go into the method section with the number:
   not protection to the smallest return period.
 - **Tail.** The largest return period's loss is held for every rarer event,
   down to p = 0.
-- **Upper bound.** `upper_bound=true` instead joins the curve linearly from a
-  zero loss at T = 1 (the yearly event). Label it the upper bound; the two
-  together bracket what the frequent events could add.
+- **Upper bound.** `upper_bound=true` carries the loss line on to events more
+  frequent than the smallest return period: straight in ln T through the two
+  smallest return periods, down to where it reaches zero (the result's
+  `upper_bound_extends_to_years`), at most 10 times below the smallest return
+  period and never under 1 year. Label it the upper bound; the two together
+  bracket what the frequent events could add. It is a sensitivity beside the
+  central figure, never the central figure and never a CBA stress case on its
+  own. Do not rebuild the old convention (zero loss at T = 1, linear in p) in
+  python_exec: it put 7-13 % of a railway into every year.
+- **Plausibility.** Each variant carries `ead_pct_of_asset_per_year`, the central
+  EAD as a share of the whole dataset's replacement value (`asset_total`), and a
+  `plausibility` flag. Above about 1 % a year the flag reads `high`: the EAD says
+  the asset is lost to this hazard within a century. That is not a planning
+  bound and not a stress case, so never present it as either; look for the cause
+  (curve, threshold, replacement value) and report the figure as implausible,
+  with the cause.
 - **One EAD per climate variant.** Existing climate, SSP1 and SSP5 each get
   their own, reported side by side as a range — never averaged.
 - **Three kinds of "bound".** `estimate` names the frequency convention that
@@ -237,14 +286,22 @@ The conventions, which go into the method section with the number:
 - **Money.** The EAD is in the replacement value's currency and price basis —
   pass `currency` and `price_basis` and state both with the figure.
 
-EADs of different hazards add only as an approximation: it assumes the events
-are rare and independent, and the sum is capped at the replacement value. Say
-so whenever you add them.
+**Expected annual damages add across hazards** (rare, independent events,
+capped at the replacement value); **event losses at given return periods do
+not** (a 475-year earthquake loss and a 100-year flood loss do not happen
+together), and neither do exposures. So an appraisal's total EAD is the sum of
+the `ead_central` of each hazard, all under the central (lower-bound) convention
+and the existing-climate flood layer, with its split by hazard beside it. Sum
+them in python_exec from the tool results, not by hand, and say that you added
+them and on what assumption. Put the upper bound, the curve bounds and the SSP
+flood EADs beside the total as a range, never inside it. Never write that
+hazard results "are not added": say which quantity you mean.
 
-Landslide susceptibility has no return period, so it has no EAD. It can be
-annualised only with an assumed annual frequency for its scenario, which the
-user states: scenario loss x that frequency, labelled as an assumption.
-Drought has no damage curve, so no EAD either.
+Landslide susceptibility has no return period, so it has no EAD of its own. It
+is annualised with a stated frequency for its scenario (the default above):
+scenario loss x that frequency, labelled as an assumption, and it joins the
+total on that footing. Without a stated frequency it stays a scenario loss, never
+an annual figure. Drought has no damage curve, so no EAD either.
 """
 
 REPORTS = """\
@@ -255,7 +312,15 @@ REPORTS = """\
 2. **Executive summary**: the headline numbers in the first five lines, then two
    or three sentences of interpretation. A reader who stops here should have the
    answer. Every figure quoted here MUST reappear in the body — the summary
-   summarises, it never introduces.
+   summarises, it never introduces. For a damage analysis the headline is the
+   **total expected annual damage and its split by hazard**, under the central
+   convention (lower bound, existing-climate flood), with currency, price basis
+   and its share of the replacement value a year. A chapter's key takeaways do
+   the same. Expected annual damages add across hazards (rare, independent
+   events, capped at the replacement value); event losses at given return
+   periods do not. Never write that hazard results "are not added": say which
+   quantity. The upper bound and the SSP flood EADs go beside the total as a
+   range, never inside it.
 3. **Data and method**: what infrastructure was analysed (source, feature count,
    total length), which hazard layers (name, return period, climate scenario,
    units) with their modelling provenance from `get_hazard`, the threshold and
@@ -266,11 +331,16 @@ REPORTS = """\
    map and barchart go in once per hazard the asset is exposed to: a hazard
    reaching under about 1 % of it gets one sentence and its table row, no map
    and no barchart; one reaching all of it gets its map but no barchart
-   (read_guide('figures')).
+   (read_guide('figures')). Every hazard shown has a damage cost, a labelled
+   proxy where no curve fits (read_guide('vulnerability_analysis')); an EAD
+   flagged `high` for plausibility is reported as implausible, never as a bound
+   or a stress case.
 5. **Caveats and limitations**: never skip this. The standard set for this app:
    raster resolution vs asset size; centroid treatment of polygons; the
    threshold is a modelling choice, not a physical certainty; no-data areas
-   count as unaffected; damage curves are engineering judgements; return periods
+   count as unaffected; damage curves are engineering judgements (a PGA curve
+   for railway track is a proxy: ground failure, not shaking, damages track);
+   return periods
    are annual exceedance probabilities, so one layer's damage is an event loss,
    not an annual one; nothing here models cascading failure, redundancy or
    repair time.
@@ -386,6 +456,9 @@ the rule is the same in exposure and damage mode:
   periods, scenarios or thresholds, or plot the share on a percentage axis.
   Reserve the affected/unaffected split for the app's own `make_barchart`,
   where it is the established house exhibit, and say the share in the caption.
+- In a damage analysis, draw a map or chart for a hazard only if it has a damage
+  cost (a labelled proxy counts); a layer that cannot be costed stays out of the
+  figures too (read_guide('vulnerability_analysis')).
 - Caption every figure with what, where, units and scenario.
 - Do not draw a chart of two numbers you already stated in a sentence.
 - Generate every figure BEFORE writing the report, then embed by artifact_id.
@@ -448,6 +521,20 @@ Then `use_library_curve(curve_id)` and the curve behaves exactly like an
 uploaded CSV: `run_analysis(curve=...)`, `ui_set_vulnerability(curve=...)`, and
 the app's own vulnerability mode all work on it unchanged.
 
+**Railway track and formation under PGA: use the house default
+`AEI-RAIL-PGA`, unless the user supplies a curve.** Do not build your own: three
+appraisals of one railway did, and their 475-year losses differed by almost a
+factor of two. It is a lognormal fragility with four damage states: medians
+0.15 / 0.30 / 0.50 / 1.00 g (147 / 294 / 490 / 981 cm/s²), beta 0.6, damage
+ratios 0.05 / 0.20 / 0.50 / 0.70 (capped at 0.70), with a band from the medians
+multiplied and divided by 1.5. It gives 0.02 at 0.1 g, 0.09 at 200 cm/s², 0.35
+at 500 and 0.56 at 1000. It is a proxy: HAZUS damages rail track through
+permanent ground deformation, not shaking, so the medians stand for the PGA at
+which ground failure sets in, and the medians, the top two ratios and the band
+are judgement. Say so in the caveats. A different curve is a **sensitivity**: run it beside the
+default, name it and why, and report both. It covers track and formation only
+(bridges, tunnels and stations need their own treatment).
+
 ## Step 2 — judge the candidates before you pick
 
 The search returns several. They are not interchangeable, and the differences
@@ -501,7 +588,8 @@ a band claims precision it has not got.
 - **PGA: lognormal fragility per damage state, combined into a mean damage
   factor.** `P(DS>=i | im) = Phi(ln(im/theta_i)/beta_i)`, then
   `MDF(im) = sum_i DR_i * [P(DS>=i) - P(DS>=i+1)]`. Compute it in `python_exec`
-  and pass the resulting points to `create_curve`.
+  and pass the resulting points to `create_curve`. (`AEI-RAIL-PGA` is this, for
+  railway track.)
 - **Onset threshold.** A damage function starts at zero and stays there for a
   while. Flood ~100-300 mm for equipment-bearing assets; wind ~90-150 km/h;
   PGA ~0.10 g (98 cm/s2). A curve rising from the very first pixel is wrong.
@@ -548,6 +636,8 @@ text, do not bury it.
 
 Default to **+/- 0.15 absolute, or +/- 35% relative, whichever is wider**,
 clipped to [0,1] — wider near the onset threshold, narrower near saturation.
+(Not for the landslide class curves, whose values are 0.01-0.06: they take
+0.5 and 2 times the central value, below.)
 Where two library curves for the same asset disagree, the band must be at least
 as wide as that disagreement. For scale: Koks et al. found the choice of
 fragility curve explains ~60% of total loss variance, against ~20% for
@@ -601,6 +691,8 @@ interpolation never spans a gap. An indicative set, to be labelled as such:
 | Buildings | 0.50 | 0 | 0 | 0.010 | 0.015 | 0.025 | 0.050 |
 
 The raster carries a class **0** as well as 1-5, so tabulate all six points.
+Give `lower` and `upper` at **0.5 and 2 times** the central values: the general
+band above would swamp a curve this small.
 
 **Only the P row is published, and only for roads and railways.** Every V, and
 the reduction applied to point assets, is your judgement. Never describe the
@@ -608,11 +700,22 @@ result as "following the GIRI paper" — the paper supplies one factor of a
 two-factor product. Say which half is published and which half is yours, in
 those terms.
 
+**The earthquake-triggered layer takes this same table as a proxy.** This guide
+carries only the rainfall row, so unless you hold the published earthquake row,
+use the table for the earthquake-triggered layer, label the curve and its damage
+cost a proxy borrowed from the rainfall-triggered table, with its 0.5-2 times
+band, and keep the conditional wording ("given a triggering earthquake"). A
+labelled proxy is better than an exposed layer with no cost
+(`read_guide('vulnerability_analysis')`).
+
 Two more things must reach the user, and one setting must be applied:
-- The damage figure is an expected fraction **conditional on a mid-severity
-  rainfall scenario**, not an annual expected loss, and **confidence is low** —
-  use that word. Lead with the exposure result, which is solid, and give the
-  damage cost as indicative.
+- The damage figure is an expected fraction **conditional on the triggering
+  scenario** (a mid-severity rainfall, or an earthquake for the
+  earthquake-triggered layer), not an annual expected loss, and **confidence is
+  low** — use that word. Lead with the exposure result, which is solid, and give
+  the damage cost as indicative. To put it in an annual total, annualise it
+  with a stated scenario frequency, central 1/20 a year and range 1/50 to 1/10,
+  labelled as an assumption (`read_guide('multi_hazard')`).
 - The published probabilities are calibrated on a **1 km x 600 m cell taking the
   maximum-susceptibility pixel**, while this app samples ONE pixel at the asset.
   They are not the same quantity; mention it in the caveats.
