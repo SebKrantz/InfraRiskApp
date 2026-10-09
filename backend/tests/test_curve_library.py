@@ -123,5 +123,38 @@ class RailwayPGACurve(unittest.TestCase):
         self.assertEqual(len(rows), 219)
 
 
+class GuidesPointAtTheDefault(unittest.TestCase):
+    """The text agents read must name the curve that exists, with the numbers the
+    file holds, and carry the conventions the appraisals need."""
+
+    def test_guides_and_mcp_instructions_name_the_curve(self):
+        from app.assistant import guides, mcp_server
+
+        curve_library.get(CURVE_ID)
+        for topic in ("vulnerability_analysis", "vulnerability_curves", "multi_hazard"):
+            self.assertIn(CURVE_ID, guides.TOPICS[topic], topic)
+        self.assertIn(CURVE_ID, mcp_server.INSTRUCTIONS)
+        self.assertIn("plausibility", mcp_server.INSTRUCTIONS)
+        text = " ".join(guides.TOPICS["vulnerability_curves"].split())
+        for part in ("0.15 / 0.30 / 0.50 / 1.00 g", "147 / 294 / 490 / 981", "beta 0.6",
+                     "0.05 / 0.20 / 0.50 / 0.70", "ground deformation", "sensitivity"):
+            self.assertIn(part, text)
+
+    def test_guides_state_the_conventions(self):
+        from app.assistant import guides
+
+        multi = " ".join(guides.TOPICS["multi_hazard"].split())
+        reports = " ".join(guides.TOPICS["reports"].split())
+        for part in ("98 cm/s²", "existing-climate", "1/20", "1/50 to 1/10",
+                     "Expected annual damages add across hazards",
+                     "event losses at given return periods do not"):
+            self.assertIn(part, multi)
+        self.assertIn("total expected annual damage", reports)
+        self.assertIn("split by hazard", reports)
+        self.assertIn("proxy", guides.TOPICS["vulnerability_analysis"])
+        for topic, text in guides.TOPICS.items():
+            self.assertNotIn("joins the curve linearly", text, topic)
+
+
 if __name__ == "__main__":
     unittest.main()
