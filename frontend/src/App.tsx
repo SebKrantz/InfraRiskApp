@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import type { Map as MapLibreMap } from 'maplibre-gl'
 import Sidebar from './components/Sidebar'
 import MapView from './components/MapView'
-import DisclaimerDialog from './components/DisclaimerDialog'
 import Assistant from './components/assistant/Assistant'
 import type { AssistantBindings } from './lib/assistantTools'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from './types'
@@ -191,7 +190,6 @@ function App() {
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden m-0 p-0">
-      <DisclaimerDialog />
       <Sidebar
         isOpen={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
