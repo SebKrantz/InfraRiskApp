@@ -15,7 +15,7 @@ RUN npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: Python runtime
 # ---------------------------------------------------------------------------
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
