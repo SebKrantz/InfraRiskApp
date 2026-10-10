@@ -7,6 +7,13 @@
 .idea
 **/.DS_Store
 
+# Secrets — MUST stay out of the image: COPY backend/ would otherwise bake the
+# API keys into a layer. Keys are supplied at runtime via env_file:.
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
 # Local Python / Node environments
 venv
 .venv
