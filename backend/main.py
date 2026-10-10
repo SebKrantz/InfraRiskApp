@@ -41,6 +41,7 @@ if assistant_api is not None and config.ASSISTANT_MCP_ENABLED:
 
         _MCP = mcp_server.build()
         _MCP_APP = _MCP.streamable_http_app(
+            transport_security=config.mcp_transport_security(),
             streamable_http_path="/mcp",
             stateless_http=True,
             json_response=True,

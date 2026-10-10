@@ -98,3 +98,39 @@ ASSISTANT_MCP_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_MCP_UPLOAD_MAX_MB"
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
+
+# Extra Host (and matching Origin) values the MCP HTTP transport accepts, comma-separated,
+# e.g. "eps-mcp:*,aei-eps-mcp:*". The MCP SDK turns DNS-rebinding protection ON whenever the
+# app is built for a localhost bind, with allowed_hosts of 127.0.0.1/localhost/[::1] only, and
+# then answers any other Host header with 421 Misdirected Request. That is correct for a
+# desktop install, but it refuses a client that reaches this service by its container or
+# service name, which is how it is addressed inside a Docker network.
+#
+# Empty (the default) leaves the SDK's behaviour exactly as it was.
+ASSISTANT_MCP_ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get("ASSISTANT_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()
+]
+
+# The localhost patterns the SDK itself would use, which stay allowed either way.
+_MCP_LOCAL_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_MCP_LOCAL_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
+
+def mcp_transport_security():
+    """Transport security for the MCP HTTP app.
+
+    Returns None when ASSISTANT_MCP_ALLOWED_HOSTS is unset, which keeps the SDK's own
+    default. Otherwise keeps DNS-rebinding protection ON and widens the allow-list to the
+    configured names as well as localhost.
+    """
+    if not ASSISTANT_MCP_ALLOWED_HOSTS:
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_MCP_LOCAL_HOSTS + ASSISTANT_MCP_ALLOWED_HOSTS,
+        allowed_origins=_MCP_LOCAL_ORIGINS
+        + [f"http://{h}" for h in ASSISTANT_MCP_ALLOWED_HOSTS],
+    )
+
