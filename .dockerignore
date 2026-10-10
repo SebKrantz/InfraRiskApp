@@ -1,0 +1,48 @@
+# Git / IDE
+.git
+.gitignore
+.cursor
+.claude
+.vscode
+.idea
+**/.DS_Store
+
+# Secrets — MUST stay out of the image: COPY backend/ would otherwise bake the
+# API keys into a layer. Keys are supplied at runtime via env_file:.
+.env
+**/.env
+**/.env.*
+!**/.env.example
+
+# Local Python / Node environments
+venv
+.venv
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/dist
+
+# Large / local-only data (mount at runtime instead)
+data/rasters
+data/**/*.tif
+data/**/*.tiff
+**/uploads
+
+# Non-app trees
+misc
+plans
+tmp
+agent-transcripts
+*.ipynb
+*.docx
+*.pptx
+*.pdf
+
+# Docs that are not needed in the image (DEPLOY.md stays on host)
+deploy/certs
+deploy/htpasswd
+
+# Tests / caches
+**/.pytest_cache
+**/coverage
+**/*.log
