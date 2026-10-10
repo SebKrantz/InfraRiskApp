@@ -1,0 +1,85 @@
+# Infra Risk Analyzer — production compose
+#
+# Prerequisites (see deploy/DEPLOY.md):
+#   1. Download COGs and rewrite data/hazard_layers.csv to local paths
+#   2. Ensure data/rasters/ contains the GeoTIFFs
+#
+# Usage:
+#   docker compose up -d --build
+#   # with TLS reverse proxy:
+#   docker compose --profile proxy up -d --build
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: infrarisk-app:latest
+    container_name: infrarisk-app
+    restart: unless-stopped
+    ports:
+      # Secure by default: bind to loopback so port 8000 is NOT publicly reachable.
+      #   - Use the Caddy proxy profile (§5) for public HTTPS access, or
+      #   - SSH-tunnel:  ssh -L 8000:127.0.0.1:8000 user@server
+      # To expose the app directly on the public interface (NO auth — not recommended),
+      # set APP_BIND=0.0.0.0 in the environment before `docker compose up`.
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8000}:8000"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DEBUG: "false"
+      DATA_DIR: /app/data
+      HAZARD_LAYERS_CSV: /app/data/hazard_layers.csv
+      UPLOAD_DIR: /app/uploads
+      # CARTO basemap API key (see .env) — CARTO's raster basemaps now require
+      # ?key=<...>. Used for PNG-export basemaps and injected into the SPA.
+      CARTO_API_KEY: "${CARTO_API_KEY:-}"
+      # Tune GDAL block cache (MB) for 16 GB hosts; lower on smaller VMs
+      GDAL_CACHEMAX: "${GDAL_CACHEMAX:-512}"
+    volumes:
+      # Local hazard rasters + rewritten CSV (host paths → container)
+      - ./data:/app/data:ro
+      # Persist uploads across restarts (still lost from in-memory GeoDataFrames on restart)
+      - infrarisk_uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    # Match Hostinger KVM 4 loosely; adjust if co-hosting other services
+    deploy:
+      resources:
+        limits:
+          cpus: "3.5"
+          memory: 12G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  # Optional reverse proxy with automatic HTTPS (docker compose --profile proxy up -d)
+  # Caddy fetches + renews a Let's Encrypt cert for $DOMAIN — no certbot needed.
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2
+    container_name: infrarisk-caddy
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    environment:
+      # Domain Caddy serves + requests a certificate for
+      DOMAIN: "${DOMAIN:-infrarisk.sebastiankrantz.com}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persist issued certs + ACME account across restarts (avoids re-issuing)
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  infrarisk_uploads:
+  caddy_data:
+  caddy_config:
