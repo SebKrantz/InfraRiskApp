@@ -8,6 +8,7 @@ general-purpose complement for comparisons the app has no built-in view for.
 
 from __future__ import annotations
 
+import io
 from typing import Any, Optional
 
 from .. import artifacts, domain, figures, reports
@@ -66,12 +67,12 @@ def _table_from(
     "make_barchart",
     "The app's own analysis barchart, rendered exactly as the sidebar's "
     "'Export Barchart' button produces it. In exposure mode it shows affected "
-    "vs unaffected (counts for points, metres for lines) with the threshold in "
-    "the category labels; in vulnerability mode it shows damage cost on the "
-    "left axis with exposure and damage-ratio percentages on the right, and an "
-    "error bar when the curve carried an uncertainty band. Use this as the "
-    "standard exhibit for a single dataset-hazard pair; use make_chart for "
-    "comparisons across layers.",
+    "vs unaffected (counts for points, km for lines) with the threshold in "
+    "the category labels; in vulnerability mode it shows damage cost in US$ "
+    "million in one panel and the exposure and damage-ratio percentages in a "
+    "second, with an error bar when the curve carried an uncertainty band. Use "
+    "this as the standard exhibit for a single dataset-hazard pair; use "
+    "make_chart for comparisons across layers.",
     {
         "type": "object",
         "properties": {
@@ -158,6 +159,7 @@ def make_map(
     basemap: str = "positron",
     title: str | None = None,
     filename: str = "map.png",
+    force: bool = False,
 ) -> dict[str, Any]:
     from ...api.export import generate_map_png
 
@@ -165,6 +167,10 @@ def make_map(
     meta = result.get("_assistant_meta", {})
     haz = domain.resolve_hazard(meta.get("hazard_id", ""))
     info = domain.get_dataset(meta["file_id"])
+
+    share = domain.affected_share_pct(result, info)
+    if not force and share is not None and share <= domain.MAP_MIN_EXPOSED_PCT:
+        return {"skipped": True, "note": _small_exposure_note(result, info, share)}
 
     display_gdf = result["full_gdf"].copy()
     if "line_id" in display_gdf.columns:
@@ -188,7 +194,42 @@ def make_map(
         basemap,
         domain.hazard_brief(haz)["unit"],
     )
-    return _png_artifact(conv, png, filename, title or default_title, "map")
+    return _png_artifact(conv, _fit_png(png, REPORT_MAX_PX), filename, title or default_title, "map")
+
+
+def _small_exposure_note(result: dict[str, Any], info: dict, share: float) -> str:
+    if info["geometry_type"] == "Point":
+        part = f"{int(result.get('affected_count', 0))} of {info.get('feature_count')} features"
+    else:
+        aff = float(result.get("affected_meters", 0.0)) / 1000.0
+        total = aff + float(result.get("unaffected_meters", 0.0)) / 1000.0
+        part = f"{aff:,.3f} km of {total:,.3f} km"
+    return (
+        f"No map drawn: {part} ({share:g} %) is exposed, so the hazard layer would be "
+        "invisible and the asset all green. Give this hazard one sentence and its table "
+        "row (read_guide('figures')); pass force=true only if the user asks for the map."
+    )
+
+
+# Report builders re-encode a wider, large PNG as JPEG, which smears a map's
+# fine hazard detail; at or under this size a PNG goes in as it is.
+REPORT_MAX_PX = 2400
+
+
+def _fit_png(png: bytes, max_px: int) -> bytes:
+    """The PNG scaled down, still a PNG, to at most `max_px` on its long side."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(png)) as im:
+        w, h = im.size
+        if max(w, h) <= max_px:
+            return png
+        scale = max_px / max(w, h)
+        out = io.BytesIO()
+        im.resize((round(w * scale), round(h * scale)), Image.LANCZOS).save(
+            out, "PNG", optimize=True
+        )
+    return out.getvalue()
 
 
 def _png_artifact(
@@ -264,7 +305,15 @@ def make_chart(
         horizontal=horizontal, sort=sort,
     )
     art = artifacts.add(dest, filename, "chart", title or filename, conv.id)
-    return {"artifact": art.public()}
+    out: dict[str, Any] = {"artifact": art.public()}
+    flat = figures.flat_series(series) if kind in ("bar", "line") else []
+    if flat and len(flat) == len(series):
+        out["note"] = (
+            f"Flat chart: {', '.join(flat)} varies by {figures.FLAT_SPREAD:.0%} or less "
+            "across the categories, so the bars say nothing a sentence does not. State "
+            "the value once in the text or a table row and leave this figure out."
+        )
+    return out
 
 
 @tool(
