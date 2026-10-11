@@ -216,6 +216,24 @@ def run_exposure(
     return result
 
 
+# Below this exposed share (percent, as summarise reports it) a map of the asset
+# is a large figure with no content: the hazard raster is invisible and the whole
+# line is green. make_map declines; the figures guide says the same.
+MAP_MIN_EXPOSED_PCT = 1.0
+
+
+def affected_share_pct(result: dict[str, Any], info: dict) -> Optional[float]:
+    """The exposed share of the asset in percent, to two decimals: features for
+    points, length for lines."""
+    if info["geometry_type"] == "Point":
+        affected = float(result.get("affected_count", 0))
+        total = float(info.get("feature_count") or 0)
+    else:
+        affected = float(result.get("affected_meters", 0.0))
+        total = affected + float(result.get("unaffected_meters", 0.0))
+    return round(100.0 * affected / total, 2) if total else None
+
+
 def summarise(
     result: dict[str, Any], info: dict, hazard: dict, threshold: Optional[float]
 ) -> dict[str, Any]:
@@ -239,7 +257,6 @@ def summarise(
         affected = int(result.get("affected_count", 0))
         out["affected_count"] = affected
         out["unaffected_count"] = int(result.get("unaffected_count", 0))
-        out["affected_share_pct"] = round(100.0 * affected / total, 2) if total else None
     else:
         aff = float(result.get("affected_meters", 0.0))
         un = float(result.get("unaffected_meters", 0.0))
@@ -247,7 +264,7 @@ def summarise(
         out["unaffected_meters"] = round(un, 1)
         out["affected_km"] = round(aff / 1000.0, 3)
         out["total_km"] = round((aff + un) / 1000.0, 3)
-        out["affected_share_pct"] = round(100.0 * aff / (aff + un), 2) if (aff + un) else None
+    out["affected_share_pct"] = affected_share_pct(result, info)
     for key in ("total_damage_cost", "total_damage_cost_lower", "total_damage_cost_upper"):
         if key in result and result[key] is not None:
             out[key] = float(result[key])
