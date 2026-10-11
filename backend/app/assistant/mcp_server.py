@@ -175,9 +175,11 @@ cyclone, earthquake, landslide, drought). Implements AEI MCP contract v1 (v1.1).
 Workflow: list_hazards → get data in (below) → run_analysis / compare_hazards → \
 get_analysis_table or get_affected_segments for per-feature results; \
 expected_annual_damage integrates a family's return-period losses (flood, cyclone, \
-pga) into an EAD per climate variant — a lower bound by default. read_guide \
-explains the model's exact semantics; call it before vulnerability work. \
-A report follows read_guide('reports') and read_guide('figures').
+pga) into an EAD per climate variant — a lower bound by default. A railway under \
+PGA takes the default curve use_library_curve('AEI-RAIL-PGA') (a proxy), and an EAD \
+above about 1 % of the replacement value a year is flagged `plausibility: high` — not \
+a planning bound. read_guide explains the model's exact semantics; call it before \
+vulnerability work. A report follows read_guide('reports') and read_guide('figures').
 
 Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope header \
 on every call; it maps to conversation id "mcp:<scope>" (no scope = the legacy \

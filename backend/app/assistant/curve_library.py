@@ -2,7 +2,9 @@
 
 `data/vulnerability_curves/` holds 218 curves from Nirandjan et al. (2024) plus
 `curves_index.csv` describing each one and `asset_costs.csv` giving replacement
-values. See that folder's README for provenance and the file format.
+values, and `house/` — hand-written defaults (the railway PGA curve) that the
+builder script leaves alone. See that folder's README for provenance and the
+file format.
 
 This module is the lookup layer. It knows two things the tools need:
 
@@ -31,6 +33,7 @@ from ..config import settings
 CURVES_DIR: Path = settings.DATA_DIR / "vulnerability_curves"
 INDEX_CSV = CURVES_DIR / "curves_index.csv"
 COSTS_CSV = CURVES_DIR / "asset_costs.csv"
+HOUSE_INDEX_CSV = CURVES_DIR / "house" / "curves_index.csv"
 
 # Library families whose curves are in the same unit as an app hazard layer.
 APPLICABLE = ("flood", "earthquake_pga", "cyclone_wind")
@@ -232,19 +235,24 @@ def _tokens(text: str) -> list[str]:
 
 @functools.lru_cache(maxsize=1)
 def index() -> list[dict[str, Any]]:
-    """Every row of curves_index.csv, with a pre-tokenised haystack."""
+    """Every row of curves_index.csv and of the house index, with a
+    pre-tokenised haystack. House rows carry `_house` and a `limitations` text."""
     if not INDEX_CSV.exists():
         raise FileNotFoundError(
             f"the curve library index is missing at {INDEX_CSV}. Rebuild it with "
             "scripts/build_curve_library.py."
         )
     rows: list[dict[str, Any]] = []
-    with INDEX_CSV.open(newline="", encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            row["_asset_tokens"] = set(_tokens(row["asset"]))
-            row["_detail_tokens"] = set(_tokens(row["characteristics"]))
-            row["_file_tokens"] = set(_tokens(Path(row["file"]).stem))
-            rows.append(row)
+    for path in (INDEX_CSV, HOUSE_INDEX_CSV):
+        if not path.exists():
+            continue
+        with path.open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                row["_house"] = path == HOUSE_INDEX_CSV
+                row["_asset_tokens"] = set(_tokens(row["asset"]))
+                row["_detail_tokens"] = set(_tokens(row["characteristics"]))
+                row["_file_tokens"] = set(_tokens(Path(row["file"]).stem))
+                rows.append(row)
     return rows
 
 
@@ -394,6 +402,8 @@ def _brief(row: dict[str, Any], score: float, matched: list[str]) -> dict[str, A
         out["central_basis"] = row["central_basis"]
     if row.get("bounds_note"):
         out["bounds_note"] = row["bounds_note"]
+    if row.get("limitations"):
+        out["limitations"] = row["limitations"]
     if row["monotonic"] == "no":
         out["note"] = "not strictly monotonic in the published data"
     return out
