@@ -18,9 +18,9 @@ EXPOSURE_ANALYSIS = """\
    the intensity range before choosing a threshold.
 3. `run_analysis`. Then `ui_select_hazard` + `ui_set_threshold` so the map shows
    the same thing your numbers describe.
-4. Figures: `make_barchart` and `make_map` (the app's own exhibits), for each
-   hazard the asset is exposed to — read_guide('figures') says when to leave
-   one out.
+4. Figures: `make_barchart` and `make_map` (the app's own exhibits) for a
+   hazard the asset is exposed to — read_guide('figures') gives the budget per
+   hazard family and says when to leave one out.
 5. `write_report_docx` if a deliverable was asked for — read_guide('reports') first.
 
 ## What the model actually computes (be precise about this)
@@ -102,16 +102,17 @@ numbers and must never be conflated.
    `find_replacement_cost(asset, basis='unit'|'metre')` and state the figure, its
    geography and its basis as an assumption.
 4. `run_analysis` with `curve` and `replacement_value`.
-5. `make_barchart` renders the vulnerability view automatically (damage cost on
-   the left axis, exposure % and damage-ratio % on the right, error bars when the
-   curve has bounds). `make_map` colours assets along a green-amber-red damage
-   ratio ramp. `plot_curve` shows the curve itself — include it whenever you
+5. `make_barchart` renders the vulnerability view automatically (damage cost in
+   US$ million in one panel, exposure % and damage-ratio % in a second, an error
+   bar when the curve has bounds). `make_map` colours assets along a
+   green-amber-red damage ratio ramp, and declines when 1 % or less of the asset
+   is exposed. `plot_curve` shows the curve itself — include it whenever you
    chose or built the curve rather than the user.
 6. Drive the UI too: `ui_set_vulnerability` with the curve and replacement value.
 
 ## A damage cost for every hazard the asset is exposed to
-An asset exposed to a layer gets a map, a chart and a row for it, so it gets a
-damage cost too. Where no library curve fits (the earthquake-triggered landslide
+An asset exposed to a layer gets a row for it, and a figure within the budget of
+`read_guide('figures')`, so it gets a damage cost too. Where no library curve fits (the earthquake-triggered landslide
 layer is the usual case), do not leave the cost out: apply the closest curve as
 a labelled proxy with bounds. `read_guide('vulnerability_curves')` gives the
 landslide-class curves, and the same table serves the earthquake-triggered layer
@@ -194,7 +195,8 @@ total, and — with a curve — damage cost. Return periods are **annual exceeda
 probabilities**: a 100-year layer is the intensity with a 1% chance of being
 exceeded in any year, NOT "the flood that happens every 100 years". Say it that
 way. Exposure rises with return period; if it does not, investigate before
-reporting.
+reporting. If it stays the same across the ladder, say so in one sentence and
+the table: a flat series is not charted (`read_guide('figures')`).
 
 ## Climate-scenario table
 One row per scenario at a fixed return period; report the delta against existing
@@ -327,14 +329,14 @@ REPORTS = """\
    why, and — for damage — the curve and replacement value. State that assets
    are sampled at their location, lines every 100 m, and polygons at centroids.
 4. **Results**: tables and figures, each with one short interpreting paragraph.
-   Say what the number MEANS, not that it "is shown in the table". The app's
-   map and barchart go in once per hazard the asset is exposed to: a hazard
-   reaching under about 1 % of it gets one sentence and its table row, no map
-   and no barchart; one reaching all of it gets its map but no barchart
+   Say what the number MEANS, not that it "is shown in the table". Figures
+   follow a budget per exposed hazard family: at most a map (only when it is
+   drawn: a hazard reaching 1 % or less of the asset gets one sentence and its
+   table row, no map and no chart), one loss chart and the curve
    (read_guide('figures')). Every hazard shown has a damage cost, a labelled
-   proxy where no curve fits (read_guide('vulnerability_analysis')); an EAD
-   flagged `high` for plausibility is reported as implausible, never as a bound
-   or a stress case.
+   proxy where no curve fits (read_guide('vulnerability_analysis')); a hazard
+   without one gets no figure. An EAD flagged `high` for plausibility is
+   reported as implausible, never as a bound or a stress case.
 5. **Caveats and limitations**: never skip this. The standard set for this app:
    raster resolution vs asset size; centroid treatment of polygons; the
    threshold is a modelling choice, not a physical certainty; no-data areas
@@ -342,8 +344,10 @@ REPORTS = """\
    for railway track is a proxy: ground failure, not shaking, damages track);
    return periods
    are annual exceedance probabilities, so one layer's damage is an event loss,
-   not an annual one; nothing here models cascading failure, redundancy or
-   repair time.
+   not an annual one; the landslide susceptibility layers are stitched from
+   tiles and can jump a class along straight edges where tiles meet (visible as
+   a rectangle on a map), which is the data, not the terrain; nothing here
+   models cascading failure, redundancy or repair time.
 6. **Conclusion**: brief and decisive. What the analysis shows, which assets or
    corridors deserve attention first, and what would most change the answer.
    No new numbers the body has not shown.
@@ -382,6 +386,25 @@ deliberately unattributed, and whoever issues one adds their own marks. Give the
 builder clean structure — headings, paragraphs, bullets, tables, figures — and
 let the template do the rest.
 
+## Chapter language
+The reader of a chapter, table or caption never sees how the report was made.
+Write what was found and assumed, not how the work was done:
+- **No process in the text.** Never mention guides, "the app", "the standard
+  chart", tools, curve-library searches, workbooks or sheets, stored results,
+  run ids or file names — not in chapters, tables, captions or notes. Wrong:
+  "the guide's default uncertainty rule", "the library search found no PGA
+  curve", "the app's standard damage chart", "the full-precision workbook
+  includes ...". Right: "a 20 % band around the central curve", "no published
+  curve exists for this layer, so a proxy was built from ...", "damage by
+  return period (Figure 4)". Say what the assumption IS and why; a published
+  curve is cited by its study, a constructed one by its basis.
+- **No raw names.** Never a column or variable name (`ead_usd_y`,
+  `affected_meters`, `damage_cost`) in a table header, a sentence or a caption:
+  "Expected annual damage (US$ million a year)", "Exposed length (km)".
+- **One unit per quantity.** Lengths in km everywhere in the report (never
+  metres in one chart or table and km in the next), damage in US$ million,
+  shares in %. Convert before charting; do not mix units within a chart.
+
 ## Quality bar
 - Every number comes from a tool result or from python_exec on a stored
   variable. Never re-type a figure from memory, never estimate.
@@ -410,26 +433,44 @@ FIGURES = """\
 
 ## The app's own two exhibits — use these by default
 - `make_barchart(analysis)` — affected vs unaffected for one dataset-hazard
-  pair, or the damage-cost view with exposure and damage-ratio percentages when
-  the analysis had a curve. Identical to the sidebar's export button.
+  pair, or, when the analysis had a curve, the damage cost in US$ million (with
+  its band) in one panel beside the exposure and damage-ratio percentages in a
+  second. Identical to the sidebar's export button.
 - `make_map(analysis)` — the hazard raster as a blue intensity wash over a
   basemap with the infrastructure coloured by exposure (or damage ratio).
   Frames itself on the dataset. Pick `basemap='esri-imagery'` when the physical
-  setting matters, `positron` (default) otherwise.
-These two belong in essentially every report: one map and one chart per hazard
-the asset is EXPOSED to. Check the affected share before drawing either —
-the rule is the same in exposure and damage mode:
-- **None, or almost none, exposed** (under about 1 % of the length or the
-  features): no map and no barchart. The map would show nothing and the bar
+  setting matters, `positron` (default) otherwise. It declines on its own, with
+  a `note` and no figure, when 1 % or less of the asset is exposed.
+These two are the default exhibits for a hazard the asset is EXPOSED to, within
+the figure budget below. Check the affected share (`affected_share_pct` in the
+run_analysis result) before drawing either — the rule is the same in exposure
+and damage mode:
+- **1 % or less exposed** (of the length or the features): no map and no
+  barchart. The map would show no hazard and an all-green line, and the bar
   would be empty. Give that hazard one sentence and its row in the results
   table — e.g. "Flood (100-yr, existing climate) reaches 0.09 % of the line,
-  0.4 km at >= 100 mm."
+  0.4 km at >= 100 mm." Do not force the map; `force=true` is for a user who
+  asks for it.
 - **All of it exposed**: the map, but no barchart. One bar at 100 % says
   nothing a sentence does not. In damage mode the barchart would add only the
   damage cost, its band and the mean damage ratio: put those in the sentence
   and the table, and chart damage across return periods or scenarios with
   `make_chart` instead.
-- **Anything in between**: both.
+- **Anything in between**: the map, and the barchart for a single layer.
+
+## Figure budget
+A hazard FAMILY the asset is exposed to (flood, cyclone, earthquake, landslide)
+gets at most three figures in a report:
+1. its map — the central layer only (existing-climate flood, the middle return
+   period), and only when `make_map` draws one;
+2. ONE loss chart — `make_barchart` for a single layer, or `make_chart` holding
+   every return period and climate variant of the family;
+3. the vulnerability curve (`plot_curve`), when you chose or built it.
+Never a map or a chart per return period, per climate variant or per
+threshold: the ladder goes in the one loss chart and the table. A hazard with no
+damage cost gets none of the three — a sentence and a table row. Count them
+before writing: a report with more than three figures for one hazard has the
+wrong figures, and one with a figure per layer is padding.
 
 ## The general tools — for anything comparative
 - `make_chart` — exposure across return periods, climate scenarios, hazard
@@ -459,6 +500,26 @@ the rule is the same in exposure and damage mode:
 - In a damage analysis, draw a map or chart for a hazard only if it has a damage
   cost (a labelled proxy counts); a layer that cannot be costed stays out of the
   figures too (read_guide('vulnerability_analysis')).
+- **Do not chart a flat series.** Values that are the same, or within about
+  5 %, across the return periods, scenarios or thresholds (the same exposed
+  length at 25, 50 and 100 years) say it in one sentence and a table row.
+  `make_chart` still draws such a chart but returns a `note` when every series
+  is flat: leave that figure out.
+- One unit per quantity, in every figure and table of a report: lengths in km
+  (never metres in one chart and km in the next), damage in US$ million with
+  thousands separators ("1,250"), percentages as percentages. Convert before
+  you call `make_chart`: pass km and US$ million, and name the unit in `ylabel`.
+- Report figures are PNG. In `python_exec` save with `fig.savefig('name.png')`
+  or `save_artifact(fig, 'name.png')`, never `.jpg`: JPEG compression smears
+  hazard rasters and thin lines.
+- A dollar sign in a matplotlib label you draw yourself: write `US\\$` (or leave
+  the sign out). Two bare `$` in one string switch on math mode and garble the
+  text between them. The built-in chart tools already escape it.
+- A hazard layer made of stitched tiles (the landslide susceptibility layers)
+  can jump a class or two along a straight, axis-aligned edge where source
+  tiles meet; on a map it shows as a rectangle. That is the data, not the
+  terrain and not a drawing fault: do not read the edge as geography, and say
+  in the caveats that the layer has such seams.
 - Caption every figure with what, where, units and scenario.
 - Do not draw a chart of two numbers you already stated in a sentence.
 - Generate every figure BEFORE writing the report, then embed by artifact_id.
