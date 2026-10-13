@@ -27,6 +27,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from .. import config
+from ..redact import redact, redact_text
 from . import mcp_state, mcp_tools, tools
 from .conversations import MAX_CONVERSATIONS, get_or_create
 
@@ -89,7 +90,7 @@ async def _run(spec: tools.ToolSpec, ctx: Context | None, args: dict[str, Any]) 
     timeout = config.ASSISTANT_TOOL_TIMEOUT
 
     def work() -> Any:
-        return jsonsafe(spec.fn(conv, **args))
+        return redact(jsonsafe(spec.fn(conv, **args)))
 
     async def heartbeat() -> None:
         waited = 0.0
@@ -123,13 +124,14 @@ async def _run(spec: tools.ToolSpec, ctx: Context | None, args: dict[str, Any]) 
             "may still finish in the background. Use start_run_analysis / "
             "start_compare_hazards with get_job for long analyses, or split the call."
         ) from exc
-    except ToolError:
-        raise
+    except ToolError as exc:
+        raise ToolError(redact_text(str(exc))) from exc
     except TypeError as exc:
-        raise ToolError(f"bad arguments for {spec.name}: {exc}") from exc
+        raise ToolError(redact_text(f"bad arguments for {spec.name}: {exc}")) from exc
     except Exception as exc:  # noqa: BLE001 — model-facing error, never a crash
-        log.info("mcp tool %s failed: %s", spec.name, exc)
-        raise ToolError(str(exc) or type(exc).__name__) from exc
+        message = redact_text(str(exc)) or type(exc).__name__
+        log.info("mcp tool %s failed: %s", spec.name, message)
+        raise ToolError(message) from exc
 
 
 def _wrapper(spec: tools.ToolSpec):
@@ -233,7 +235,7 @@ def build() -> MCPServer:
         server.add_tool(_wrapper(spec), name=spec.name, description=spec.description)
 
     def read_app_state() -> dict[str, Any]:
-        return mcp_state.read()
+        return redact(jsonsafe(mcp_state.read()))
 
     server.add_tool(
         read_app_state,

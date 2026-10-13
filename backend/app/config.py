@@ -134,3 +134,10 @@ def mcp_transport_security():
         + [f"http://{h}" for h in ASSISTANT_MCP_ALLOWED_HOSTS],
     )
 
+
+# Every key is read above. Take the secret-named variables out of the environment
+# now, so python_exec (which runs in this process) and any child process find none;
+# app/redact.py keeps their values to scrub them from anything a tool returns.
+from .redact import scrub_environment  # noqa: E402
+
+scrub_environment()

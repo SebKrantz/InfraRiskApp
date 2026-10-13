@@ -168,13 +168,15 @@ BASEMAP_TILE_URLS: dict[str, str] = {
 }
 
 
-def basemap_tile_url(basemap: str) -> str:
+def _basemap_tile_url(basemap: str) -> str:
     """
     Tile URL for a basemap name, with the CARTO API key appended.
 
     CARTO's raster basemaps now require ``?key=<...>``; the key comes from the
     CARTO_API_KEY environment variable. When it is unset the URL is
-    returned unkeyed, and non-CARTO providers are never touched.
+    returned unkeyed, and non-CARTO providers are never touched. Private, so
+    python_exec's `export` facade does not hand the key out: the URL is for
+    fetching tiles here, never for returning.
     """
     url = BASEMAP_TILE_URLS.get(basemap, BASEMAP_TILE_URLS['positron'])
     if 'basemaps.cartocdn.com' in url and settings.CARTO_API_KEY:
@@ -487,7 +489,7 @@ def generate_map_png(
     # Add basemap (should be at zorder 0, behind everything)
     try:
         import contextily as ctx
-        tile_url = basemap_tile_url(basemap)
+        tile_url = _basemap_tile_url(basemap)
         ctx.add_basemap(
             ax,
             crs='EPSG:3857',
