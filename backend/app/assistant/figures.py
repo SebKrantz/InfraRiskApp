@@ -44,10 +44,23 @@ _FALLBACK = [
 ]
 
 NEGLIGIBLE_SHARE = 0.005  # categories below this share of the peak are invisible
+FLAT_SPREAD = 0.05  # bars within this share of the tallest say nothing a sentence does not
 
 
 def _color(label: str, i: int) -> str:
     return SEMANTIC_COLORS.get(str(label).strip().lower(), _FALLBACK[i % len(_FALLBACK)])
+
+
+def flat_series(series: list[dict[str, Any]]) -> list[str]:
+    """Names of the series whose values, across the categories, all lie within
+    FLAT_SPREAD of the largest: equal bars, which a sentence or a table row says
+    better than a chart."""
+    names = []
+    for i, s in enumerate(series):
+        v = [float(x) for x in s["values"]]
+        if len(v) >= 2 and max(v) - min(v) <= FLAT_SPREAD * max(abs(x) for x in v):
+            names.append(str(s.get("name", f"Series {i + 1}")))
+    return names
 
 
 def _human_ticks(v: float, _pos: int = 0) -> str:
@@ -127,8 +140,11 @@ def chart(
                 f"there are {len(labels)} labels"
             )
 
-    labels = [str(x) for x in labels]
+    from ..api.export import tex_safe  # two `$` in one label would switch on mathtext
+
+    labels = [tex_safe(x) for x in labels]
     values = [[float(v) for v in s["values"]] for s in series]
+    title, xlabel, ylabel = (tex_safe(t) if t else t for t in (title, xlabel, ylabel))
 
     # Drop categories that would render as invisible slivers.
     peaks = [max(abs(col[i]) for col in values) for i in range(len(labels))]
@@ -147,7 +163,7 @@ def chart(
     with _LOCK:
         fig, ax = plt.subplots(figsize=(8, 4.8))
         x = np.arange(len(labels))
-        names = [str(s.get("name", f"Series {i + 1}")) for i, s in enumerate(series)]
+        names = [tex_safe(s.get("name", f"Series {i + 1}")) for i, s in enumerate(series)]
 
         if kind == "pie":
             colors = [_color(l, i) for i, l in enumerate(labels)]
@@ -327,13 +343,17 @@ def curve_plot(
     """
     import matplotlib.pyplot as plt
 
+    from ..api.export import tex_safe
+
+    title, xlabel = (tex_safe(t) if t else t for t in (title, xlabel))
     with _LOCK:
         fig, ax = plt.subplots(figsize=(8, 4.8))
         try:
             for i, curve in enumerate(curves):
                 color = _FALLBACK[i % len(_FALLBACK)]
                 x = curve["intensity"]
-                ax.plot(x, curve["central"], color=color, linewidth=1.8, label=curve["name"])
+                ax.plot(x, curve["central"], color=color, linewidth=1.8,
+                        label=tex_safe(curve["name"]))
                 if curve.get("lower") is not None and curve.get("upper") is not None:
                     ax.fill_between(
                         x, curve["lower"], curve["upper"], color=color, alpha=0.15, linewidth=0
