@@ -110,6 +110,17 @@ if _SERVE_SPA:
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 
+def _static_file(full_path: str) -> Path | None:
+    """The file under static/ a request names, or None. Resolved and kept inside
+    static/: an encoded absolute path (/%2Fproc%2Fself%2Fenviron) or ../ would
+    otherwise serve any file the process can read."""
+    if not full_path:
+        return None
+    root = STATIC_DIR.resolve()
+    candidate = (root / full_path).resolve()
+    return candidate if candidate.is_relative_to(root) and candidate.is_file() else None
+
+
 def _spa_index_response() -> HTMLResponse:
     """Serve the SPA shell with the CARTO API key substituted in."""
     return HTMLResponse(_SPA_INDEX_HTML)
@@ -140,8 +151,8 @@ if _SERVE_SPA:
         # Never shadow API / health (registered above; this is a safety net)
         if full_path == "health" or full_path.startswith("api/"):
             return {"message": "Hazard-Infrastructure Analyzer API", "version": "1.0.0"}
-        candidate = STATIC_DIR / full_path
-        if full_path and candidate.is_file():
+        candidate = _static_file(full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return _spa_index_response()
 

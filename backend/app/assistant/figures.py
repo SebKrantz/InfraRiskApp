@@ -240,12 +240,12 @@ def chart(
 def _basemap_source(name: str) -> str:
     """The app's own basemap table, so a custom map matches an exported one.
 
-    Goes through basemap_tile_url() so CARTO tiles carry CARTO_API_KEY, as the
+    Goes through _basemap_tile_url() so CARTO tiles carry CARTO_API_KEY, as the
     app's own exports do; unknown names still fall back to OSM.
     """
-    from ..api.export import BASEMAP_TILE_URLS, basemap_tile_url
+    from ..api.export import BASEMAP_TILE_URLS, _basemap_tile_url
 
-    return basemap_tile_url(name if name in BASEMAP_TILE_URLS else "osm")
+    return _basemap_tile_url(name if name in BASEMAP_TILE_URLS else "osm")
 
 
 def custom_map(

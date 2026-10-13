@@ -15,6 +15,7 @@ import time
 from typing import Any, Iterator
 
 from .. import config
+from ..redact import redact, redact_text
 from . import artifacts, schema, system_prompt, tools
 from .conversations import Conversation
 from .providers import get as get_provider
@@ -118,7 +119,7 @@ def _run_server_tool(conv: Conversation, call: schema.ToolCall) -> dict[str, Any
             "content": f"unknown tool {call.name!r}",
         }
     try:
-        result = spec.fn(conv, **call.args)
+        result = redact(spec.fn(conv, **call.args))
         return {"id": call.id, "name": call.name, "ok": True, "content": _shrink(result)}
     except TypeError as exc:
         # bad/missing arguments — tell the model what the schema wanted
@@ -126,11 +127,12 @@ def _run_server_tool(conv: Conversation, call: schema.ToolCall) -> dict[str, Any
             "id": call.id,
             "name": call.name,
             "ok": False,
-            "content": f"bad arguments: {exc}",
+            "content": redact_text(f"bad arguments: {exc}"),
         }
     except Exception as exc:  # noqa: BLE001 — model-facing error, never a crash
-        log.info("tool %s failed: %s", call.name, exc)
-        return {"id": call.id, "name": call.name, "ok": False, "content": str(exc)}
+        message = redact_text(str(exc))
+        log.info("tool %s failed: %s", call.name, message)
+        return {"id": call.id, "name": call.name, "ok": False, "content": message}
 
 
 def _tool_with_pings(
@@ -389,8 +391,9 @@ def run(
                 and attempt < MAX_PROVIDER_RETRIES
             )
             if not retriable:
-                log.warning("provider error: %s", failure)
-                yield schema.sse("error", {"message": f"{provider_name}: {failure}"})
+                message = redact_text(f"{provider_name}: {failure}")
+                log.warning("provider error: %s", message)
+                yield schema.sse("error", {"message": message})
                 yield schema.sse("done", {"reason": "error"})
                 return
             wait = RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S) - 1)]

@@ -92,3 +92,10 @@ ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100")
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
+
+# Every key is read above. Take the secret-named variables out of the environment
+# now, so python_exec (which runs in this process) and any child process find none;
+# app/redact.py keeps their values to scrub them from anything a tool returns.
+from .redact import scrub_environment  # noqa: E402
+
+scrub_environment()
