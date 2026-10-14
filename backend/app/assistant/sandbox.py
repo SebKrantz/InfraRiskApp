@@ -13,7 +13,9 @@ sees, a restricted `__import__` in the namespace's builtins, and an AST check
 before execution.
 Allowed: read/write in the scope's workdir and the system temp directory
 (except other conversations' workdirs); read-only in the app's data/
-directory and the Python installation (library code reads its own files).
+directory and the Python installation (library code reads its own files). Google
+credential files (gcloud's Application Default Credentials file, the service-account key
+GOOGLE_APPLICATION_CREDENTIALS names) are never readable, wherever they sit.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .. import config
 from ..config import settings
 
 WORKDIR_PREFIX = "infrarisk-assistant-"
@@ -115,6 +118,23 @@ _READ_ONLY = (os.path.realpath(settings.DATA_DIR),)
 _LIBRARIES: tuple[str, ...] = ()
 
 
+@functools.lru_cache(maxsize=None)
+def _real(path: str) -> str:
+    return os.path.realpath(os.path.expanduser(path))
+
+
+def _credential_files() -> tuple[str, ...]:
+    """The Google credential files python_exec may not read. Outside the readable roots
+    they are refused anyway; this keeps them refused if one is mounted under data/ or
+    the temp directory."""
+    adc = os.path.join(
+        os.environ.get("CLOUDSDK_CONFIG") or "~/.config/gcloud",
+        "application_default_credentials.json",
+    )
+    key = config.GOOGLE_APPLICATION_CREDENTIALS  # absolute, captured before the env scrub
+    return (_real(adc), _real(key)) if key else (_real(adc),)
+
+
 @dataclass(frozen=True)
 class Policy:
     workdir: str
@@ -134,6 +154,8 @@ class Policy:
         return not first.startswith(WORKDIR_PREFIX)
 
     def can_read(self, path: str) -> bool:
+        if path in _credential_files():
+            return False
         if any(_inside(path, r) for r in _LIBRARIES):
             return True
         if path.endswith(_CODE_SUFFIXES):

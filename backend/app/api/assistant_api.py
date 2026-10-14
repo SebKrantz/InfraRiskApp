@@ -65,7 +65,8 @@ def _pick_model(body: dict[str, Any]) -> models.Choice:
             raise HTTPException(
                 503,
                 "no assistant provider configured — set ANTHROPIC_API_KEY, "
-                "GEMINI_API_KEY or OPENAI_API_KEY in backend/.env",
+                "GEMINI_API_KEY (or GEMINI_BACKEND=vertex with VERTEX_PROJECT) or "
+                "OPENAI_API_KEY in backend/.env",
             ) from exc
         raise HTTPException(422, str(exc)) from exc
 

@@ -33,9 +33,11 @@ ALL_KEYS = {"ANTHROPIC_API_KEY": "a", "GEMINI_API_KEY": "g", "OPENAI_API_KEY": "
 
 
 def with_keys(**keys: str):
-    """Patch the three API keys (unnamed ones become empty)."""
+    """Patch the three API keys (unnamed ones become empty). Gemini is pinned to its Developer
+    API backend, where GEMINI_API_KEY decides, whatever backend/.env sets."""
     return mock.patch.multiple(
-        config, **{k: keys.get(k, "") for k in ALL_KEYS}, ASSISTANT_DEFAULT_PROVIDER="",
+        config, **{k: keys.get(k, "") for k in ALL_KEYS}, GEMINI_BACKEND="developer",
+        ASSISTANT_DEFAULT_PROVIDER="",
         ASSISTANT_MODEL_ENV={"anthropic": "", "gemini": "", "openai": ""},
     )
 
@@ -482,7 +484,7 @@ class OpenAIAdapter(unittest.TestCase):
 
 class GeminiAdapter(unittest.TestCase):
     def _provider(self, generate):
-        with mock.patch.object(config, "GEMINI_API_KEY", "g"):
+        with mock.patch.multiple(config, GEMINI_API_KEY="g", GEMINI_BACKEND="developer"):
             prov = gemini_provider.GeminiProvider()
         prov.client = SimpleNamespace(models=SimpleNamespace(generate_content_stream=generate))
         return prov
@@ -500,7 +502,8 @@ class GeminiAdapter(unittest.TestCase):
     def _run(self, generate, **opts):
         prov = self._provider(generate)
         slept: list[float] = []
-        with mock.patch.object(gemini_provider, "_sleep", slept.append):
+        with mock.patch.object(gemini_provider, "_sleep", slept.append), \
+                mock.patch.object(config, "GEMINI_BACKEND", "developer"):
             events = list(prov.stream_turn("gemini-3.8-flash", "sys", [], [], **opts))
         return events, slept
 

@@ -65,9 +65,37 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
+# Where Gemini runs (README, "Gemini on Vertex AI"). "vertex": Vertex AI, billed to
+# VERTEX_PROJECT and authenticated by Application Default Credentials, or by VERTEX_API_KEY
+# when that is set. "developer": the Gemini Developer API with GEMINI_API_KEY. Unset means
+# developer, so a deployment whose .env predates this keeps working.
+GEMINI_BACKEND = os.environ.get("GEMINI_BACKEND", "").strip().lower() or "developer"
+VERTEX_PROJECT = os.environ.get("VERTEX_PROJECT", "").strip()
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "").strip() or "global"
+VERTEX_API_KEY = os.environ.get("VERTEX_API_KEY", "").strip()
+# A service-account key file for Application Default Credentials (the server case; gcloud's
+# own login on a dev machine needs no variable). Its name holds "CREDENTIAL", so the scrub at
+# the end of this file takes it out of the environment before the SDK could read it: it is
+# kept here and the Gemini adapter loads the file for the client itself. Made absolute now,
+# because python_exec changes the working directory while it runs.
+_CREDENTIALS_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+GOOGLE_APPLICATION_CREDENTIALS = (
+    os.path.abspath(os.path.expanduser(_CREDENTIALS_FILE)) if _CREDENTIALS_FILE else ""
+)
+
+
+def gemini_configured() -> bool:
+    """Whether GEMINI_BACKEND has what it needs. On Vertex that is a project (the auth is
+    Application Default Credentials, which cannot be checked without a call) or
+    VERTEX_API_KEY: configuration only."""
+    if GEMINI_BACKEND == "vertex":
+        return bool(VERTEX_PROJECT or VERTEX_API_KEY)
+    return GEMINI_BACKEND == "developer" and bool(GEMINI_API_KEY)
+
+
 # The model table (providers, models, effort, tiers) is app/assistant/models.py. A provider
-# is offered iff its key is set. These env overrides pick the default MODEL of a provider
-# and count only when they name a model of its table.
+# is offered iff its key is set (Gemini: iff gemini_configured()). These env overrides pick
+# the default MODEL of a provider and count only when they name a model of its table.
 ASSISTANT_MODEL_ENV = {
     "anthropic": os.environ.get("ANTHROPIC_MODEL", "").strip(),
     "gemini": os.environ.get("GEMINI_MODEL", "").strip(),

@@ -70,10 +70,11 @@ SERVICE_TIERS: dict[str, list[str]] = {
 
 
 def keys() -> dict[str, bool]:
-    """Which providers have an API key (availability only, never the key)."""
+    """Which providers are usable: an API key is set (Gemini: what its backend needs,
+    config.gemini_configured()). Availability only, never a key."""
     return {
         "anthropic": bool(config.ANTHROPIC_API_KEY),
-        "gemini": bool(config.GEMINI_API_KEY),
+        "gemini": config.gemini_configured(),
         "openai": bool(config.OPENAI_API_KEY),
     }
 
