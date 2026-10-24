@@ -1,0 +1,41 @@
+# Git / IDE
+.git
+.gitignore
+.cursor
+.claude
+.vscode
+.idea
+**/.DS_Store
+
+# Local Python / Node environments
+venv
+.venv
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/dist
+
+# Large / local-only data (mount at runtime instead)
+data/rasters
+data/**/*.tif
+data/**/*.tiff
+**/uploads
+
+# Non-app trees
+misc
+plans
+tmp
+agent-transcripts
+*.ipynb
+*.docx
+*.pptx
+*.pdf
+
+# Docs that are not needed in the image (DEPLOY.md stays on host)
+deploy/certs
+deploy/htpasswd
+
+# Tests / caches
+**/.pytest_cache
+**/coverage
+**/*.log

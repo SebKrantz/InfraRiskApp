@@ -8,3 +8,7 @@
 # Hazard rasters (too large for git) and generated catalog backup
 /data/rasters/
 /data/hazard_layers.remote.csv
+
+# Docker / deploy secrets
+/deploy/.env
+/.env

@@ -1,0 +1,28 @@
+# Overlay for servers where a SHARED reverse proxy already owns ports 80/443
+# (e.g. this app running alongside the OTN app on one VPS).
+#
+# In this mode InfraRiskApp does NOT run its own Caddy — do not use the `proxy`
+# profile. The app container joins an external Docker network (`web`) so the
+# shared Caddy can reach it as `infrarisk-app:8000`. Add a site block to the
+# shared Caddyfile:
+#
+#   infrarisk.sebastiankrantz.com {
+#       reverse_proxy infrarisk-app:8000
+#   }
+#
+# One-time (if the shared network does not exist yet):
+#   docker network create web
+#
+# Start the app (base compose + this overlay, NO proxy profile):
+#   docker compose -f docker-compose.yml -f docker-compose.shared.yml up -d --build
+
+services:
+  app:
+    networks:
+      - default   # keep the project-internal network
+      - web        # shared network the front-door Caddy lives on
+
+networks:
+  web:
+    external: true
+    name: web

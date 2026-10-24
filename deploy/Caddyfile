@@ -1,0 +1,11 @@
+# Reverse proxy + automatic HTTPS for InfraRiskApp.
+#
+# Caddy obtains and renews a Let's Encrypt certificate for $DOMAIN automatically
+# (needs public ports 80 + 443 and a DNS A record pointing at this server).
+# The app has no authentication and is intentionally public — no basic_auth here.
+#
+# $DOMAIN is supplied by docker-compose.yml (defaults to infrarisk.sebastiankrantz.com).
+
+{$DOMAIN} {
+	reverse_proxy app:8000
+}
