@@ -56,8 +56,7 @@ const PALETTES: ColorPalette[] = [
 ]
 const BASEMAPS: Basemap[] = [
   'positron', 'dark-matter', 'osm', 'topo', 'esri-street', 'esri-topo',
-  'esri-terrain', 'esri-ocean', 'esri-imagery', 'google-maps',
-  'google-terrain', 'google-hybrid', 'google-satellite',
+  'esri-terrain', 'esri-ocean', 'esri-imagery',
 ]
 
 const asStr = (v: unknown): string | undefined =>
