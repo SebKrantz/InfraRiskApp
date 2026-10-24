@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import type { Map as MapLibreMap } from 'maplibre-gl'
 import Sidebar from './components/Sidebar'
 import MapView from './components/MapView'
 import DisclaimerDialog from './components/DisclaimerDialog'
+import Assistant from './components/assistant/Assistant'
+import type { AssistantBindings } from './lib/assistantTools'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from './types'
 import { getHazards, uploadFile, analyze as analyzeApi, getHazardStats } from './services/api'
 
@@ -14,6 +17,10 @@ function App() {
   const [intensityThreshold, setIntensityThreshold] = useState<number>(0)
   const [hazardOpacity, setHazardOpacity] = useState<number>(60)
   const [hazardStats, setHazardStats] = useState<{ min: number; max: number } | null>(null)
+  // Which hazard the current stats (and the threshold derived from them) belong
+  // to. The assistant waits on this before setting a threshold, so its value
+  // cannot be clobbered by a stats fetch still in flight.
+  const [statsHazardId, setStatsHazardId] = useState<string | null>(null)
   const [basemap, setBasemap] = useState<Basemap>('positron')
   const [hazards, setHazards] = useState<Hazard[]>([])
   const [loadingUpload, setLoadingUpload] = useState(false)
@@ -41,6 +48,7 @@ function App() {
     const fetchStats = async () => {
       if (!selectedHazard) {
         setHazardStats(null)
+        setStatsHazardId(null)
         setIntensityThreshold(0)
         return
       }
@@ -54,6 +62,8 @@ function App() {
         console.error('Failed to fetch hazard statistics:', err)
         // Fallback to default range if stats fail
         setHazardStats({ min: 0, max: 100 })
+      } finally {
+        setStatsHazardId(selectedHazard.id)
       }
     }
     fetchStats()
@@ -81,6 +91,52 @@ function App() {
     setUploadedFile(null)
     setAnalysisResult(null)
     setError(null)
+  }
+
+  // The AI assistant's view of the app. Refreshed every render into a ref, so
+  // the assistant's stable action bundle always reads current state and drives
+  // the same setters the sidebar does.
+  const mapRef = useRef<MapLibreMap | null>(null)
+  const bindings = useRef<AssistantBindings>(null as unknown as AssistantBindings)
+  bindings.current = {
+    sidebarOpen,
+    uploadedFile,
+    selectedHazard,
+    analysisResult,
+    colorPalette,
+    intensityThreshold,
+    hazardOpacity,
+    hazardStats,
+    statsHazardId,
+    basemap,
+    hazards,
+    loadingAnalysis,
+    error,
+    vulnerabilityAnalysisEnabled,
+    vulnerabilityCurveFile,
+    replacementValue,
+    setSidebarOpen,
+    setUploadedFile,
+    setSelectedHazard,
+    setColorPalette,
+    setIntensityThreshold,
+    setHazardOpacity,
+    setBasemap,
+    setVulnerabilityAnalysisEnabled,
+    setVulnerabilityCurveFile,
+    setReplacementValue,
+    clearData: handleClearData,
+    fitBounds: (bbox) => {
+      if (!mapRef.current) return false
+      mapRef.current.fitBounds(
+        [
+          [bbox[0], bbox[1]],
+          [bbox[2], bbox[3]],
+        ],
+        { padding: 50, duration: 600 },
+      )
+      return true
+    },
   }
 
   // Perform analysis when hazard, threshold, or vulnerability analysis changes
@@ -134,7 +190,7 @@ function App() {
   }, [uploadedFile, selectedHazard, intensityThreshold, vulnerabilityAnalysisEnabled, vulnerabilityCurveFile, replacementValue])
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden m-0 p-0">
+    <div className="relative flex h-screen w-screen overflow-hidden m-0 p-0">
       <DisclaimerDialog />
       <Sidebar
         isOpen={sidebarOpen}
@@ -176,7 +232,11 @@ function App() {
         loadingAnalysis={loadingAnalysis}
         vulnerabilityAnalysisEnabled={vulnerabilityAnalysisEnabled}
         hazardStats={hazardStats}
+        onMapReady={(map) => {
+          mapRef.current = map
+        }}
       />
+      <Assistant bindings={bindings} />
     </div>
   )
 }

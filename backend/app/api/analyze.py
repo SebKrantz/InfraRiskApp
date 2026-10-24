@@ -28,7 +28,11 @@ _analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analy
 # stop, so an unbounded dict grows without limit in a process that is meant to
 # stay up. Keep the most recent few and let the rest be recomputed; a raster
 # cache miss costs a re-sample, an analysis cache miss only costs arithmetic.
-_MAX_CACHE_ENTRIES = 8
+# Sized to sit above the assistant's own MAX_ASSISTANT_CACHED (48) plus room
+# for the keys a user built in the UI. The assistant bounds its own entries and
+# deliberately spares UI keys so the sidebar export buttons keep working; a
+# tighter cap here would evict those out from under it.
+_MAX_CACHE_ENTRIES = 64
 
 # Cache for sampled raster values: (file_id, hazard_id) -> cached data
 # For Points: np.ndarray of raster values
