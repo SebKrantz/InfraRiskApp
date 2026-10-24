@@ -108,8 +108,7 @@ client_tool(
             "basemap": {
                 "type": "string",
                 "description": "positron, dark-matter, osm, topo, esri-street, "
-                "esri-topo, esri-terrain, esri-ocean, esri-imagery, google-maps, "
-                "google-terrain, google-hybrid, google-satellite.",
+                "esri-topo, esri-terrain, esri-ocean, esri-imagery.",
             },
         },
     },

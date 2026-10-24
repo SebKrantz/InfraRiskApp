@@ -144,8 +144,7 @@ def make_barchart(
             "basemap": {
                 "type": "string",
                 "description": "positron (default), dark-matter, osm, topo, "
-                "esri-street, esri-topo, esri-imagery, google-maps, "
-                "google-terrain, google-hybrid, google-satellite.",
+                "esri-street, esri-topo, esri-imagery.",
             },
             "title": {"type": "string"},
             "filename": {"type": "string", "description": "e.g. flood100_map.png"},
