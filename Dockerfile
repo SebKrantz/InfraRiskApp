@@ -51,6 +51,10 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 COPY backend/ /app/backend/
 # Hazard catalog CSV (rasters are mounted at runtime — not baked into the image)
 COPY data/hazard_layers.csv /app/data/hazard_layers.csv
+# The vulnerability curve library (curve_library.CURVES_DIR = DATA_DIR/vulnerability_curves:
+# the 218 library curves, the house curves and their indexes; 1.2 MB, tracked). Without it
+# search_curve_library and the damage-cost guides fail with "the curve library index is missing".
+COPY data/vulnerability_curves /app/data/vulnerability_curves
 
 # Frontend build → served by FastAPI from backend/static
 COPY --from=frontend-build /frontend/dist /app/backend/static
