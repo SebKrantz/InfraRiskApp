@@ -3,6 +3,7 @@ import type { Map as MapLibreMap } from 'maplibre-gl'
 import Sidebar from './components/Sidebar'
 import MapView from './components/MapView'
 import Assistant from './components/assistant/Assistant'
+import SessionExpired from './components/SessionExpired'
 import type { AssistantBindings } from './lib/assistantTools'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from './types'
 import { getHazards, uploadFile, analyze as analyzeApi, getHazardStats } from './services/api'
@@ -234,6 +235,7 @@ function App() {
         }}
       />
       <Assistant bindings={bindings} />
+      <SessionExpired />
     </div>
   )
 }
