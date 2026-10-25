@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import config
@@ -173,7 +174,7 @@ async def upload_file(
     safe = Path(filename).name
     dest = conv.workdir / safe
     with conv.hold():
-        dest.write_bytes(blob)
+        await run_in_threadpool(dest.write_bytes, blob)  # up to 100 MB: off the event loop
         conv.uploads[safe] = dest
     log.info(
         "assistant upload: %s (%d bytes) -> conversation %s", safe, len(blob), conv.id

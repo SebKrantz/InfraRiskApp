@@ -134,6 +134,11 @@ DATASET_MAX_MB_PER_OWNER = float(os.environ.get("DATASET_MAX_MB_PER_OWNER", "204
 # Analysis caches (app/api/analyze.py), megabytes each, fair between owners.
 RASTER_CACHE_MB = float(os.environ.get("RASTER_CACHE_MB", "1024"))
 ANALYSIS_CACHE_MB = float(os.environ.get("ANALYSIS_CACHE_MB", "2048"))
+# Heavy work (app/concurrency.py): analyses sampling rasters at once, process-wide;
+# threads each of them reads raster windows with; threads for background jobs.
+ANALYSIS_SLOTS = int(os.environ.get("ANALYSIS_SLOTS", "2"))
+SAMPLING_THREADS = int(os.environ.get("SAMPLING_THREADS", "8"))
+JOB_WORKERS = int(os.environ.get("JOB_WORKERS", "4"))
 
 
 def check_identity_settings() -> None:

@@ -23,8 +23,10 @@ from app.api.hazards import load_hazards_dict
 
 router = APIRouter()
 
-# Thread pool for blocking analysis operations
-_analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analysis_worker")
+# Thread pool for the analyze endpoint's blocking work. The analysis slots
+# (app/concurrency.py) bound the raster sampling; these threads also serve quick
+# re-thresholds and the response's GeoJSON, so they outnumber the slots.
+_analysis_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="analysis_worker")
 
 # Both caches hold whole analyses — for a national line network that is a
 # segment GeoDataFrame plus every sample point along it, hundreds of MB per
@@ -343,25 +345,23 @@ async def analyze_intersections(
             detail="replacement_value must be greater than zero",
         )
 
-    try:
+    def run() -> str:
+        """The analysis, the caching and the response body, all on a worker
+        thread: for a large dataset the GeoJSON and its serialisation are as
+        slow as the analysis, and the event loop serves every other user."""
         # Check cache for previously sampled raster values
         cached_values = get_cached_raster_values(actual_file_id, actual_hazard_id)
         
-        # Perform spatial intersection analysis in thread pool to avoid blocking event loop
-        loop = asyncio.get_event_loop()
-        analysis_result = await loop.run_in_executor(
-            _analysis_executor,
-            lambda: analyze_intersection(
-                infrastructure_gdf=infrastructure_gdf,
-                hazard_raster_path=actual_hazard_url,
-                geometry_type=geometry_type,
-                intensity_threshold=actual_threshold,
-                cached_raster_values=cached_values,
-                vulnerability_curve_interp=vulnerability_curve_interp,
-                replacement_value=actual_replacement_value,
-                vulnerability_curve_lower_interp=vulnerability_curve_lower_interp,
-                vulnerability_curve_upper_interp=vulnerability_curve_upper_interp,
-            )
+        analysis_result = analyze_intersection(
+            infrastructure_gdf=infrastructure_gdf,
+            hazard_raster_path=actual_hazard_url,
+            geometry_type=geometry_type,
+            intensity_threshold=actual_threshold,
+            cached_raster_values=cached_values,
+            vulnerability_curve_interp=vulnerability_curve_interp,
+            replacement_value=actual_replacement_value,
+            vulnerability_curve_lower_interp=vulnerability_curve_lower_interp,
+            vulnerability_curve_upper_interp=vulnerability_curve_upper_interp,
         )
 
         if vulnerability_curve_intensity is not None:
@@ -468,13 +468,17 @@ async def analyze_intersections(
             result.pop("infrastructure_features", None)
             body = json.dumps(result, default=json_encoder, allow_nan=False)
 
-        return Response(content=body, media_type="application/json")
-        
+        return body
+
+    try:
+        loop = asyncio.get_running_loop()
+        body = await loop.run_in_executor(_analysis_executor, run)
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"Error during analysis: {str(e)}"
         )
+    return Response(content=body, media_type="application/json")
 
 
 @router.get("/analyze/{file_id}/status")

@@ -322,8 +322,9 @@ def _raster_intensity_min_max(src) -> Optional[Tuple[float, float]]:
 
 
 @router.get("/hazards/{hazard_id}/stats")
-async def get_hazard_stats(hazard_id: str):
-    """Get statistics (min, max) for a hazard raster"""
+def get_hazard_stats(hazard_id: str):
+    """Get statistics (min, max) for a hazard raster. A plain def: opening a
+    remote COG blocks, so FastAPI runs it on a worker thread."""
     import rasterio
     import numpy as np
     

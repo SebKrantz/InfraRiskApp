@@ -10,8 +10,12 @@ from shapely.geometry import Point, LineString
 from shapely import wkt as shapely_wkt
 from typing import Optional, Callable, Tuple
 from pyproj import Geod
+from contextlib import nullcontext
 import csv
 import threading
+
+from .. import config
+from ..concurrency import analysis_slot
 
 
 _nodata_mask_thread_local = threading.local()
@@ -533,7 +537,7 @@ def sample_raster_at_points(
     x_coords: np.ndarray,
     y_coords: np.ndarray,
     tile_size: float = 1.0,
-    max_workers: int = 16,
+    max_workers: Optional[int] = None,
     failures: Optional[list] = None,
 ) -> np.ndarray:
     """
@@ -543,7 +547,8 @@ def sample_raster_at_points(
 
     Points are grouped into tile_size-degree tiles so each part of the raster is
     fetched once, and tiles are read in parallel: the hazard layers are remote
-    COGs, so the cost is round trips rather than pixels.
+    COGs, so the cost is round trips rather than pixels. At most max_workers
+    threads per call (SAMPLING_THREADS by default), times ANALYSIS_SLOTS calls.
 
     Pixel indices come from the dataset's own transform and are shifted by the
     window's integer offset. Recomputing them from the window's transform — as
@@ -611,7 +616,8 @@ def sample_raster_at_points(
                 failures.append(window)
             return idx, np.full(len(idx), np.nan)
 
-    with ThreadPoolExecutor(max_workers=min(max_workers, len(groups))) as executor:
+    workers = min(max_workers or config.SAMPLING_THREADS, len(groups))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
         for idx, vals in executor.map(process_tile, groups):
             values[idx] = vals
 
@@ -646,6 +652,11 @@ def analyze_intersection(
 
     All hazard rasters use EPSG:4326 (WGS84) as their CRS.
 
+    Sampling the raster takes one of the process's analysis slots
+    (app/concurrency.py): at most ANALYSIS_SLOTS analyses read rasters at once,
+    whether the web UI, the assistant or a job started them. A re-threshold from
+    cached values takes none and never waits.
+
     Args:
         infrastructure_gdf: GeoDataFrame with infrastructure assets
         hazard_raster_path: Path or URL to hazard raster (assumed EPSG:4326)
@@ -660,6 +671,36 @@ def analyze_intersection(
         - full_gdf: GeoDataFrame with all features and affected status
         - raster_values: (for points) sampled values for caching
     """
+    samples = len(infrastructure_gdf) > 0 and not _reuses_samples(
+        geometry_type, len(infrastructure_gdf), cached_raster_values
+    )
+    with analysis_slot() if samples else nullcontext():
+        return _analyze_intersection(
+            infrastructure_gdf, hazard_raster_path, geometry_type, intensity_threshold,
+            cached_raster_values, vulnerability_curve_interp, replacement_value,
+            vulnerability_curve_lower_interp, vulnerability_curve_upper_interp,
+        )
+
+
+def _reuses_samples(geometry_type: str, n_features: int, cached) -> bool:
+    """Whether _analyze_intersection will use `cached` instead of sampling."""
+    if geometry_type == "Point":
+        return cached is not None and not isinstance(cached, dict) and len(cached) == n_features
+    return isinstance(cached, dict) and "line_data" in cached and "raster_values" in cached
+
+
+def _analyze_intersection(
+    infrastructure_gdf: gpd.GeoDataFrame,
+    hazard_raster_path: str,
+    geometry_type: str,
+    intensity_threshold: Optional[float] = None,
+    cached_raster_values: Optional[np.ndarray] = None,
+    vulnerability_curve_interp: Optional[Callable[[float], float]] = None,
+    replacement_value: Optional[float] = None,
+    vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
+    vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
+) -> dict:
+    """analyze_intersection without the analysis slot."""
     if len(infrastructure_gdf) == 0:
         return {
             "affected_count": 0,

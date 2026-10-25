@@ -3,6 +3,7 @@ File upload endpoints
 """
 
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 import os
 import zipfile
@@ -58,13 +59,20 @@ async def upload_file(
             status_code=413,
             detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE / (1024*1024)} MB"
         )
-    
+
+    # Parsing, reprojecting and serialising a large dataset takes seconds:
+    # off the event loop, which serves every other user meanwhile.
+    return await run_in_threadpool(_store_upload, user, file.filename, file_ext, file_content)
+
+
+def _store_upload(user: str, filename: str, file_ext: str, file_content: bytes) -> JSONResponse:
+    """Parse an upload, store it for `user` and build the response (blocking)."""
     try:
         # Save uploaded file
         if file_ext == ".zip":
             # Handle zipped shapefile
             with tempfile.TemporaryDirectory() as temp_dir:
-                zip_path = Path(temp_dir) / file.filename
+                zip_path = Path(temp_dir) / (Path(filename).name or "upload.zip")
                 zip_path.write_bytes(file_content)
                 
                 # Extract zip file
@@ -123,7 +131,7 @@ async def upload_file(
         
         # Store metadata and GeoDataFrame, owned by the uploader
         info = {
-            "filename": file.filename,
+            "filename": filename,
             "geometry_type": geometry_type,
             "feature_count": len(gdf),
             "crs": str(gdf.crs) if gdf.crs else None,
@@ -154,7 +162,7 @@ async def upload_file(
         
         return JSONResponse(content={
             "file_id": file_id,
-            "filename": file.filename,
+            "filename": filename,
             "geometry_type": geometry_type,
             "feature_count": len(gdf),
             "crs": info["crs"],
