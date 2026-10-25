@@ -3,6 +3,7 @@ Application configuration
 """
 
 import os
+import re
 from pathlib import Path
 
 
@@ -92,6 +93,42 @@ ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100")
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
+
+
+# --------------------------------------------------------------------------- #
+# Several users (app/identity.py). The AEI_* names are shared by every AEI Labs
+# platform.
+# --------------------------------------------------------------------------- #
+
+# The identity header Caddy sets after the Google sign-in (X-Auth-Request-Email).
+# Empty = single-user mode: no identity is checked and AEI_LOCAL_USER owns every
+# dataset and conversation, which is how the local fleet runs.
+AEI_AUTH_HEADER = os.environ.get("AEI_AUTH_HEADER", "").strip()
+# sha256 (hex) of the X-AEI-Edge secret Caddy adds to every request it forwards.
+# Required with AEI_AUTH_HEADER: without it any container on the internal network
+# could claim any identity. Only the digest is kept (python_exec runs in-process).
+AEI_EDGE_SECRET_SHA256 = os.environ.get("AEI_EDGE_SECRET_SHA256", "").strip().lower()
+AEI_ADMIN_EMAILS = frozenset(
+    e.strip().lower() for e in os.environ.get("AEI_ADMIN_EMAILS", "").split(",") if e.strip()
+)
+AEI_LOCAL_USER = os.environ.get("AEI_LOCAL_USER", "").strip() or "local"
+# Browser origins other than the app's own that may call the API (comma list).
+# Empty: same origin only — the backend serves the SPA, and Vite proxies /api in dev.
+AEI_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("AEI_CORS_ORIGINS", "").split(",") if o.strip()
+]
+
+
+def check_identity_settings() -> None:
+    """Multi-user mode needs the edge secret's digest; refuse to start without it."""
+    if AEI_AUTH_HEADER and not re.fullmatch(r"[0-9a-f]{64}", AEI_EDGE_SECRET_SHA256):
+        raise RuntimeError(
+            "AEI_AUTH_HEADER is set but AEI_EDGE_SECRET_SHA256 is missing or is not a "
+            "sha256 hex digest: refusing to start in multi-user mode without it"
+        )
+
+
+check_identity_settings()
 
 # Every key is read above. Take the secret-named variables out of the environment
 # now, so python_exec (which runs in this process) and any child process find none;

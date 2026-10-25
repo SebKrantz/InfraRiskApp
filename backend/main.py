@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from app.api import upload, hazards, analyze, tiles, export
-from app import config
+from app import config, identity
 from app.config import settings
 
 log = logging.getLogger("infrarisk")
@@ -64,14 +64,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for frontend integration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def configure_cors(target: FastAPI) -> None:
+    """Cross-origin access only for the origins in AEI_CORS_ORIGINS; none by
+    default, since the backend serves the SPA itself. Added after the identity
+    middleware so it sits outside it and answers preflights, which carry no
+    identity."""
+    if config.AEI_CORS_ORIGINS:
+        target.add_middleware(
+            CORSMiddleware,
+            allow_origins=config.AEI_CORS_ORIGINS,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+
+# Every /api/* request carries a principal (app/identity.py)
+app.add_middleware(identity.IdentityMiddleware)
+configure_cors(app)
 
 # Include routers
 app.include_router(upload.router, prefix="/api", tags=["upload"])

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Tuple
 import threading
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 import rasterio
 from rasterio.windows import from_bounds
@@ -19,6 +19,7 @@ from PIL import Image
 from matplotlib import colormaps
 from cachetools import TTLCache
 
+from app.identity import require_admin
 from app.utils.geospatial import mask_raster_nodata
 
 router = APIRouter()
@@ -242,9 +243,9 @@ async def get_tile(
     return Response(content=tile_bytes, media_type="image/png")
 
 
-@router.post("/tiles/clear-cache")
+@router.post("/tiles/clear-cache", dependencies=[Depends(require_admin)])
 async def clear_tile_cache():
-    """Clear tile cache."""
+    """Clear tile cache (every user's): admins only in multi-user mode."""
     with _tile_cache_lock:
         _tile_cache.clear()
     return {"message": "Tile cache cleared"}
