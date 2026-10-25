@@ -8,13 +8,13 @@ the repo's venv:  python -m unittest discover -s tests
 
 from __future__ import annotations
 
-import hashlib
 import sys
 import unittest
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
@@ -23,24 +23,7 @@ from starlette.datastructures import Headers  # noqa: E402
 from app import config, identity  # noqa: E402
 
 import main  # noqa: E402
-
-SECRET = "edge-secret-used-only-in-tests"
-HEADER = "X-Auth-Request-Email"
-
-
-def multi_user(admins: tuple[str, ...] = ()):
-    """Patch app.config into multi-user mode, as the deployment sets it."""
-    return mock.patch.multiple(
-        config,
-        AEI_AUTH_HEADER=HEADER,
-        AEI_EDGE_SECRET_SHA256=hashlib.sha256(SECRET.encode()).hexdigest(),
-        AEI_ADMIN_EMAILS=frozenset(admins),
-    )
-
-
-def signed_in(email: str, secret: str = SECRET) -> dict[str, str]:
-    """The headers Caddy forwards for a signed-in user."""
-    return {HEADER: email, "X-AEI-Edge": secret}
+from multiuser_helpers import HEADER, multi_user, signed_in  # noqa: E402
 
 
 class SingleUserMode(unittest.TestCase):

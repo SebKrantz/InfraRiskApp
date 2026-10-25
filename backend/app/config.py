@@ -93,6 +93,13 @@ ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100")
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
+# Conversations held in memory, browser chats and MCP scopes together: at most
+# this many, each dropped after this many idle hours. One with a turn, a
+# python_exec or a tool call in flight is never dropped.
+ASSISTANT_MAX_CONVERSATIONS = int(os.environ.get("ASSISTANT_MAX_CONVERSATIONS", "128"))
+ASSISTANT_CONVERSATION_IDLE_HOURS = float(
+    os.environ.get("ASSISTANT_CONVERSATION_IDLE_HOURS", "24")
+)
 
 
 # --------------------------------------------------------------------------- #

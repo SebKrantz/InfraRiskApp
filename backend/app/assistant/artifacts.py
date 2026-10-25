@@ -18,7 +18,9 @@ from pathlib import Path
 
 log = logging.getLogger("infrarisk.assistant")
 
-MAX_ARTIFACTS = 64
+# Files on disk, dropped with their conversation; about 8 per live conversation,
+# so one user's report figures do not evict another's.
+MAX_ARTIFACTS = 1024
 
 # kind -> (mime, served inline in the chat transcript?)
 KINDS = {

@@ -3,6 +3,9 @@
 The chat response is a plain-`def` StreamingResponse of Server-Sent Events.
 Client-executed UI tools suspend a leg with `await_client`; the browser posts
 the results back to the same endpoint to continue the turn.
+
+Every conversation, upload, artifact and curve belongs to the signed-in user who
+created it (app/identity.py); anyone else gets a 404, as for an unknown id.
 """
 
 from __future__ import annotations
@@ -11,11 +14,12 @@ import logging
 from pathlib import Path
 from typing import Any, Iterator
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import config
 from ..assistant import artifacts, conversations, loop, models, schema, tools
+from ..identity import current_user, reserved_conversation_id
 
 log = logging.getLogger("infrarisk.assistant")
 
@@ -70,8 +74,21 @@ def _pick_model(body: dict[str, Any]) -> models.Choice:
         raise HTTPException(422, str(exc)) from exc
 
 
+def _conversation(conversation_id: str | None, user: str) -> conversations.Conversation:
+    """The user's conversation, created on first use; another user's (or, in
+    multi-user mode, an MCP scope's) is a 404."""
+    if conversation_id is not None and not isinstance(conversation_id, str):
+        raise HTTPException(422, "conversation_id must be a string")
+    if reserved_conversation_id(conversation_id):
+        raise HTTPException(404, "conversation not found")
+    try:
+        return conversations.get_or_create(conversation_id, owner=user)
+    except conversations.NotYours:
+        raise HTTPException(404, "conversation not found") from None
+
+
 @router.post("/chat")
-async def chat(request: Request) -> StreamingResponse:
+async def chat(request: Request, user: str = Depends(current_user)) -> StreamingResponse:
     """Body: {conversation_id?, provider?, model?, effort?, service_tier?,
     message? | tool_results?, files?, app_state?}. Returns an SSE stream (see
     assistant/loop.py); effort and service_tier are checked against /meta's table."""
@@ -87,7 +104,7 @@ async def chat(request: Request) -> StreamingResponse:
         raise HTTPException(422, "pass exactly one of `message` or `tool_results`")
 
     choice = _pick_model(body)
-    conv = conversations.get_or_create(body.get("conversation_id"))
+    conv = _conversation(body.get("conversation_id"), user)
 
     # Uploads attached to this message: images and PDFs become multimodal file
     # parts; everything else becomes a context block with an automatic preview,
@@ -143,9 +160,10 @@ async def upload_file(
     conversation_id: str,
     request: Request,
     filename: str = Query(..., min_length=1, max_length=200),
+    user: str = Depends(current_user),
 ) -> dict[str, Any]:
     """Raw request body — no multipart, so a big GeoPackage streams straight in."""
-    conv = conversations.get_or_create(conversation_id)
+    conv = _conversation(conversation_id, user)
     blob = await request.body()
     limit = int(config.ASSISTANT_UPLOAD_MAX_MB * 1024 * 1024)
     if len(blob) > limit:
@@ -154,8 +172,9 @@ async def upload_file(
         raise HTTPException(422, "empty file")
     safe = Path(filename).name
     dest = conv.workdir / safe
-    dest.write_bytes(blob)
-    conv.uploads[safe] = dest
+    with conv.hold():
+        dest.write_bytes(blob)
+        conv.uploads[safe] = dest
     log.info(
         "assistant upload: %s (%d bytes) -> conversation %s", safe, len(blob), conv.id
     )
@@ -168,9 +187,10 @@ async def upload_file(
 
 
 @router.get("/artifacts/{artifact_id}")
-def download_artifact(artifact_id: str):
+def download_artifact(artifact_id: str, user: str = Depends(current_user)):
     art = artifacts.get(artifact_id)
-    if art is None or not art.path.is_file():
+    mine = art is not None and conversations.get(art.conversation_id, owner=user) is not None
+    if not mine or not art.path.is_file():
         raise HTTPException(404, "artifact not found (it may have been evicted)")
     return FileResponse(
         art.path,
@@ -209,10 +229,12 @@ def dataset_geojson(file_id: str) -> JSONResponse:
 
 
 @router.get("/conversations/{conversation_id}/curves/{name}")
-def download_curve(conversation_id: str, name: str) -> Response:
+def download_curve(
+    conversation_id: str, name: str, user: str = Depends(current_user)
+) -> Response:
     """The raw bytes of a parsed vulnerability curve, so the browser can hand
     the app the very same file the analysis used."""
-    conv = conversations.get(conversation_id)
+    conv = conversations.get(conversation_id, owner=user)
     if conv is None:
         raise HTTPException(404, "conversation not found")
     curve = conv.curves.get(name)
@@ -229,16 +251,18 @@ def download_curve(conversation_id: str, name: str) -> Response:
 
 
 @router.post("/app_state")
-async def push_app_state(request: Request) -> dict[str, Any]:
+async def push_app_state(request: Request, user: str = Depends(current_user)) -> dict[str, Any]:
     """The frontend's debounced snapshot of what the user sees; read by the
-    MCP-facing read_app_state tool."""
+    MCP-facing read_app_state tool, per user."""
     from ..assistant import mcp_state
 
     body = await request.json()
-    mcp_state.update(body if isinstance(body, dict) else {})
+    mcp_state.update(user, body if isinstance(body, dict) else {})
     return {"ok": True}
 
 
 @router.delete("/conversations/{conversation_id}")
-def delete_conversation(conversation_id: str) -> dict[str, Any]:
-    return {"deleted": conversations.drop(conversation_id)}
+def delete_conversation(
+    conversation_id: str, user: str = Depends(current_user)
+) -> dict[str, Any]:
+    return {"deleted": conversations.drop(conversation_id, owner=user)}

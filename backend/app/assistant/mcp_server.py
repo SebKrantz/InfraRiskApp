@@ -16,14 +16,20 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from .. import identity
 from . import mcp_state, tools
 from .conversations import get_or_create
 
 log = logging.getLogger("infrarisk.assistant")
 
 # One shared scope for all external MCP traffic: stored variables, uploads and
-# artifacts behave exactly as they do for one chat conversation.
+# artifacts behave exactly as they do for one chat conversation. In multi-user
+# mode it is its own principal and sees no user's datasets or screen.
 _MCP_CONVERSATION_ID = "mcp-shared-scope"
+
+
+def _owner() -> str:
+    return identity.scope_principal(_MCP_CONVERSATION_ID)
 
 _PY_TYPES = {
     "string": str,
@@ -40,10 +46,11 @@ def _wrapper(spec: tools.ToolSpec):
     ToolSpec's fn with the shared MCP conversation."""
 
     def impl(**kwargs: Any) -> Any:
-        conv = get_or_create(_MCP_CONVERSATION_ID)
+        conv = get_or_create(_MCP_CONVERSATION_ID, owner=_owner())
         # omitted optionals arrive as None — let the fn's own defaults apply
         args = {k: v for k, v in kwargs.items() if v is not None}
-        return spec.fn(conv, **args)
+        with conv.hold():
+            return spec.fn(conv, **args)
 
     props = spec.params.get("properties", {})
     required = set(spec.params.get("required", []))
@@ -87,7 +94,7 @@ def build() -> MCPServer:
         server.add_tool(_wrapper(spec), name=spec.name, description=spec.description)
 
     def read_app_state() -> dict[str, Any]:
-        return mcp_state.read()
+        return mcp_state.read(_owner())
 
     server.add_tool(
         read_app_state,
