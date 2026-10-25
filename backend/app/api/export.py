@@ -97,7 +97,7 @@ def _run_data_export(
     hazard_id: str,
     intensity_threshold: Optional[float],
     mode: str,
-    owner: Optional[str] = None,
+    owner: Optional[str | tuple[str, ...]] = None,
     keep_attributes: bool = False,
 ) -> tuple[bytes, str, str]:
     """Returns (body, filename, media_type). Raises ValueError for bad input,

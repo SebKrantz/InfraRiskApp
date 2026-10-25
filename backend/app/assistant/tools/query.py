@@ -124,7 +124,7 @@ def get_hazard_stats(conv: Conversation, hazard: str) -> dict[str, Any]:
 def list_datasets(conv: Conversation) -> dict[str, Any]:
     from ... import datasets
 
-    mine = datasets.list_for(conv.owner)
+    mine = datasets.list_for(conv.readers)
     return {
         "count": len(mine),
         "datasets": [domain.dataset_brief(fid, info) for fid, info in mine],

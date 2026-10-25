@@ -5,7 +5,9 @@ signed-in user for a sidebar upload and for what their in-app assistant loads
 (one workspace per person, so the assistant and the sidebar see the same
 datasets), or the MCP scope for what an external client loads. Every read names
 the principal and finds only its own; another owner's file_id answers exactly
-like one that does not exist. In single-user mode everything belongs to
+like one that does not exist. A read may name several principals: an MCP scope
+that AGUI runs for a person reads that person's own datasets as well
+(conversations.Conversation.readers). In single-user mode everything belongs to
 AEI_LOCAL_USER, so every caller sees every dataset, as before.
 
 Lifecycle: a dataset unused for DATASET_TTL_HOURS is dropped; an owner keeps at
@@ -44,6 +46,13 @@ class QuotaExceeded(ValueError):
 
 def owner_of(info: dict[str, Any]) -> str:
     return info.get("owner") or identity.local_user()
+
+
+def _readable(info: dict[str, Any] | None, readers: str | tuple[str, ...]) -> bool:
+    """Whether `readers` (a principal, or several) may read the dataset."""
+    if info is None:
+        return False
+    return owner_of(info) in ((readers,) if isinstance(readers, str) else readers)
 
 
 def owner_for(file_id: str) -> str | None:
@@ -88,23 +97,25 @@ def add(owner: str, info: dict[str, Any], scope: str | None = None) -> str:
     return file_id
 
 
-def get(owner: str, file_id: str) -> dict[str, Any]:
-    """The owner's dataset `file_id`; raises DatasetNotFound otherwise."""
+def get(owner: str | tuple[str, ...], file_id: str) -> dict[str, Any]:
+    """The owner's dataset `file_id` (`owner` may name several principals);
+    raises DatasetNotFound otherwise."""
     with _LOCK:
         doomed = _sweep(time.time())
         info = STORE.get(file_id)
-        if info is not None and owner_of(info) == owner:
+        mine = _readable(info, owner)
+        if mine:
             info["last_used"] = time.time()
     _purge_caches(doomed)
-    if info is None or owner_of(info) != owner:
+    if not mine:
         raise DatasetNotFound(file_id)
     return info
 
 
-def list_for(owner: str) -> list[tuple[str, dict[str, Any]]]:
+def list_for(owner: str | tuple[str, ...]) -> list[tuple[str, dict[str, Any]]]:
     with _LOCK:
         doomed = _sweep(time.time())
-        mine = [(fid, info) for fid, info in STORE.items() if owner_of(info) == owner]
+        mine = [(fid, info) for fid, info in STORE.items() if _readable(info, owner)]
     _purge_caches(doomed)
     return mine
 
@@ -119,12 +130,18 @@ def remove(owner: str, file_id: str) -> None:
 
 
 def purge_scope(scope: str) -> int:
-    """Drop the datasets an MCP scope loaded for itself, when the scope goes.
-    A person's datasets stay (their map may still show them) until TTL or quota."""
+    """Drop the datasets an MCP scope loaded for itself, when the scope goes: the
+    ones its conversation registered and any other its principal owns (an
+    internal upload). A person's datasets stay (their map may still show them)
+    until TTL or quota."""
+    principal = (
+        identity.scope_principal(scope) if identity.reserved_conversation_id(scope) else None
+    )
     with _LOCK:
         doomed = [
             fid for fid, info in STORE.items()
-            if info.get("scope") == scope and identity.is_scope_principal(owner_of(info))
+            if identity.is_scope_principal(owner_of(info))
+            and (info.get("scope") == scope or owner_of(info) == principal)
         ]
         for fid in doomed:
             del STORE[fid]

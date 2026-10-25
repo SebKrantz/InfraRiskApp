@@ -371,12 +371,12 @@ def expected_annual_damage(
             )
         # An uploaded file's name names the dataset its analyses were run on.
         points, setting = _reused(conv, analyses, file_id and resolve_dataset(conv, file_id))
-        info = domain.get_dataset(setting["file_id"], conv.owner)
+        info = domain.get_dataset(setting["file_id"], conv.readers)
     else:
         if not file_id:
             raise ValueError("file_id is required with `family` or `hazards`")
         file_id = resolve_dataset(conv, file_id)
-        info = domain.get_dataset(file_id, conv.owner)
+        info = domain.get_dataset(file_id, conv.readers)
         if not curve:
             raise ValueError(
                 "expected annual damage needs a vulnerability curve: a loaded curve's "
@@ -419,7 +419,7 @@ def expected_annual_damage(
                 replacement_value=values,
                 vulnerability_curve_lower_interp=vc["lower"],
                 vulnerability_curve_upper_interp=vc["upper"],
-                owner=conv.owner,
+                owner=conv.readers,
                 curve_digest=domain.curve_digest(vc),
             )
             pt.update(_losses(result, domain.summarise(result, info, haz, threshold)))
@@ -570,7 +570,7 @@ def _reused(
                 "replacement_value"
             )
         haz = domain.resolve_hazard(meta["hazard_id"])
-        info = domain.get_dataset(meta["file_id"], conv.owner)
+        info = domain.get_dataset(meta["file_id"], conv.readers)
         pt = _point(haz)
         pt.update(_losses(result, domain.summarise(result, info, haz, meta["threshold"])))
         pt["analysis"] = name
@@ -600,7 +600,7 @@ def _reused(
     if file_id and file_id != first["file_id"]:
         raise ValueError(f"the analyses are of {first['file_id']!r}, not {file_id!r}")
     curve = conv.curves.get(first["curve"], {})
-    info = domain.get_dataset(first["file_id"], conv.owner)
+    info = domain.get_dataset(first["file_id"], conv.readers)
     column = first.get("replacement_value_column")
     values = (
         domain.replacement_values(

@@ -6,6 +6,8 @@ the results back to the same endpoint to continue the turn.
 
 Every conversation, upload, artifact and curve belongs to the signed-in user who
 created it (app/identity.py); anyone else gets a 404, as for an unknown id.
+AGUI's internal calls (service token) act for its MCP scopes: the file push to
+`mcp:<scope>` and the download of a scope's artifacts.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
-from .. import config
+from .. import config, identity
 from ..assistant import artifacts, conversations, loop, models, schema, tools
 from ..identity import current_user, reserved_conversation_id
 
@@ -164,8 +166,19 @@ async def upload_file(
     filename: str = Query(..., min_length=1, max_length=200),
     user: str = Depends(current_user),
 ) -> dict[str, Any]:
-    """Raw request body — no multipart, so a big GeoPackage streams straight in."""
-    conv = _conversation(conversation_id, user)
+    """Raw request body — no multipart, so a big GeoPackage streams straight in.
+    AGUI's internal push to one of its scopes acts for that scope."""
+    if identity.internal_request(request.headers) and reserved_conversation_id(conversation_id):
+        try:
+            conv = conversations.get_or_create(
+                conversation_id,
+                owner=identity.scope_principal(conversation_id),
+                user=identity.service_user(request.headers),
+            )
+        except conversations.NotYours:
+            raise HTTPException(404, "conversation not found") from None
+    else:
+        conv = _conversation(conversation_id, user)
     blob = await request.body()
     limit = int(config.ASSISTANT_UPLOAD_MAX_MB * 1024 * 1024)
     if len(blob) > limit:
@@ -188,10 +201,22 @@ async def upload_file(
     }
 
 
+def _internal_may_read(request: Request, conv: conversations.Conversation | None) -> bool:
+    """AGUI's internal call may read what an MCP scope made (unless the scope is
+    bound to another person than the one it names) and its user's own."""
+    if conv is None or not identity.internal_request(request.headers):
+        return False
+    person = identity.service_user(request.headers)
+    if identity.is_scope_principal(conv.owner):
+        return not (conv.user and person and conv.user != person)
+    return person is not None and conv.owner == person
+
+
 @router.get("/artifacts/{artifact_id}")
-def download_artifact(artifact_id: str, user: str = Depends(current_user)):
+def download_artifact(artifact_id: str, request: Request, user: str = Depends(current_user)):
     art = artifacts.get(artifact_id)
-    mine = art is not None and conversations.get(art.conversation_id, owner=user) is not None
+    conv = conversations.get(art.conversation_id) if art is not None else None
+    mine = conv is not None and (conv.owner == user or _internal_may_read(request, conv))
     if not mine or not art.path.is_file():
         raise HTTPException(404, "artifact not found (it may have been evicted)")
     return FileResponse(

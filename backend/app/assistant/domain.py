@@ -108,8 +108,9 @@ def hazard_url(h: dict) -> str:
 # ---- datasets -------------------------------------------------------------- #
 
 
-def get_dataset(file_id: str, owner: Optional[str] = None) -> dict:
-    """The owner's dataset (AEI_LOCAL_USER's when no owner is named)."""
+def get_dataset(file_id: str, owner: Optional[str | tuple[str, ...]] = None) -> dict:
+    """The owner's dataset (AEI_LOCAL_USER's when no owner is named). `owner` may
+    name several principals: a conversation's `readers`."""
     owner = owner or identity.local_user()
     try:
         return datasets.get(owner, file_id)
@@ -227,14 +228,14 @@ def run_exposure(
     replacement_value: Any = None,
     vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
     vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
-    owner: Optional[str] = None,
+    owner: Optional[str | tuple[str, ...]] = None,
     curve_digest: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one analysis exactly as POST /api/analyze would, and cache it there.
     `replacement_value` is a scalar or one value per dataset row.
 
     Returns the raw `analyze_intersection` dict (with `full_gdf`, `raster_values`
-    and, for lines, `line_data`). `owner` is the conversation's; `curve_digest`
+    and, for lines, `line_data`). `owner` is the conversation's readers; `curve_digest`
     (see curve_digest()) identifies the curve in the cache key.
     """
     info = get_dataset(file_id, owner)

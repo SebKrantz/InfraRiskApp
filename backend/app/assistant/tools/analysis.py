@@ -154,7 +154,7 @@ def run_analysis(
 
     haz = domain.resolve_hazard(hazard)
     file_id = resolve_dataset(conv, file_id)
-    info = domain.get_dataset(file_id, conv.owner)
+    info = domain.get_dataset(file_id, conv.readers)
     vc, values, per_feature = _damage_inputs(
         conv, info, curve, replacement_value, replacement_value_column, replacement_value_map
     )
@@ -169,7 +169,7 @@ def run_analysis(
         replacement_value=values,
         vulnerability_curve_lower_interp=vc["lower"] if vc else None,
         vulnerability_curve_upper_interp=vc["upper"] if vc else None,
-        owner=conv.owner,
+        owner=conv.readers,
         curve_digest=domain.curve_digest(vc) if vc else None,
     )
     result["_assistant_meta"]["id_column"] = id_column
@@ -196,7 +196,7 @@ def run_analysis(
         out["id_column"] = id_column
     out["stored_as"] = conv.store_result("analysis", result)
     if include_features or export:
-        table = feature_table(result)
+        table = feature_table(result, readers=conv.readers)
         if include_features:
             out["features"] = {
                 "rows": rows_of(table, 500),
@@ -274,7 +274,7 @@ def compare_hazards(
         )
 
     file_id = resolve_dataset(conv, file_id)
-    info = domain.get_dataset(file_id, conv.owner)
+    info = domain.get_dataset(file_id, conv.readers)
     vc, values, per_feature = _damage_inputs(
         conv, info, curve, replacement_value, replacement_value_column, replacement_value_map
     )
@@ -303,7 +303,7 @@ def compare_hazards(
                 replacement_value=values,
                 vulnerability_curve_lower_interp=vc["lower"] if vc else None,
                 vulnerability_curve_upper_interp=vc["upper"] if vc else None,
-                owner=conv.owner,
+                owner=conv.readers,
                 curve_digest=domain.curve_digest(vc) if vc else None,
             )
             rows.append(domain.summarise(result, info, haz, thr))
@@ -371,10 +371,10 @@ def sweep_thresholds(
 
     haz = domain.resolve_hazard(hazard)
     file_id = resolve_dataset(conv, file_id)
-    info = domain.get_dataset(file_id, conv.owner)
+    info = domain.get_dataset(file_id, conv.readers)
     rows = []
     for thr in sorted(thresholds):
-        result = domain.run_exposure(file_id, haz, threshold=thr, owner=conv.owner)
+        result = domain.run_exposure(file_id, haz, threshold=thr, owner=conv.readers)
         rows.append(domain.summarise(result, info, haz, thr))
     df = pd.DataFrame(rows)
     return {

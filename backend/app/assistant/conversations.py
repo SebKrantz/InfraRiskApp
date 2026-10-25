@@ -1,8 +1,9 @@
 """Per-conversation state: history, pending client calls, namespace, uploads.
 
-One process, one store shared by browser chats and the MCP scope. Each
+One process, one store shared by browser chats and the MCP scopes. Each
 conversation belongs to the principal that created it (app/identity.py) and is
-invisible to everyone else. A conversation idle for longer than IDLE_TTL_S is
+invisible to everyone else; an MCP scope that AGUI runs for a person is bound to
+that person (`user`) on first use. A conversation idle for longer than IDLE_TTL_S is
 dropped, and beyond MAX_CONVERSATIONS the least recently used go first — but
 never one that is busy (a turn, a python_exec or a tool call in flight).
 Eviction deletes the temp directory, artifacts and namespace. The backend
@@ -46,6 +47,9 @@ class Conversation:
     # The principal that created it: an email, `mcp:<scope>`, or AEI_LOCAL_USER
     # in single-user mode. Fixed for the conversation's life.
     owner: str = field(default_factory=identity.local_user)
+    # The person an MCP scope works for (AGUI's X-AEI-User, multi-user mode):
+    # bound on first use, then fixed. The scope also reads their own datasets.
+    user: str | None = None
     provider: str | None = None
     model: str | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -88,6 +92,14 @@ class Conversation:
             with _LOCK:
                 self._holds -= 1
                 self.last_used = time.time()
+
+    @property
+    def readers(self) -> tuple[str, ...]:
+        """Whose datasets this conversation reads: its owner's, and for a scope
+        working for a person, that person's own as well."""
+        if self.user and self.user != self.owner:
+            return (self.owner, self.user)
+        return (self.owner,)
 
     @property
     def busy(self) -> bool:
@@ -147,24 +159,34 @@ def file_digest(path: Path) -> str:
     return digest
 
 
-def get_or_create(conversation_id: str | None, owner: str | None = None) -> Conversation:
+def get_or_create(
+    conversation_id: str | None, owner: str | None = None, user: str | None = None
+) -> Conversation:
     """The owner's conversation `conversation_id`, created on first use.
 
-    Raises NotYours when the id belongs to another principal. `owner` defaults to
-    AEI_LOCAL_USER, which in multi-user mode owns nothing a person created.
+    Raises NotYours when the id belongs to another principal, or `user` (the
+    person an MCP scope works for) differs from the one the scope is bound to.
+    `owner` defaults to AEI_LOCAL_USER, which in multi-user mode owns nothing a
+    person created.
     """
     owner = owner or identity.local_user()
     now = time.time()
     with _LOCK:
         conv = _STORE.get(conversation_id) if conversation_id else None
         if conv is not None:
-            if conv.owner != owner:
+            if conv.owner != owner or (user and conv.user and conv.user != user):
                 raise NotYours(conversation_id)
+            if user and not conv.user:
+                conv.user = user
             _STORE.move_to_end(conv.id)
             conv.last_used = now
             return conv
         conv = Conversation(
-            id=conversation_id or uuid.uuid4().hex, created=now, owner=owner, last_used=now
+            id=conversation_id or uuid.uuid4().hex,
+            created=now,
+            owner=owner,
+            user=user,
+            last_used=now,
         )
         _STORE[conv.id] = conv
         doomed = _evict(now, keep=conv.id)

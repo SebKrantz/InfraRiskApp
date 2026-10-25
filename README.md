@@ -301,8 +301,10 @@ claude mcp add --transport http infrarisk http://127.0.0.1:8000/mcp
 
 Set `ASSISTANT_MCP_ENABLED=0` to turn it off.
 
-> **Security:** `python_exec` is deliberately unsandboxed, and the MCP endpoint is unauthenticated.
-> Bind the backend to localhost, or put it behind authentication before exposing the port.
+> **Security:** `python_exec` is deliberately unsandboxed, and in single-user mode the MCP endpoint
+> is unauthenticated. Bind the backend to localhost, or put it behind authentication before
+> exposing the port. In multi-user mode (`AEI_AUTH_HEADER` set) `/mcp` takes only calls carrying
+> the service token whose sha256 is `AEI_SERVICE_TOKEN_SHA256` (see `backend/.env.example`).
 
 ## Configuration
 

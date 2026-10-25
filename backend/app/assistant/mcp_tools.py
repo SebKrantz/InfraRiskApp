@@ -13,7 +13,7 @@ import binascii
 from pathlib import Path
 from typing import Any
 
-from .. import config
+from .. import config, datasets, identity
 from . import conversations, jobs
 from .conversations import Conversation, file_digest, file_kind
 from .tools import REGISTRY, ToolSpec
@@ -111,19 +111,23 @@ def upload_file(
 @mcp_tool(
     "reset_scope",
     "Forget this scope: its uploads, curves, python_exec namespace and "
-    "workdir, stored results and artifacts, and the datasets it loaded into the "
-    "app. Call it when the chat that owns the scope is deleted. Other scopes and "
-    "datasets loaded by anyone else are untouched.",
+    "workdir, stored results and artifacts, jobs, and the datasets it loaded into "
+    "the app. Call it when the chat that owns the scope is deleted. Other scopes, "
+    "the user's own datasets and datasets loaded by anyone else are untouched.",
     {"type": "object", "properties": {}},
 )
 def reset_scope(conv: Conversation) -> dict[str, Any]:
-    from ..api.analyze import clear_raster_cache_for_file
-    from ..api.upload import uploaded_files
-
     jobs.cancel_all(conv.id)
-    dropped = [fid for fid in conv.datasets if uploaded_files.pop(fid, None) is not None]
-    for fid in dropped:
-        clear_raster_cache_for_file(fid)
+    doomed = set(conv.datasets)  # single-user mode: the local user owns them
+    if identity.is_scope_principal(conv.owner):
+        doomed |= {fid for fid, _ in datasets.list_for(conv.owner)}
+    dropped = []
+    for fid in sorted(doomed):
+        try:
+            datasets.remove(conv.owner, fid)  # never the user's own: another owner
+            dropped.append(fid)
+        except datasets.DatasetNotFound:
+            pass
     conversations.drop(conv.id)
     return {"scope": conv.id, "reset": True, "datasets_deleted": dropped}
 
@@ -131,8 +135,10 @@ def reset_scope(conv: Conversation) -> dict[str, Any]:
 @mcp_tool(
     "delete_dataset",
     "Remove a loaded dataset from the app, with its cached analyses — the same "
-    "as DELETE /api/upload/{file_id}. Datasets are shared by every scope and the "
-    "browser UI, so delete only ones you loaded.",
+    "as DELETE /api/upload/{file_id}. On a multi-user server only the scope's own "
+    "datasets can go (not the user's from the web app); on a single-user server "
+    "datasets are shared by every scope and the browser UI, so delete only ones "
+    "you loaded.",
     {
         "type": "object",
         "properties": {"file_id": {"type": "string", "description": "Dataset to remove."}},
@@ -140,12 +146,13 @@ def reset_scope(conv: Conversation) -> dict[str, Any]:
     },
 )
 def delete_dataset(conv: Conversation, file_id: str) -> dict[str, Any]:
-    from ..api.analyze import clear_raster_cache_for_file
-    from ..api.upload import uploaded_files
-
-    if uploaded_files.pop(file_id, None) is None:
-        raise ValueError(f"no dataset {file_id!r}; loaded datasets: {list(uploaded_files) or 'none'}")
-    clear_raster_cache_for_file(file_id)
+    try:
+        datasets.remove(conv.owner, file_id)  # purges its cached analyses too
+    except datasets.DatasetNotFound:
+        own = [fid for fid, _ in datasets.list_for(conv.owner)]
+        raise ValueError(
+            f"no dataset {file_id!r} that this scope may delete; those it may: {own or 'none'}"
+        ) from None
     if file_id in conv.datasets:
         conv.datasets.remove(file_id)
     return {"deleted": file_id}

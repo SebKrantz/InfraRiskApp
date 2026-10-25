@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from ... import config
+from ... import config, identity
 from .. import domain
 from ..conversations import Conversation
 from . import tool
@@ -45,7 +45,7 @@ def resolve_dataset(conv: Conversation, ref: str) -> str:
     conversation — loaded on first use and reused while the file is unchanged."""
     from ... import datasets
 
-    loaded = [fid for fid, _ in datasets.list_for(conv.owner)]
+    loaded = [fid for fid, _ in datasets.list_for(conv.readers)]
     if ref in loaded:
         return ref
     name = _upload_name(conv, ref)
@@ -263,21 +263,32 @@ _LOADABLE = (".gpkg", ".zip", ".geojson", ".json", ".csv", ".shp")
 def load_from_url(conv: Conversation, url: str, name: str | None = None) -> dict[str, Any]:
     from urllib.parse import unquote, urlparse
 
-    from .. import artifacts
+    from .. import artifacts, conversations
 
     cap = int(config.ASSISTANT_UPLOAD_MAX_MB * 1024 * 1024)
     local = re.search(r"/assistant/artifacts/([0-9a-f]{32})\b", url)
     header_name = None
     if local:
         art = artifacts.get(local.group(1))
-        if art is None or not art.path.is_file():
+        # this conversation's, or one of a conversation whose owner it reads
+        source = art and (
+            conv if art.conversation_id == conv.id else conversations.get(art.conversation_id)
+        )
+        if source is None or source.owner not in conv.readers or not art.path.is_file():
             raise ValueError(f"artifact {local.group(1)} not found (it may have been evicted)")
         blob, header_name = art.path.read_bytes(), art.filename
     else:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
             raise ValueError(f"expected an absolute http(s) URL, got {url!r}")
-        blob, header_name = _download(url, parsed.hostname or "", cap)
+        host = (parsed.hostname or "").lower()
+        if identity.multi_user() and host not in config.ASSISTANT_URL_ALLOW:
+            raise ValueError(
+                f"this server downloads only from the hosts in its ASSISTANT_URL_ALLOW, and "
+                f"{host!r} is not one; upload the file instead (upload_file, or the "
+                "conversation files route)"
+            )
+        blob, header_name = _download(url, host, cap)
     if not blob:
         raise ValueError(f"{url} returned an empty body")
 
@@ -307,11 +318,15 @@ def _download(url: str, host: str, cap: int) -> tuple[bytes, str | None]:
     local = host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost")
     chunks, size = [], 0
     try:
+        # With several users a redirect could lead past ASSISTANT_URL_ALLOW.
         with httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0),
-                          follow_redirects=True, trust_env=not local) as client:
+                          follow_redirects=not identity.multi_user(),
+                          trust_env=not local) as client:
             with client.stream("GET", url) as resp:
                 if resp.status_code >= 400:
                     raise ValueError(f"{url} answered HTTP {resp.status_code}")
+                if resp.is_redirect:
+                    raise ValueError(f"{url} redirects elsewhere; pass the final URL")
                 for chunk in resp.iter_bytes():
                     size += len(chunk)
                     if size > cap:

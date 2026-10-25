@@ -121,6 +121,12 @@ ASSISTANT_JOB_TIMEOUT = float(os.environ.get("ASSISTANT_JOB_TIMEOUT", "3600"))
 ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))
 # Per-file cap on uploads to the assistant, megabytes.
 ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100"))
+# Hosts load_from_url may download from in multi-user mode (comma-separated host
+# names; empty: none, only this server's own artifact urls). Redirects are not
+# followed then. Single-user mode downloads from any host, as before.
+ASSISTANT_URL_ALLOW = frozenset(
+    h.strip().lower() for h in os.environ.get("ASSISTANT_URL_ALLOW", "").split(",") if h.strip()
+)
 # Per-file cap on MCP upload_file (base64 inside a JSON-RPC body), megabytes
 # decoded. Larger files go through the raw-body REST route above.
 ASSISTANT_MCP_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_MCP_UPLOAD_MAX_MB", "25"))
@@ -149,6 +155,11 @@ AEI_AUTH_HEADER = os.environ.get("AEI_AUTH_HEADER", "").strip()
 # Required with AEI_AUTH_HEADER: without it any container on the internal network
 # could claim any identity. Only the digest is kept (python_exec runs in-process).
 AEI_EDGE_SECRET_SHA256 = os.environ.get("AEI_EDGE_SECRET_SHA256", "").strip().lower()
+# sha256 (hex) of the service token AGUI sends on its internal calls (/mcp, the file
+# push, artifact downloads) as "Authorization: Bearer <token>". Required with
+# AEI_AUTH_HEADER: /mcp then refuses any call without the token, and X-AEI-User (the
+# chat's owner) is trusted only on a call that carries it. Unused in single-user mode.
+AEI_SERVICE_TOKEN_SHA256 = os.environ.get("AEI_SERVICE_TOKEN_SHA256", "").strip().lower()
 AEI_ADMIN_EMAILS = frozenset(
     e.strip().lower() for e in os.environ.get("AEI_ADMIN_EMAILS", "").split(",") if e.strip()
 )
@@ -176,12 +187,19 @@ JOB_WORKERS = int(os.environ.get("JOB_WORKERS", "4"))
 
 
 def check_identity_settings() -> None:
-    """Multi-user mode needs the edge secret's digest; refuse to start without it."""
-    if AEI_AUTH_HEADER and not re.fullmatch(r"[0-9a-f]{64}", AEI_EDGE_SECRET_SHA256):
-        raise RuntimeError(
-            "AEI_AUTH_HEADER is set but AEI_EDGE_SECRET_SHA256 is missing or is not a "
-            "sha256 hex digest: refusing to start in multi-user mode without it"
-        )
+    """Multi-user mode needs the edge secret's and the service token's digests;
+    refuse to start without them."""
+    if not AEI_AUTH_HEADER:
+        return
+    for name, digest in (
+        ("AEI_EDGE_SECRET_SHA256", AEI_EDGE_SECRET_SHA256),
+        ("AEI_SERVICE_TOKEN_SHA256", AEI_SERVICE_TOKEN_SHA256),
+    ):
+        if not re.fullmatch(r"[0-9a-f]{64}", digest):
+            raise RuntimeError(
+                f"AEI_AUTH_HEADER is set but {name} is missing or is not a "
+                "sha256 hex digest: refusing to start in multi-user mode without it"
+            )
 
 
 check_identity_settings()

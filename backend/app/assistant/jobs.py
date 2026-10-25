@@ -1,9 +1,11 @@
 """Background jobs for long MCP calls (AEI MCP contract §7).
 
-`start_<tool>` returns a job id at once; the tool runs on a daemon thread with
-a progress callback and a cancel flag it checks between steps (layers, for
-compare_hazards). Jobs belong to the scope that started them, live in memory
-only, and the store keeps the most recent MAX_JOBS.
+`start_<tool>` returns a job id at once; the tool runs on the app's bounded job
+pool (concurrency.submit_job: JOB_WORKERS at once, the rest queued) with a
+progress callback and a cancel flag it checks between steps (layers, for
+compare_hazards). Jobs belong to the scope that started them (only it can poll
+or cancel them), keep their conversation from being evicted while they run,
+live in memory only, and the store keeps the most recent MAX_JOBS.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from .. import config
+from .. import concurrency, config
 from .conversations import Conversation
 
 MAX_JOBS = 64
@@ -78,9 +80,13 @@ def start(
             _STORE.popitem(last=False)
 
     def run() -> None:
+        if job.cancel.is_set():  # cancelled while queued
+            job.status, job.finished = "cancelled", time.time()
+            return
         job.status, job.started = "running", time.time()
         try:
-            result = work(job)
+            with conv.hold():
+                result = work(job)
         except Exception as exc:  # noqa: BLE001 — reported through get_job
             job.status = "cancelled" if job.cancel.is_set() else "error"
             job.error = str(exc) or type(exc).__name__
@@ -92,7 +98,7 @@ def start(
         finally:
             job.finished = time.time()
 
-    threading.Thread(target=run, name=f"job {tool} {job.id[:8]}", daemon=True).start()
+    concurrency.submit_job(run)
     return job
 
 

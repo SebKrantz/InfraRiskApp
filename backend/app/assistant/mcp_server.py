@@ -12,6 +12,10 @@ reaches the caller as a ToolError with its own message, each caller gets its
 own scope, every call is bounded by a server-side timeout, and the MCP-only
 tools in mcp_tools.py (upload_file, reset_scope, jobs, delete_dataset) fill in
 what a browserless caller needs.
+
+Several users (app/identity.py): in multi-user mode /mcp takes AGUI's internal
+calls only (the service token). Each scope is its own principal `mcp:<scope>`,
+bound to the person AGUI names in X-AEI-User, whose own datasets it also reads.
 """
 
 from __future__ import annotations
@@ -28,8 +32,8 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from .. import config, identity
 from ..redact import redact, redact_text
-from . import mcp_state, mcp_tools, tools
-from .conversations import MAX_CONVERSATIONS, get_or_create
+from . import artifacts, mcp_state, mcp_tools, tools
+from .conversations import MAX_CONVERSATIONS, NotYours, get_or_create
 
 log = logging.getLogger("infrarisk.assistant")
 
@@ -65,6 +69,14 @@ def conversation_id(ctx: Context | None) -> str:
     return f"mcp:{scope}" if scope else _MCP_CONVERSATION_ID
 
 
+def _headers(ctx: Context | None) -> Any:
+    """The call's HTTP headers ({} for an in-process call)."""
+    try:
+        return (ctx.headers if ctx is not None else None) or {}
+    except ValueError:  # no request context
+        return {}
+
+
 def jsonsafe(value: Any) -> Any:
     """numpy scalars/arrays, paths and non-finite floats into plain JSON."""
     if isinstance(value, dict):
@@ -87,7 +99,12 @@ async def _run(spec: tools.ToolSpec, ctx: Context | None, args: dict[str, Any]) 
     tool timeout, with heartbeats, and every failure turned into a ToolError
     that carries its own message (the SDK redacts any other exception)."""
     cid = conversation_id(ctx)
-    conv = get_or_create(cid, owner=identity.scope_principal(cid))
+    try:
+        conv = get_or_create(
+            cid, owner=identity.scope_principal(cid), user=identity.service_user(_headers(ctx))
+        )
+    except NotYours:
+        raise ToolError(f"scope {cid!r} works for another user; use a scope of your own") from None
     timeout = config.ASSISTANT_TOOL_TIMEOUT
 
     def work() -> Any:
@@ -189,20 +206,26 @@ Scope: send an opaque scope id as _meta["aeilabs/scope"] or the X-AEI-Scope head
 on every call; it maps to conversation id "mcp:<scope>" (no scope = the legacy \
 shared scope "mcp-shared-scope"). A scope isolates uploads, vulnerability curves, \
 the python_exec namespace and workdir, stored results, jobs and artifacts \
-(list_files shows only the calling scope's). NOT isolated, shared by every scope \
-and by the browser UI: the loaded datasets (file_ids, list_datasets) and the \
-analysis/raster caches. reset_scope forgets a scope and deletes the datasets it \
-loaded. Scopes are LRU-evicted beyond {MAX_CONVERSATIONS} live conversations.
+(list_files shows only the calling scope's). Datasets: on a multi-user server \
+each scope owns the datasets it loads, and a call naming its user (AGUI's \
+X-AEI-User, with the service token) also sees and uses that user's own datasets \
+from the web app — nobody else's; on a single-user server every scope and the \
+browser UI share the loaded datasets (file_ids, list_datasets). reset_scope \
+forgets a scope and deletes the datasets it loaded, never the user's own. A scope \
+idle for {config.ASSISTANT_CONVERSATION_IDLE_HOURS:g} h is dropped, and the least \
+recently used beyond {MAX_CONVERSATIONS} live conversations, never one with a \
+call in flight.
 
 Data in: (1) upload_file(name, content_base64) — up to \
 {config.ASSISTANT_MCP_UPLOAD_MAX_MB:g} MB decoded — then load_infrastructure(file=name), \
 or pass the uploaded name straight to run_analysis / compare_hazards as file_id; \
 (2) larger files (≤ {config.ASSISTANT_UPLOAD_MAX_MB:g} MB) as the raw request body of \
 POST /api/assistant/conversations/mcp:<scope>/files?filename=<name>, then as (1); \
-(3) multipart POST /api/upload (field "file", ≤ 100 MB) returns a file_id \
-run_analysis accepts directly; (4) load_features(geojson) for inline features; \
-(5) load_from_url(url) for a file another service exports (≤ \
-{config.ASSISTANT_UPLOAD_MAX_MB:g} MB).
+(3) multipart POST /api/upload (field "file", ≤ 100 MB; send the X-AEI-Scope \
+header so the scope owns it) returns a file_id run_analysis accepts directly; \
+(4) load_features(geojson) for inline features; (5) load_from_url(url) for a file \
+another service exports (≤ {config.ASSISTANT_UPLOAD_MAX_MB:g} MB; a multi-user \
+server downloads only from the hosts it allows).
 
 Units and values: thresholds are in the layer's own units (flood mm, PGA cm/s², \
 cyclone km/h, landslide class). replacement_value is per feature for points and \
@@ -219,14 +242,21 @@ for progress and the result; cancel_job(job_id). expected_annual_damage reruns e
 layer of a family (9 for flood) but reuses the rasters already sampled, so on a large \
 network warm them with start_compare_hazards first. There is no solve budget. python_exec runs confined to the \
 scope's workdir (cwd) with the app's data/ directory read-only, no \
-subprocesses, a read-only view of the dataset store, and a hard stop after \
+subprocesses, a read-only view of the datasets the scope sees, and a hard stop after \
 {config.ASSISTANT_EXEC_TIMEOUT:g} s.
 
 Artifacts (charts, maps, reports, CSV/GeoPackage exports) are served at the \
 root-relative url each result returns, /api/assistant/artifacts/<id>, on this \
-server's origin; tables take export="csv" | "gpkg" for the full data. The \
-artifact store keeps the 64 most recent files.
+server's origin (on a multi-user server with the service token); tables take \
+export="csv" | "gpkg" for the full data. The artifact store keeps the \
+{artifacts.MAX_ARTIFACTS} most recent files.
 """
+
+
+def read_app_state(ctx: Context) -> dict[str, Any]:
+    """The screen of the person the call names (X-AEI-User), else the scope's own."""
+    owner = identity.service_user(_headers(ctx)) or identity.scope_principal(conversation_id(ctx))
+    return redact(jsonsafe(mcp_state.read(owner)))
 
 
 def build() -> MCPServer:
@@ -236,17 +266,14 @@ def build() -> MCPServer:
     for spec in specs:
         server.add_tool(_wrapper(spec), name=spec.name, description=spec.description)
 
-    def read_app_state(ctx: Context) -> dict[str, Any]:
-        owner = identity.scope_principal(conversation_id(ctx))
-        return redact(jsonsafe(mcp_state.read(owner)))
-
     server.add_tool(
         read_app_state,
         name="read_app_state",
         description=(
             "What the app's browser UI currently shows (dataset, hazard, "
             "threshold, result summary) — a snapshot the frontend pushes every "
-            "few seconds; check age_seconds for staleness."
+            "few seconds; check age_seconds for staleness. On a multi-user server, "
+            "the screen of the user the call names (X-AEI-User)."
         ),
     )
     log.info("mcp: %d tools registered", len(specs) + 1)

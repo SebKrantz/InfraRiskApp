@@ -109,9 +109,10 @@ def _facade(module) -> SimpleNamespace:
     return SimpleNamespace(**public)
 
 
-def _datasets_view(owner: str) -> Mapping:
-    """The owner's datasets as python_exec sees them: always current, read-only,
-    and handing out copies of the GeoDataFrames. Other owners' are not there."""
+def _datasets_view(conv) -> Mapping:
+    """The datasets the conversation reads (Conversation.readers) as python_exec
+    sees them: always current, read-only, and handing out copies of the
+    GeoDataFrames. Other owners' are not there."""
     from .. import datasets
 
     refusal = (
@@ -122,16 +123,16 @@ def _datasets_view(owner: str) -> Mapping:
     class UploadedFiles(Mapping):
         def __getitem__(self, key):
             try:
-                info = datasets.get(owner, key)
+                info = datasets.get(conv.readers, key)
             except datasets.DatasetNotFound:
                 raise KeyError(key) from None
             return MappingProxyType({**info, "gdf": info["gdf"].copy()})
 
         def __iter__(self):
-            return iter([fid for fid, _ in datasets.list_for(owner)])
+            return iter([fid for fid, _ in datasets.list_for(conv.readers)])
 
         def __len__(self):
-            return len(datasets.list_for(owner))
+            return len(datasets.list_for(conv.readers))
 
         def __setitem__(self, key, value):
             raise TypeError(refusal)
@@ -171,7 +172,7 @@ def ensure(conv: Conversation) -> dict[str, Any]:
     ns.setdefault("hazards", _facade(hazards))
     ns.setdefault("analyze", _facade(analyze))
     ns.setdefault("export", _facade(export))
-    ns.setdefault("uploaded_files", _datasets_view(conv.owner))
+    ns.setdefault("uploaded_files", _datasets_view(conv))
     ns.setdefault("HAZARDS", copy.deepcopy(hazards.load_hazards_dict()))
 
     def save_artifact(obj: Any, filename: str, title: str | None = None) -> str:

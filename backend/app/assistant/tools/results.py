@@ -29,9 +29,14 @@ _POINT_COLUMNS = [
 ]
 
 
-def feature_table(result: dict[str, Any], id_column: Optional[str] = None):
+def feature_table(
+    result: dict[str, Any],
+    id_column: Optional[str] = None,
+    readers: Optional[tuple[str, ...]] = None,
+):
     """The result's per-feature (points) or per-segment (lines) GeoDataFrame,
-    computed columns first, original attributes after, geometry last."""
+    computed columns first, original attributes after, geometry last.
+    `readers` are the conversation's (Conversation.readers)."""
     import geopandas as gpd
     import numpy as np
 
@@ -50,7 +55,7 @@ def feature_table(result: dict[str, Any], id_column: Optional[str] = None):
     if lines:
         position = t["line_id"].astype(int).to_numpy() - 1  # 1-based input row
         if id_column:
-            source = domain.get_dataset(meta["file_id"])["gdf"][id_column].to_numpy()
+            source = domain.get_dataset(meta["file_id"], readers)["gdf"][id_column].to_numpy()
             t["line_id"] = source[position]
         t.insert(0, "id", np.arange(1, len(t) + 1))
         computed = _LINE_COLUMNS
@@ -139,7 +144,7 @@ def _resolve(
     haz = domain.resolve_hazard(hazard)
     result = get_cached_analysis_result(fid, haz["hazard_id"], threshold)
     if result is None and run_if_missing:
-        result = domain.run_exposure(fid, haz, threshold=threshold)
+        result = domain.run_exposure(fid, haz, threshold=threshold, owner=conv.readers)
     if result is None:
         raise ValueError(
             f"no analysis on file for dataset {fid}, hazard {haz['hazard_id']!r} and "
@@ -161,10 +166,11 @@ _ID_COLUMN = {
 }
 
 
-def _table(result: dict[str, Any], id_column: Optional[str]):
+def _table(conv: Conversation, result: dict[str, Any], id_column: Optional[str]):
     if id_column:
-        domain.check_id_column(domain.get_dataset(result["_assistant_meta"]["file_id"]), id_column)
-    return feature_table(result, id_column)
+        info = domain.get_dataset(result["_assistant_meta"]["file_id"], conv.readers)
+        domain.check_id_column(info, id_column)
+    return feature_table(result, id_column, conv.readers)
 
 
 @tool(
@@ -212,7 +218,7 @@ def get_analysis_table(
     export: Optional[str] = None,
 ) -> dict[str, Any]:
     result = _resolve(conv, stored_as, file_id, hazard, threshold)
-    table = _table(result, id_column)
+    table = _table(conv, result, id_column)
     rows = rows_of(table, limit, offset, columns)
     out: dict[str, Any] = {
         "total": int(len(table)),
@@ -271,12 +277,12 @@ def get_affected_segments(
 ) -> dict[str, Any]:
     result = _resolve(conv, None, file_id, hazard, threshold, run_if_missing=True)
     meta = result["_assistant_meta"]
-    if domain.get_dataset(meta["file_id"])["geometry_type"] != "LineString":
+    if domain.get_dataset(meta["file_id"], conv.readers)["geometry_type"] != "LineString":
         raise ValueError(
             "get_affected_segments is for line datasets; for points use "
             "get_analysis_table and keep the rows with affected = true"
         )
-    table = _table(result, id_column)
+    table = _table(conv, result, id_column)
     if len(table):
         table = table[table["affected"].astype(bool) & (table["length_m"] >= float(min_length_m))]
     line_ids = list(dict.fromkeys(table["line_id"].tolist())) if len(table) else []
