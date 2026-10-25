@@ -51,12 +51,12 @@ export async function getHazardInfo(hazardId: string): Promise<Hazard> {
 }
 
 /**
- * Analyze intersections between infrastructure and hazard
+ * Analyze intersections between infrastructure and hazard (the server reads the
+ * hazard's raster from its own catalogue)
  */
 export async function analyze(
   fileId: string,
   hazardId: string,
-  hazardUrl: string,
   intensityThreshold?: number,
   vulnerabilityCurveFile?: File | null,
   replacementValue?: number | null
@@ -71,7 +71,6 @@ export async function analyze(
     const formData = new FormData()
     formData.append('file_id', fileId)
     formData.append('hazard_id', hazardId)
-    formData.append('hazard_url', hazardUrl)
     if (intensityThreshold !== undefined) {
       formData.append('intensity_threshold', intensityThreshold.toString())
     }
@@ -85,7 +84,6 @@ export async function analyze(
     body = JSON.stringify({
       file_id: fileId,
       hazard_id: hazardId,
-      hazard_url: hazardUrl,
       intensity_threshold: intensityThreshold,
     })
     headers = {

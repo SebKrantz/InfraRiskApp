@@ -169,7 +169,6 @@ function App() {
         const result = await analyzeApi(
           uploadedFile.file_id,
           selectedHazard.id,
-          selectedHazard.url,
           threshold,
           vulnerabilityAnalysisEnabled ? vulnerabilityCurveFile : null,
           vulnerabilityAnalysisEnabled ? replacementValue : null

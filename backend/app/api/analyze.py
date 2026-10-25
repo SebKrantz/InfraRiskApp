@@ -222,7 +222,7 @@ class AnalyzeRequest(BaseModel):
     """Request model for analysis (JSON body)"""
     file_id: str
     hazard_id: str
-    hazard_url: str
+    hazard_url: Optional[str] = None  # ignored: the raster comes from the catalogue
     intensity_threshold: Optional[float] = None
 
 
@@ -233,7 +233,6 @@ async def analyze_intersections(
     # FormData parameters (optional, used when vulnerability curve is provided)
     file_id: Optional[str] = Form(default=None),
     hazard_id: Optional[str] = Form(default=None),
-    hazard_url: Optional[str] = Form(default=None),
     intensity_threshold: Optional[float] = Form(default=None),
     vulnerability_curve_file: Optional[UploadFile] = File(default=None),
     replacement_value: Optional[float] = Form(default=None),
@@ -244,8 +243,8 @@ async def analyze_intersections(
     
     Parameters:
     - file_id: ID of uploaded infrastructure file
-    - hazard_id: ID of hazard layer
-    - hazard_url: URL/path to hazard raster (COG)
+    - hazard_id: ID of hazard layer; its raster is the catalogue's dataset_url
+    - hazard_url: ignored if sent (the server never opens a path a client names)
     - intensity_threshold: Optional threshold for hazard intensity filtering
     - vulnerability_curve_file: Optional CSV file with vulnerability curve (2 columns: intensity, proportion_destroyed)
     - replacement_value: Optional monetary replacement value (for lines, cost per meter)
@@ -261,11 +260,10 @@ async def analyze_intersections(
     # Handle both JSON and FormData requests
     if "multipart/form-data" in content_type:
         # FormData request (when vulnerability curve file is included)
-        if file_id is None or hazard_id is None or hazard_url is None:
-            raise HTTPException(status_code=400, detail="Missing required parameters: file_id, hazard_id, hazard_url")
+        if file_id is None or hazard_id is None:
+            raise HTTPException(status_code=400, detail="Missing required parameters: file_id, hazard_id")
         actual_file_id = file_id
         actual_hazard_id = hazard_id
-        actual_hazard_url = hazard_url
         actual_threshold = intensity_threshold
         actual_vulnerability_file = vulnerability_curve_file
         actual_replacement_value = replacement_value
@@ -280,7 +278,6 @@ async def analyze_intersections(
                 raise HTTPException(status_code=400, detail="Missing or invalid request body")
         actual_file_id = request.file_id
         actual_hazard_id = request.hazard_id
-        actual_hazard_url = request.hazard_url
         actual_threshold = request.intensity_threshold
         actual_vulnerability_file = None
         actual_replacement_value = None
@@ -291,6 +288,14 @@ async def analyze_intersections(
     except datasets.DatasetNotFound:
         raise HTTPException(status_code=404, detail="Uploaded file not found") from None
     geometry_type = file_info["geometry_type"]
+
+    # The raster is the catalogue's, never a URL or path from the request
+    hazard_data = load_hazards_dict().get(actual_hazard_id)
+    if hazard_data is None:
+        raise HTTPException(status_code=404, detail=f"Hazard layer '{actual_hazard_id}' not found")
+    actual_hazard_url = hazard_data.get("dataset_url", "")
+    if not actual_hazard_url:
+        raise HTTPException(status_code=500, detail="Hazard layer missing dataset_url")
     infrastructure_gdf = file_info["gdf"]
     
     # Parse vulnerability curve if provided
