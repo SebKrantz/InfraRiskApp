@@ -131,6 +131,9 @@ AEI_CORS_ORIGINS = [
 DATASET_TTL_HOURS = float(os.environ.get("DATASET_TTL_HOURS", "24"))
 DATASET_MAX_PER_OWNER = int(os.environ.get("DATASET_MAX_PER_OWNER", "10"))
 DATASET_MAX_MB_PER_OWNER = float(os.environ.get("DATASET_MAX_MB_PER_OWNER", "2048"))
+# Analysis caches (app/api/analyze.py), megabytes each, fair between owners.
+RASTER_CACHE_MB = float(os.environ.get("RASTER_CACHE_MB", "1024"))
+ANALYSIS_CACHE_MB = float(os.environ.get("ANALYSIS_CACHE_MB", "2048"))
 
 
 def check_identity_settings() -> None:

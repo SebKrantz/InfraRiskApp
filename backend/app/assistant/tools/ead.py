@@ -411,6 +411,7 @@ def expected_annual_damage(
                 vulnerability_curve_lower_interp=vc["lower"],
                 vulnerability_curve_upper_interp=vc["upper"],
                 owner=conv.owner,
+                curve_digest=domain.curve_digest(vc),
             )
             pt.update(_losses(result, domain.summarise(result, info, haz, threshold)))
         asset_value = _asset_value(result, info, replacement_value)

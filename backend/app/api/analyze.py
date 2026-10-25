@@ -5,16 +5,19 @@ Analysis endpoints for computing intersections
 import math
 import json
 import asyncio
+import hashlib
+import threading
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
-from typing import Optional, Dict, Tuple
+from typing import Any, Callable, Optional, Dict, Tuple
 import numpy as np
 
-from app import datasets
+from app import config, datasets, identity
 from app.identity import current_user
+from app.utils.sizing import approx_bytes
 from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve_data
 from app.api.hazards import load_hazards_dict
 
@@ -26,72 +29,191 @@ _analysis_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="analy
 # Both caches hold whole analyses — for a national line network that is a
 # segment GeoDataFrame plus every sample point along it, hundreds of MB per
 # entry. Dragging the threshold slider produces one analysis-result entry per
-# stop, so an unbounded dict grows without limit in a process that is meant to
-# stay up. Keep the most recent few and let the rest be recomputed; a raster
-# cache miss costs a re-sample, an analysis cache miss only costs arithmetic.
-# Sized to sit above the assistant's own MAX_ASSISTANT_CACHED (48) plus room
-# for the keys a user built in the UI. The assistant bounds its own entries and
-# deliberately spares UI keys so the sidebar export buttons keep working; a
-# tighter cap here would evict those out from under it.
-_MAX_CACHE_ENTRIES = 64
-
-# Cache for sampled raster values: (file_id, hazard_id) -> cached data
-# For Points: np.ndarray of raster values
-# For LineStrings: dict with 'line_data' and 'raster_values'
-# This allows threshold changes without re-sampling the raster
-_raster_values_cache: "OrderedDict[Tuple[str, str], any]" = OrderedDict()
-
-# Cache for full analysis results: (file_id, hazard_id, threshold) -> full analysis result
-# This allows export to use pre-computed results without recalculation
-_analysis_results_cache: "OrderedDict[Tuple[str, str, Optional[float]], dict]" = OrderedDict()
+# stop, and several users do so at once. So each cache is bounded in bytes
+# (RASTER_CACHE_MB, ANALYSIS_CACHE_MB) and fair between owners: over budget, the
+# owner holding the most bytes loses their least recently used entry first. A
+# raster cache miss costs a re-sample, an analysis cache miss only arithmetic.
 
 
-def _cache_get(cache: OrderedDict, key) -> Optional[any]:
-    """Read through an LRU cache, marking the key as most recently used."""
-    if key not in cache:
+class ByteBudgetCache:
+    """An LRU cache bounded in bytes, fair between owners.
+
+    Each entry records its owner and approximate size. An entry larger than the
+    whole budget is not kept. Thread-safe; values are stored as given.
+    """
+
+    def __init__(self, budget_mb: float) -> None:
+        self.budget = int(budget_mb * 2**20)
+        self._entries: "OrderedDict[Any, Tuple[str, int, Any]]" = OrderedDict()
+        self._by_owner: Dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def get(self, key) -> Any:
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            self._entries.move_to_end(key)
+            return entry[2]
+
+    def put(self, key, value, owner: str, nbytes: int) -> bool:
+        """Store `value`; False when it is larger than the whole budget."""
+        with self._lock:
+            self._drop(key)
+            if nbytes > self.budget:
+                return False
+            self._entries[key] = (owner, nbytes, value)
+            self._by_owner[owner] = self._by_owner.get(owner, 0) + nbytes
+            while sum(self._by_owner.values()) > self.budget:
+                self._drop(self._victim(spare=key))
+            return True
+
+    def discard_where(self, predicate: Callable[[Any], bool]) -> None:
+        with self._lock:
+            for key in [k for k in self._entries if predicate(k)]:
+                self._drop(key)
+
+    def bytes_by_owner(self) -> Dict[str, int]:
+        with self._lock:
+            return dict(self._by_owner)
+
+    def __contains__(self, key) -> bool:
+        with self._lock:
+            return key in self._entries
+
+    def _victim(self, spare) -> Any:
+        """The least recently used entry of the heaviest owner, never `spare`.
+        Something other than `spare` exists: `spare` alone fits the budget."""
+        for owner in sorted(self._by_owner, key=self._by_owner.get, reverse=True):
+            for key, (who, _, _) in self._entries.items():  # least recently used first
+                if who == owner and key != spare:
+                    return key
+        raise AssertionError("over budget with nothing to evict")
+
+    def _drop(self, key) -> None:
+        entry = self._entries.pop(key, None)
+        if entry is not None:
+            owner, nbytes, _ = entry
+            left = self._by_owner[owner] - nbytes
+            if left > 0:
+                self._by_owner[owner] = left
+            else:
+                del self._by_owner[owner]
+
+
+# Sampled raster values: (file_id, hazard_id) -> for Points an array of values,
+# for LineStrings {'line_data', 'raster_values'}. Threshold changes reuse them.
+_raster_values_cache = ByteBudgetCache(config.RASTER_CACHE_MB)
+
+# Full analysis results, keyed by everything that changes them: (file_id,
+# hazard_id, threshold, curve digest, replacement value). The sidebar's export
+# buttons ask for "the analysis of this dataset, layer and threshold" without a
+# curve; _latest remembers which full key that was most recently.
+_analysis_results_cache = ByteBudgetCache(config.ANALYSIS_CACHE_MB)
+_latest: Dict[Tuple[str, str, Optional[float]], tuple] = {}
+_latest_lock = threading.Lock()
+
+
+def _owner(file_id: str) -> str:
+    return datasets.owner_for(file_id) or identity.local_user()
+
+
+def _copy(result: Optional[dict]) -> Optional[dict]:
+    """A copy of a cached result that a caller may add keys to (its
+    _assistant_meta too) without changing the cached one. The frames inside are
+    shared: callers copy them before writing columns."""
+    if result is None:
         return None
-    cache.move_to_end(key)
-    return cache[key]
+    out = dict(result)
+    if isinstance(out.get("_assistant_meta"), dict):
+        out["_assistant_meta"] = dict(out["_assistant_meta"])
+    return out
 
 
-def _cache_put(cache: OrderedDict, key, value) -> None:
-    """Write to an LRU cache, evicting the least recently used entry."""
-    cache[key] = value
-    cache.move_to_end(key)
-    while len(cache) > _MAX_CACHE_ENTRIES:
-        cache.popitem(last=False)
-
-
-def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[any]:
+def get_cached_raster_values(file_id: str, hazard_id: str) -> Optional[Any]:
     """Get cached raster values if available."""
-    return _cache_get(_raster_values_cache, (file_id, hazard_id))
+    return _raster_values_cache.get((file_id, hazard_id))
 
 
-def set_cached_raster_values(file_id: str, hazard_id: str, values: any):
+def set_cached_raster_values(file_id: str, hazard_id: str, values: Any) -> None:
     """Cache raster values for future threshold changes."""
-    _cache_put(_raster_values_cache, (file_id, hazard_id), values)
+    _raster_values_cache.put((file_id, hazard_id), values, _owner(file_id), approx_bytes(values))
 
 
-def clear_raster_cache_for_file(file_id: str):
-    """Clear cached raster values for a file (called when file is deleted)."""
-    keys_to_remove = [k for k in _raster_values_cache if k[0] == file_id]
-    for key in keys_to_remove:
-        del _raster_values_cache[key]
-    
-    # Also clear analysis results cache
-    keys_to_remove = [k for k in _analysis_results_cache if k[0] == file_id]
-    for key in keys_to_remove:
-        del _analysis_results_cache[key]
+def cache_raster_values(file_id: str, hazard_id: str, geometry_type: str, result: dict) -> None:
+    """Keep a run's sampled raster for later threshold changes — unless a raster
+    window failed to read: its NaNs mean "unknown", so the next run samples again
+    rather than serving them as "unaffected"."""
+    if "raster_values" not in result or not result.get("raster_complete", True):
+        return
+    if geometry_type == "Point":
+        set_cached_raster_values(file_id, hazard_id, result["raster_values"])
+    elif geometry_type == "LineString" and "line_data" in result:
+        set_cached_raster_values(file_id, hazard_id, {
+            "line_data": result["line_data"],
+            "raster_values": result["raster_values"],
+        })
+
+
+def clear_raster_cache_for_file(file_id: str) -> None:
+    """Clear a file's cached raster values and analyses (it was deleted or evicted)."""
+    _raster_values_cache.discard_where(lambda key: key[0] == file_id)
+    _analysis_results_cache.discard_where(lambda key: key[0] == file_id)
+    with _latest_lock:
+        for key in [k for k in _latest if k[0] == file_id]:
+            del _latest[key]
+
+
+def analysis_key(
+    file_id: str,
+    hazard_id: str,
+    threshold: Optional[float],
+    curve_digest: Optional[str] = None,
+    replacement_value: Optional[float] = None,
+) -> tuple:
+    return (file_id, hazard_id, threshold, curve_digest, replacement_value)
 
 
 def get_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float]) -> Optional[dict]:
-    """Get cached analysis result if available."""
-    return _cache_get(_analysis_results_cache, (file_id, hazard_id, threshold))
+    """The most recent analysis of this dataset, layer and threshold, whatever its
+    curve: what the export buttons render. A copy (see _copy)."""
+    with _latest_lock:
+        key = _latest.get((file_id, hazard_id, threshold))
+    return _copy(_analysis_results_cache.get(key)) if key is not None else None
 
 
-def set_cached_analysis_result(file_id: str, hazard_id: str, threshold: Optional[float], result: dict):
-    """Cache full analysis result."""
-    _cache_put(_analysis_results_cache, (file_id, hazard_id, threshold), result)
+def get_exact_analysis_result(
+    file_id: str,
+    hazard_id: str,
+    threshold: Optional[float],
+    curve_digest: Optional[str] = None,
+    replacement_value: Optional[float] = None,
+) -> Optional[dict]:
+    """The analysis with exactly these inputs (no curve: exposure only). A copy."""
+    key = analysis_key(file_id, hazard_id, threshold, curve_digest, replacement_value)
+    return _copy(_analysis_results_cache.get(key))
+
+
+def set_cached_analysis_result(
+    file_id: str,
+    hazard_id: str,
+    threshold: Optional[float],
+    result: dict,
+    curve_digest: Optional[str] = None,
+    replacement_value: Optional[float] = None,
+) -> None:
+    """Cache a full analysis result (a copy, so the caller keeps its own dict).
+    Its size leaves out the sampled raster, which the raster cache counts."""
+    key = analysis_key(file_id, hazard_id, threshold, curve_digest, replacement_value)
+    nbytes = approx_bytes({k: v for k, v in result.items() if k not in ("raster_values", "line_data")})
+    _analysis_results_cache.put(key, _copy(result), _owner(file_id), nbytes)
+    with _latest_lock:
+        _latest[(file_id, hazard_id, threshold)] = key
+
+
+def curve_digest(content: bytes) -> str:
+    """The vulnerability curve's identity in the cache key: sha256 of its CSV."""
+    return hashlib.sha256(content).hexdigest()
 
 
 class AnalyzeRequest(BaseModel):
@@ -175,6 +297,7 @@ async def analyze_intersections(
     vulnerability_curve_upper_interp = None
     vulnerability_curve_intensity: Optional[list] = None
     vulnerability_curve_proportion: Optional[list] = None
+    vulnerability_curve_digest: Optional[str] = None
     if actual_vulnerability_file is not None:
         try:
             # Read vulnerability curve file
@@ -184,6 +307,7 @@ async def analyze_intersections(
                 content = await actual_vulnerability_file.read()
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
+            vulnerability_curve_digest = curve_digest(content)
 
             try:
                 (
@@ -246,18 +370,14 @@ async def analyze_intersections(
             analysis_result["vulnerability_replacement_value"] = actual_replacement_value
         
         # Cache raster values for future threshold changes
-        if "raster_values" in analysis_result:
-            if geometry_type == "Point":
-                set_cached_raster_values(actual_file_id, actual_hazard_id, analysis_result["raster_values"])
-            elif geometry_type == "LineString" and "line_data" in analysis_result:
-                # For LineString, cache both line_data and raster_values
-                set_cached_raster_values(actual_file_id, actual_hazard_id, {
-                    "line_data": analysis_result["line_data"],
-                    "raster_values": analysis_result["raster_values"]
-                })
-        
-        # Cache full analysis result for export endpoints
-        set_cached_analysis_result(actual_file_id, actual_hazard_id, actual_threshold, analysis_result)
+        cache_raster_values(actual_file_id, actual_hazard_id, geometry_type, analysis_result)
+
+        # Cache full analysis result for export endpoints (and the assistant)
+        set_cached_analysis_result(
+            actual_file_id, actual_hazard_id, actual_threshold, analysis_result,
+            curve_digest=vulnerability_curve_digest,
+            replacement_value=actual_replacement_value,
+        )
         
         # Build response - ensure no NaN values
         def safe_float(value):

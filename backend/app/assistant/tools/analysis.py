@@ -99,6 +99,7 @@ def run_analysis(
         vulnerability_curve_lower_interp=vc["lower"] if vc else None,
         vulnerability_curve_upper_interp=vc["upper"] if vc else None,
         owner=conv.owner,
+        curve_digest=domain.curve_digest(vc) if vc else None,
     )
     out = domain.summarise(result, info, haz, threshold)
     out["file_id"] = file_id
@@ -189,6 +190,7 @@ def compare_hazards(
                 vulnerability_curve_lower_interp=vc["lower"] if vc else None,
                 vulnerability_curve_upper_interp=vc["upper"] if vc else None,
                 owner=conv.owner,
+                curve_digest=domain.curve_digest(vc) if vc else None,
             )
             rows.append(domain.summarise(result, info, haz, thr))
         except Exception as exc:  # noqa: BLE001 — one bad layer must not sink the batch

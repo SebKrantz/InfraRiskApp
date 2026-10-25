@@ -11,48 +11,30 @@ Two invariants worth stating:
     object IS `uploaded_files[file_id]["gdf"]` — so we always pass a copy.
   * A run populates the app's raster-value and analysis-result caches, which is
     what makes the sidebar's own export buttons work on an assistant-run
-    analysis afterwards.
+    analysis afterwards. The analysis cache keys a damage run on the curve's
+    digest and the replacement value, so a run with another curve never comes
+    back from it.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-from collections import OrderedDict
 from difflib import get_close_matches
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from ..api.analyze import (
-    _analysis_results_cache,
-    get_cached_analysis_result,
+    cache_raster_values,
+    curve_digest as _digest_of,
     get_cached_raster_values,
+    get_exact_analysis_result,
     set_cached_analysis_result,
-    set_cached_raster_values,
 )
 from .. import datasets, identity
 from ..api.hazards import load_hazards_dict
 from ..utils.geospatial import analyze_intersection
 
 log = logging.getLogger("infrarisk.assistant")
-
-# The app caps `_analysis_results_cache` as a backstop, but that cap is blind to
-# who made an entry. The assistant can add a dozen in one `compare_hazards`
-# call, and each one holds a full GeoDataFrame — so we keep a bound on OUR OWN
-# entries. Keys the user created through the UI are never evicted by us; their
-# sidebar export buttons must keep working.
-MAX_ASSISTANT_CACHED = 48
-_OURS: OrderedDict[tuple, None] = OrderedDict()
-_OURS_LOCK = threading.Lock()
-
-
-def _remember_cached(key: tuple) -> None:
-    with _OURS_LOCK:
-        _OURS[key] = None
-        _OURS.move_to_end(key)
-        while len(_OURS) > MAX_ASSISTANT_CACHED:
-            old, _ = _OURS.popitem(last=False)
-            _analysis_results_cache.pop(old, None)
-            log.info("assistant analysis cache evicted: %s", old)
 
 
 # ---- hazards --------------------------------------------------------------- #
@@ -163,11 +145,13 @@ def run_exposure(
     vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
     vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
     owner: Optional[str] = None,
+    curve_digest: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one analysis exactly as POST /api/analyze would, and cache it there.
 
     Returns the raw `analyze_intersection` dict (with `full_gdf`, `raster_values`
-    and, for lines, `line_data`). `owner` is the conversation's.
+    and, for lines, `line_data`). `owner` is the conversation's; `curve_digest`
+    (see curve_digest()) identifies the curve in the cache key.
     """
     info = get_dataset(file_id, owner)
     hazard_id = hazard["hazard_id"]
@@ -176,15 +160,20 @@ def run_exposure(
     wants_vulnerability = (
         vulnerability_curve_interp is not None and replacement_value is not None
     )
-    # A plain exposure re-run at the same threshold is already on file.
-    if not wants_vulnerability:
-        cached = get_cached_analysis_result(file_id, hazard_id, threshold)
-        if cached is not None and cached.get("total_damage_cost") is None:
-            cached.setdefault(
-                "_assistant_meta",
-                {"file_id": file_id, "hazard_id": hazard_id, "threshold": threshold},
-            )
-            return cached
+    digest = rv = None
+    if wants_vulnerability:
+        # without a digest the run is cached under a key nothing else can match
+        digest = curve_digest or f"interp:{id(vulnerability_curve_interp)}"
+        rv = replacement_value
+    # The same inputs are already on file (from the sidebar or an earlier call),
+    # unless a raster read failed then.
+    cached = get_exact_analysis_result(file_id, hazard_id, threshold, digest, rv)
+    if cached is not None and cached.get("raster_complete", True):
+        cached.setdefault(
+            "_assistant_meta",
+            {"file_id": file_id, "hazard_id": hazard_id, "threshold": threshold},
+        )
+        return cached
 
     result = analyze_intersection(
         infrastructure_gdf=info["gdf"].copy(),  # never mutate the stored frame
@@ -199,15 +188,7 @@ def run_exposure(
     )
 
     # Cache the sampled raster so later threshold changes skip the COG reads.
-    if "raster_values" in result:
-        if geometry_type == "Point":
-            set_cached_raster_values(file_id, hazard_id, result["raster_values"])
-        elif geometry_type == "LineString" and "line_data" in result:
-            set_cached_raster_values(
-                file_id,
-                hazard_id,
-                {"line_data": result["line_data"], "raster_values": result["raster_values"]},
-            )
+    cache_raster_values(file_id, hazard_id, geometry_type, result)
     # Enough provenance for the figure tools to re-derive titles, units and the
     # threshold without the model having to thread them through by hand.
     result["_assistant_meta"] = {
@@ -216,9 +197,22 @@ def run_exposure(
         "threshold": threshold,
     }
     # Make the sidebar's export buttons work on what the assistant just ran.
-    set_cached_analysis_result(file_id, hazard_id, threshold, result)
-    _remember_cached((file_id, hazard_id, threshold))
+    set_cached_analysis_result(file_id, hazard_id, threshold, result, digest, rv)
     return result
+
+
+def curve_digest(curve: dict[str, Any]) -> str:
+    """sha256 of a loaded curve's CSV, remembered on the curve: the analysis
+    cache keys damage runs on it, and the sidebar's upload of the same file
+    gives the same digest."""
+    digest = curve.get("digest")
+    if digest is None:
+        try:
+            data = Path(curve["path"]).read_bytes()
+        except (KeyError, OSError, TypeError):
+            data = repr(curve.get("path")).encode()
+        digest = curve["digest"] = _digest_of(data)
+    return digest
 
 
 # Below this exposed share (percent, as summarise reports it) a map of the asset

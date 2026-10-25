@@ -534,10 +534,12 @@ def sample_raster_at_points(
     y_coords: np.ndarray,
     tile_size: float = 1.0,
     max_workers: int = 16,
+    failures: Optional[list] = None,
 ) -> np.ndarray:
     """
     Sample a raster at scattered lon/lat positions. Returns float64; NaN where a
-    point falls outside the raster.
+    point falls outside the raster — or inside a window that failed to read, which
+    is appended to `failures` when a list is given.
 
     Points are grouped into tile_size-degree tiles so each part of the raster is
     fetched once, and tiles are read in parallel: the hazard layers are remote
@@ -605,6 +607,8 @@ def sample_raster_at_points(
                 f"Warning: could not read hazard raster window {window} "
                 f"({len(idx)} sample points): {type(exc).__name__}: {exc}"
             )
+            if failures is not None:
+                failures.append(window)
             return idx, np.full(len(idx), np.nan)
 
     with ThreadPoolExecutor(max_workers=min(max_workers, len(groups))) as executor:
@@ -679,6 +683,7 @@ def analyze_intersection(
         # at a new threshold rewrote the exports of the runs before it.
         infrastructure_gdf = infrastructure_gdf.copy()
 
+        failures: list = []
         if cached_raster_values is not None and len(cached_raster_values) == n_points:
             raster_values = cached_raster_values
         else:
@@ -686,6 +691,7 @@ def analyze_intersection(
                 hazard_raster_path,
                 infrastructure_gdf.geometry.x.to_numpy(),
                 infrastructure_gdf.geometry.y.to_numpy(),
+                failures=failures,
             )
 
         valid_mask = ~np.isnan(raster_values)
@@ -750,6 +756,8 @@ def analyze_intersection(
             "unaffected_meters": 0.0,
             "full_gdf": infrastructure_gdf,
             "raster_values": raster_values,
+            # False when a raster window failed to read: not to be cached
+            "raster_complete": not failures,
         }
 
         if vuln_on:
@@ -768,6 +776,7 @@ def analyze_intersection(
                  'line_data' in cached_raster_values and
                  'raster_values' in cached_raster_values)
 
+    failures: list = []
     if use_cache:
         line_data = cached_raster_values['line_data']
         all_raster_values = cached_raster_values['raster_values']
@@ -824,6 +833,7 @@ def analyze_intersection(
             hazard_raster_path,
             np.asarray(sample_x, dtype=np.float64),
             np.asarray(sample_y, dtype=np.float64),
+            failures=failures,
         )
 
         at = 0
@@ -955,7 +965,8 @@ def analyze_intersection(
         "unaffected_meters": float(unaffected_length),
         "full_gdf": segment_gdf,
         "line_data": line_data,
-        "raster_values": all_raster_values
+        "raster_values": all_raster_values,
+        "raster_complete": not failures,
     }
 
     if vuln_on:
