@@ -31,12 +31,13 @@ import matplotlib
 
 matplotlib.use("Agg")  # before pyplot, and pyplot only inside the functions below
 
-from .. import config
+from .. import config, plotting
 from . import artifacts, sandbox
 from .conversations import Conversation
 
 # One python_exec at a time in the process: the working directory and pyplot's
-# figure state are both process-global.
+# figure registry are both process-global. The app's own charts never enter that
+# registry (app/plotting.py), so they neither wait for this lock nor get collected.
 _RUN_LOCK = threading.Lock()
 # How long a stopped worker gets to unwind before it counts as stuck.
 _STOP_GRACE_S = 5.0
@@ -329,7 +330,7 @@ def execute(conv: Conversation, code: str, timeout: float | None = None) -> dict
             )
             import matplotlib.pyplot as plt
 
-            plt.close("all")
+            theirs = set(plt.get_fignums())  # left by a call that got stuck, if any
             os.chdir(workdir)
             worker.start()
             sandbox.confine(worker.ident, policy)
@@ -354,7 +355,7 @@ def execute(conv: Conversation, code: str, timeout: float | None = None) -> dict
             os.chdir(home)
             made = list(conv._exec_saved)
             made += _register_written(conv, workdir, before, made)
-            figs = _harvest_figures(conv)
+            figs = _harvest_figures(conv, theirs)
         finally:
             if not stuck:
                 _RUN_LOCK.release()
@@ -405,19 +406,24 @@ def _register_written(
     return made
 
 
-def _harvest_figures(conv: Conversation) -> list[artifacts.Artifact]:
+def _harvest_figures(conv: Conversation, theirs: set[int]) -> list[artifacts.Artifact]:
+    """Save and close the pyplot figures this call opened, and no others."""
     import matplotlib.pyplot as plt
 
     figs: list[artifacts.Artifact] = []
-    for num in plt.get_fignums():
-        fig = plt.figure(num)
-        if not fig.get_axes():
-            continue
-        conv._counter += 1
-        path = conv.workdir / f"figure_{conv._counter}.png"
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-        figs.append(artifacts.add(path, path.name, "png", f"Figure {conv._counter}", conv.id))
-    plt.close("all")
+    with plotting.LOCK:
+        for num in plt.get_fignums():
+            if num in theirs:
+                continue
+            fig = plt.figure(num)
+            if fig.get_axes():
+                conv._counter += 1
+                path = conv.workdir / f"figure_{conv._counter}.png"
+                fig.savefig(path, dpi=150, bbox_inches="tight")
+                figs.append(
+                    artifacts.add(path, path.name, "png", f"Figure {conv._counter}", conv.id)
+                )
+            plt.close(fig)
     return figs
 
 

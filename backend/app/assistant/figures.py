@@ -14,7 +14,6 @@ breaks on the value axis and a plain left-aligned title.
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +21,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-_LOCK = threading.Lock()  # pyplot state is process-global
+from .. import plotting  # noqa: E402 — standalone figures under the one plot lock
 
 # The app's own semantics, so a custom chart reads like the built-in one.
 SEMANTIC_COLORS = {
@@ -129,7 +128,6 @@ def chart(
     """Render one chart. `series` = [{name, values: [...]}]; for pie, the first
     series' values slice by `labels`."""
     import numpy as np
-    import matplotlib.pyplot as plt
 
     if not series or not labels:
         raise ValueError("labels and series must be non-empty")
@@ -160,8 +158,8 @@ def chart(
         labels = [labels[i] for i in order]
         values = [[col[i] for i in order] for col in values]
 
-    with _LOCK:
-        fig, ax = plt.subplots(figsize=(8, 4.8))
+    with plotting.LOCK:
+        fig, ax = plotting.subplots(figsize=(8, 4.8))
         x = np.arange(len(labels))
         names = [tex_safe(s.get("name", f"Series {i + 1}")) for i, s in enumerate(series)]
 
@@ -223,13 +221,11 @@ def chart(
             if len(names) > 1:
                 _legend(ax, len(names))
         else:
-            plt.close(fig)
             raise ValueError(
                 f"unknown chart kind {kind!r}; use bar, stacked_bar, line or pie"
             )
 
         fig.savefig(dest, dpi=200, bbox_inches="tight")
-        plt.close(fig)
     return dest
 
 
@@ -262,14 +258,13 @@ def custom_map(
     geometry is reprojected to Web Mercator so the tiles line up.
     """
     import contextily as cx
-    import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
     if not layers:
         raise ValueError("pass at least one layer")
 
-    with _LOCK:
-        fig, ax = plt.subplots(figsize=(11, 9))
+    with plotting.LOCK:
+        fig, ax = plotting.subplots(figsize=(11, 9))
         handles: list[Any] = []
         for i, layer in enumerate(layers):
             gdf = layer["gdf"]
@@ -325,7 +320,6 @@ def custom_map(
             ax.legend(handles=handles, loc="lower right", fontsize=9,
                       frameon=True, framealpha=0.85)
         fig.savefig(dest, dpi=200, bbox_inches="tight")
-        plt.close(fig)
     return dest
 
 
@@ -341,34 +335,29 @@ def curve_plot(
     exhibit `chart()` cannot draw: its x axis is categorical, and a damage curve
     needs a real intensity scale and a shaded uncertainty ribbon.
     """
-    import matplotlib.pyplot as plt
-
     from ..api.export import tex_safe
 
     title, xlabel = (tex_safe(t) if t else t for t in (title, xlabel))
-    with _LOCK:
-        fig, ax = plt.subplots(figsize=(8, 4.8))
-        try:
-            for i, curve in enumerate(curves):
-                color = _FALLBACK[i % len(_FALLBACK)]
-                x = curve["intensity"]
-                ax.plot(x, curve["central"], color=color, linewidth=1.8,
-                        label=tex_safe(curve["name"]))
-                if curve.get("lower") is not None and curve.get("upper") is not None:
-                    ax.fill_between(
-                        x, curve["lower"], curve["upper"], color=color, alpha=0.15, linewidth=0
-                    )
-            # Headroom above the tallest curve, but never past 1: a proportion
-            # destroyed has no meaning above total loss. A shallow curve keeps a
-            # tight axis so its shape stays readable.
-            peak = max(max(c.get("upper", c["central"])) for c in curves)
-            ax.set_ylim(0, min(1.0, max(peak * 1.15, 1e-3)))
-            ax.margins(x=0)
-            _style(ax, title, xlabel, "Proportion destroyed")
-            if len(curves) > 1 or curves[0]["name"]:
-                _legend(ax, len(curves))
-            fig.tight_layout()
-            fig.savefig(dest, dpi=200, bbox_inches="tight", facecolor="white")
-        finally:
-            plt.close(fig)
+    with plotting.LOCK:
+        fig, ax = plotting.subplots(figsize=(8, 4.8))
+        for i, curve in enumerate(curves):
+            color = _FALLBACK[i % len(_FALLBACK)]
+            x = curve["intensity"]
+            ax.plot(x, curve["central"], color=color, linewidth=1.8,
+                    label=tex_safe(curve["name"]))
+            if curve.get("lower") is not None and curve.get("upper") is not None:
+                ax.fill_between(
+                    x, curve["lower"], curve["upper"], color=color, alpha=0.15, linewidth=0
+                )
+        # Headroom above the tallest curve, but never past 1: a proportion
+        # destroyed has no meaning above total loss. A shallow curve keeps a
+        # tight axis so its shape stays readable.
+        peak = max(max(c.get("upper", c["central"])) for c in curves)
+        ax.set_ylim(0, min(1.0, max(peak * 1.15, 1e-3)))
+        ax.margins(x=0)
+        _style(ax, title, xlabel, "Proportion destroyed")
+        if len(curves) > 1 or curves[0]["name"]:
+            _legend(ax, len(curves))
+        fig.tight_layout()
+        fig.savefig(dest, dpi=200, bbox_inches="tight", facecolor="white")
     return dest

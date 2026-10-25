@@ -18,7 +18,7 @@ import geopandas as gpd
 import numpy as np
 from urllib.parse import quote
 
-from app import datasets, identity
+from app import datasets, identity, plotting
 from app.config import settings
 from app.identity import current_user
 from app.api.hazards import load_hazards_dict
@@ -231,6 +231,7 @@ def _damage_label(damage: float, lower: Optional[float] = None, upper: Optional[
     return tex_safe(label)
 
 
+@plotting.locked
 def generate_barchart_png(
     analysis_result: dict,
     geometry_type: str,
@@ -314,7 +315,7 @@ def generate_barchart_png(
 
         # Two panels rather than a twin axis: money on the left, the two shares
         # on the right, each on a scale of its own
-        fig, (ax1, ax2) = plt.subplots(
+        fig, (ax1, ax2) = plotting.subplots(
             1, 2, figsize=(7, 5), gridspec_kw={'width_ratios': [1.2, 2.2]}
         )
         ax1.grid(False)
@@ -370,8 +371,7 @@ def generate_barchart_png(
 
         # Save to bytes buffer
         img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
-        plt.close(fig)
+        fig.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
 
         return img_buffer.getvalue()
     else:
@@ -397,7 +397,7 @@ def generate_barchart_png(
         palette = ['#d62728', '#2ca02c']  # Red for affected, green for unaffected
         
         # Create plot
-        fig, ax = plt.subplots(figsize=(6, 5))
+        fig, ax = plotting.subplots(figsize=(6, 5))
         sns.barplot(data=plot_data, x='Category', y='Value', 
                     palette=palette, ax=ax)
         ax.set_ylabel(ylabel, fontsize=12)
@@ -415,16 +415,16 @@ def generate_barchart_png(
             ax.text(i, v + max_value * 0.01, 
                     label, ha='center', va='bottom', fontsize=11)
         
-        plt.tight_layout()
+        fig.tight_layout()
         
         # Save to bytes buffer
         img_buffer = io.BytesIO()
-        plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
-        plt.close(fig)
+        fig.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
         
         return img_buffer.getvalue()
 
 
+@plotting.locked
 def generate_map_png(
     infrastructure_gdf: gpd.GeoDataFrame,
     hazard_raster_path: str,
@@ -492,7 +492,7 @@ def generate_map_png(
     infrastructure_mercator = infrastructure_gdf.to_crs('EPSG:3857')
     
     # Create figure
-    fig, ax = plt.subplots(figsize=(12, 10))
+    fig, ax = plotting.subplots(figsize=(12, 10))
     
     # Set extent first so basemap knows the bounds
     ax.set_xlim(bbox_mercator[0], bbox_mercator[2])
@@ -626,7 +626,7 @@ def generate_map_png(
                 if is_vulnerability_mode:
                     hazard_sm = sm
                 else:
-                    cbar = plt.colorbar(sm, ax=ax, orientation='vertical', 
+                    cbar = fig.colorbar(sm, ax=ax, orientation='vertical', 
                                        pad=0.02, shrink=0.6, aspect=20)
                     cbar.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
                     cbar.ax.tick_params(labelsize=9)
@@ -728,7 +728,7 @@ def generate_map_png(
     ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
     
     ax.set_axis_off()
-    plt.tight_layout()
+    fig.tight_layout()
     
     # Draw deferred vulnerability-mode colorbars using the post-tight_layout axes position
     if is_vulnerability_mode and vuln_sm is not None:
@@ -739,18 +739,17 @@ def generate_map_png(
         cbar_height = (pos.height - gap) / 2
         if hazard_sm is not None:
             cax_h = fig.add_axes([cbar_x, pos.y0, cbar_width, cbar_height])
-            cb_h = plt.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
+            cb_h = fig.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
             cb_h.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
             cb_h.ax.tick_params(labelsize=9)
         cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])
-        cb_v = plt.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
+        cb_v = fig.colorbar(vuln_sm, cax=cax_v, orientation='vertical')
         cb_v.set_label('Damage Ratio (%)', rotation=270, labelpad=15, fontsize=10)
         cb_v.ax.tick_params(labelsize=9)
     
     # Save to bytes buffer
     img_buffer = io.BytesIO()
-    plt.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
-    plt.close(fig)
+    fig.savefig(img_buffer, format='PNG', dpi=300, bbox_inches='tight')
     
     return img_buffer.getvalue()
 
