@@ -7,14 +7,15 @@ import json
 import asyncio
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Request
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from typing import Optional, Dict, Tuple
 import numpy as np
 
+from app import datasets
+from app.identity import current_user
 from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve_data
-from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 
 router = APIRouter()
@@ -111,7 +112,8 @@ async def analyze_intersections(
     hazard_url: Optional[str] = Form(default=None),
     intensity_threshold: Optional[float] = Form(default=None),
     vulnerability_curve_file: Optional[UploadFile] = File(default=None),
-    replacement_value: Optional[float] = Form(default=None)
+    replacement_value: Optional[float] = Form(default=None),
+    user: str = Depends(current_user),
 ):
     """
     Analyze intersections between uploaded infrastructure and hazard raster
@@ -159,11 +161,11 @@ async def analyze_intersections(
         actual_vulnerability_file = None
         actual_replacement_value = None
     
-    # Check if file exists
-    if actual_file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
-    
-    file_info = uploaded_files[actual_file_id]
+    # The user's own dataset, or 404 as for an unknown id
+    try:
+        file_info = datasets.get(user, actual_file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
     geometry_type = file_info["geometry_type"]
     infrastructure_gdf = file_info["gdf"]
     
@@ -356,15 +358,17 @@ async def analyze_intersections(
 
 
 @router.get("/analyze/{file_id}/status")
-async def get_analysis_status(file_id: str):
+async def get_analysis_status(file_id: str, user: str = Depends(current_user)):
     """Get status of analysis for a file"""
-    if file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="File not found")
-    
+    try:
+        info = datasets.get(user, file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(status_code=404, detail="File not found") from None
+
     return JSONResponse(content={
         "file_id": file_id,
         "status": "ready",
-        "geometry_type": uploaded_files[file_id]["geometry_type"],
-        "feature_count": uploaded_files[file_id]["feature_count"]
+        "geometry_type": info["geometry_type"],
+        "feature_count": info["feature_count"]
     })
 

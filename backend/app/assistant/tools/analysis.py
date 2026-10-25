@@ -78,7 +78,7 @@ def run_analysis(
     replacement_value: Optional[float] = None,
 ) -> dict[str, Any]:
     haz = domain.resolve_hazard(hazard)
-    info = domain.get_dataset(file_id)
+    info = domain.get_dataset(file_id, conv.owner)
     vc = _curve(conv, curve)
     if vc is not None and replacement_value is None:
         raise ValueError(
@@ -98,6 +98,7 @@ def run_analysis(
         replacement_value=replacement_value,
         vulnerability_curve_lower_interp=vc["lower"] if vc else None,
         vulnerability_curve_upper_interp=vc["upper"] if vc else None,
+        owner=conv.owner,
     )
     out = domain.summarise(result, info, haz, threshold)
     out["file_id"] = file_id
@@ -168,7 +169,7 @@ def compare_hazards(
             f"thresholds has {len(thresholds)} entries but hazards has {len(hazards)}"
         )
 
-    info = domain.get_dataset(file_id)
+    info = domain.get_dataset(file_id, conv.owner)
     vc = _curve(conv, curve)
     if (vc is None) != (replacement_value is None):
         raise ValueError("`curve` and `replacement_value` must be given together")
@@ -187,6 +188,7 @@ def compare_hazards(
                 replacement_value=replacement_value,
                 vulnerability_curve_lower_interp=vc["lower"] if vc else None,
                 vulnerability_curve_upper_interp=vc["upper"] if vc else None,
+                owner=conv.owner,
             )
             rows.append(domain.summarise(result, info, haz, thr))
         except Exception as exc:  # noqa: BLE001 — one bad layer must not sink the batch
@@ -241,10 +243,10 @@ def sweep_thresholds(
         raise ValueError(f"too many thresholds ({len(thresholds)}); use at most 20")
 
     haz = domain.resolve_hazard(hazard)
-    info = domain.get_dataset(file_id)
+    info = domain.get_dataset(file_id, conv.owner)
     rows = []
     for thr in sorted(thresholds):
-        result = domain.run_exposure(file_id, haz, threshold=thr)
+        result = domain.run_exposure(file_id, haz, threshold=thr, owner=conv.owner)
         rows.append(domain.summarise(result, info, haz, thr))
     df = pd.DataFrame(rows)
     return {
@@ -261,7 +263,7 @@ def sweep_thresholds(
     "Run Python in this conversation's persistent namespace (variables survive "
     "across calls). Preloaded: pandas as pd, numpy as np, geopandas as gpd, "
     "matplotlib.pyplot as plt, rasterio, `uploaded_files` (a read-only view of "
-    "the app's dataset store: file_id -> {filename, geometry_type, "
+    "your datasets in the app's store: file_id -> {filename, geometry_type, "
     "feature_count, crs, bounds, gdf}, each gdf a copy), `HAZARDS` (the "
     "catalogue), the app's analysis functions (geospatial, hazards, analyze, "
     "export, export_data), `uploads` (name -> Path of files uploaded to this "

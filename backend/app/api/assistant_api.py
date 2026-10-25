@@ -201,15 +201,16 @@ def download_artifact(artifact_id: str, user: str = Depends(current_user)):
 
 
 @router.get("/datasets/{file_id}")
-def dataset_geojson(file_id: str) -> JSONResponse:
+def dataset_geojson(file_id: str, user: str = Depends(current_user)) -> JSONResponse:
     """Metadata + GeoJSON for a dataset the assistant loaded, so the browser can
     display it. (`GET /api/upload/{file_id}` cannot serve this — it tries to
-    serialise the GeoDataFrame itself.)"""
-    from ..api.upload import uploaded_files
+    serialise the GeoDataFrame itself.) Only the user's own datasets."""
+    from .. import datasets
 
-    info = uploaded_files.get(file_id)
-    if info is None:
-        raise HTTPException(404, "dataset not found")
+    try:
+        info = datasets.get(user, file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(404, "dataset not found") from None
     gdf = info["gdf"]
     geo = gdf.__geo_interface__
     geo.pop("bbox", None)

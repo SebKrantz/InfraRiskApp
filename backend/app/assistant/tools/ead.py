@@ -362,11 +362,11 @@ def expected_annual_damage(
                 "analyses' own — leave them out"
             )
         points, setting = _reused(conv, analyses, file_id)
-        info = domain.get_dataset(setting["file_id"])
+        info = domain.get_dataset(setting["file_id"], conv.owner)
     else:
         if not file_id:
             raise ValueError("file_id is required with `family` or `hazards`")
-        info = domain.get_dataset(file_id)
+        info = domain.get_dataset(file_id, conv.owner)
         if not curve:
             raise ValueError(
                 "expected annual damage needs a vulnerability curve: a loaded curve's "
@@ -410,6 +410,7 @@ def expected_annual_damage(
                 replacement_value=replacement_value,
                 vulnerability_curve_lower_interp=vc["lower"],
                 vulnerability_curve_upper_interp=vc["upper"],
+                owner=conv.owner,
             )
             pt.update(_losses(result, domain.summarise(result, info, haz, threshold)))
         asset_value = _asset_value(result, info, replacement_value)
@@ -551,7 +552,7 @@ def _reused(
                 "replacement_value"
             )
         haz = domain.resolve_hazard(meta["hazard_id"])
-        info = domain.get_dataset(meta["file_id"])
+        info = domain.get_dataset(meta["file_id"], conv.owner)
         pt = _point(haz)
         pt.update(_losses(result, domain.summarise(result, info, haz, meta["threshold"])))
         pt["analysis"] = name
@@ -583,7 +584,7 @@ def _reused(
     if file_id and file_id != first["file_id"]:
         raise ValueError(f"the analyses are of {first['file_id']!r}, not {file_id!r}")
     curve = conv.curves.get(first["curve"], {})
-    info = domain.get_dataset(first["file_id"])
+    info = domain.get_dataset(first["file_id"], conv.owner)
     return points, {
         "asset_value": _asset_value(results[0], info, first["replacement_value"]),
         "file_id": first["file_id"],

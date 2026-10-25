@@ -2,6 +2,8 @@
 
 Everything here calls the same functions the HTTP API calls, on the same
 in-memory state, so an assistant answer and the number on screen cannot drift.
+Datasets are looked up for the conversation's owner (app/datasets.py): a
+browser chat sees its user's datasets, the MCP scope its own.
 
 Two invariants worth stating:
   * `analyze_intersection` mutates the GeoDataFrame it is given (it writes
@@ -27,8 +29,8 @@ from ..api.analyze import (
     set_cached_analysis_result,
     set_cached_raster_values,
 )
+from .. import datasets, identity
 from ..api.hazards import load_hazards_dict
-from ..api.upload import uploaded_files
 from ..utils.geospatial import analyze_intersection
 
 log = logging.getLogger("infrarisk.assistant")
@@ -124,15 +126,17 @@ def hazard_url(h: dict) -> str:
 # ---- datasets -------------------------------------------------------------- #
 
 
-def get_dataset(file_id: str) -> dict:
-    info = uploaded_files.get(file_id)
-    if info is None:
-        known = list(uploaded_files)
+def get_dataset(file_id: str, owner: Optional[str] = None) -> dict:
+    """The owner's dataset (AEI_LOCAL_USER's when no owner is named)."""
+    owner = owner or identity.local_user()
+    try:
+        return datasets.get(owner, file_id)
+    except datasets.DatasetNotFound:
+        known = [fid for fid, _ in datasets.list_for(owner)]
         raise ValueError(
             f"no dataset {file_id!r}. Loaded datasets: {known or 'none'}. "
             "Use load_infrastructure to add one, or list_datasets to see them."
-        )
-    return info
+        ) from None
 
 
 def dataset_brief(file_id: str, info: dict) -> dict[str, Any]:
@@ -158,13 +162,14 @@ def run_exposure(
     replacement_value: Optional[float] = None,
     vulnerability_curve_lower_interp: Optional[Callable[[float], float]] = None,
     vulnerability_curve_upper_interp: Optional[Callable[[float], float]] = None,
+    owner: Optional[str] = None,
 ) -> dict[str, Any]:
     """Run one analysis exactly as POST /api/analyze would, and cache it there.
 
     Returns the raw `analyze_intersection` dict (with `full_gdf`, `raster_values`
-    and, for lines, `line_data`).
+    and, for lines, `line_data`). `owner` is the conversation's.
     """
-    info = get_dataset(file_id)
+    info = get_dataset(file_id, owner)
     hazard_id = hazard["hazard_id"]
     geometry_type = info["geometry_type"]
 

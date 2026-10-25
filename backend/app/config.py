@@ -125,6 +125,13 @@ AEI_CORS_ORIGINS = [
     o.strip() for o in os.environ.get("AEI_CORS_ORIGINS", "").split(",") if o.strip()
 ]
 
+# Datasets (app/datasets.py), in both modes: dropped after this many hours unused;
+# per owner at most this many and this many megabytes in memory, the least
+# recently used going first.
+DATASET_TTL_HOURS = float(os.environ.get("DATASET_TTL_HOURS", "24"))
+DATASET_MAX_PER_OWNER = int(os.environ.get("DATASET_MAX_PER_OWNER", "10"))
+DATASET_MAX_MB_PER_OWNER = float(os.environ.get("DATASET_MAX_MB_PER_OWNER", "2048"))
+
 
 def check_identity_settings() -> None:
     """Multi-user mode needs the edge secret's digest; refuse to start without it."""

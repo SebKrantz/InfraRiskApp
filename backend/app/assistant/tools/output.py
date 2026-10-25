@@ -97,7 +97,7 @@ def make_barchart(
     result = _analysis(conv, analysis)
     meta = result.get("_assistant_meta", {})
     haz = domain.resolve_hazard(meta.get("hazard_id", ""))
-    info = domain.get_dataset(meta["file_id"])
+    info = domain.get_dataset(meta["file_id"], conv.owner)
     geometry_type = info["geometry_type"]
 
     summary = {
@@ -165,7 +165,7 @@ def make_map(
     result = _analysis(conv, analysis)
     meta = result.get("_assistant_meta", {})
     haz = domain.resolve_hazard(meta.get("hazard_id", ""))
-    info = domain.get_dataset(meta["file_id"])
+    info = domain.get_dataset(meta["file_id"], conv.owner)
 
     share = domain.affected_share_pct(result, info)
     if not force and share is not None and share <= domain.MAP_MIN_EXPOSED_PCT:
@@ -621,7 +621,9 @@ def export_analysis_data(
 
     haz = domain.resolve_hazard(hazard)
     try:
-        body, filename, _mime = _run_data_export(file_id, haz["hazard_id"], threshold, mode)
+        body, filename, _mime = _run_data_export(
+            file_id, haz["hazard_id"], threshold, mode, owner=conv.owner
+        )
     except ValueError as exc:
         code = str(exc)
         if code == "NO_ANALYSIS_CACHE":

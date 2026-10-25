@@ -181,11 +181,16 @@ def drop(conversation_id: str, owner: str | None = None) -> bool:
 
 
 def _cleanup(conv: Conversation) -> None:
-    """Drop the conversation's artifacts, namespace and temp files.
+    """Drop the conversation's artifacts, namespace and temp files, and the
+    datasets an MCP scope loaded for itself.
 
-    Datasets the conversation pushed into the app's `uploaded_files` are left
-    alone on purpose: the user may still be looking at one on the map.
+    Datasets a browser chat loaded belong to its user and are left alone on
+    purpose: the user may still be looking at one on the map. Their own TTL
+    and quota retire them (app/datasets.py).
     """
+    from .. import datasets
+
+    datasets.purge_scope(conv.id)
     artifacts.drop_for(conv.id)
     conv.namespace.clear()
     conv.curves.clear()

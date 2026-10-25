@@ -6,7 +6,7 @@ import re
 import asyncio
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
@@ -18,8 +18,9 @@ import geopandas as gpd
 import numpy as np
 from urllib.parse import quote
 
+from app import datasets, identity
 from app.config import settings
-from app.api.upload import uploaded_files
+from app.identity import current_user
 from app.api.hazards import load_hazards_dict
 from app.api.analyze import get_cached_raster_values, get_cached_analysis_result
 from app.utils.geospatial import analyze_intersection, mask_raster_nodata, vulnerability_interp_from_arrays
@@ -96,12 +97,14 @@ def _run_data_export(
     hazard_id: str,
     intensity_threshold: Optional[float],
     mode: str,
+    owner: Optional[str] = None,
 ) -> tuple[bytes, str, str]:
-    """Returns (body, filename, media_type). Raises ValueError for bad input."""
-    if file_id not in uploaded_files:
-        raise ValueError("UPLOAD_NOT_FOUND")
-
-    file_info = uploaded_files[file_id]
+    """Returns (body, filename, media_type). Raises ValueError for bad input,
+    UPLOAD_NOT_FOUND also for another owner's dataset."""
+    try:
+        file_info = datasets.get(owner or identity.local_user(), file_id)
+    except datasets.DatasetNotFound:
+        raise ValueError("UPLOAD_NOT_FOUND") from None
     geometry_type = file_info["geometry_type"]
 
     if mode == "csv_points" and geometry_type != "Point":
@@ -752,16 +755,19 @@ def generate_map_png(
     return img_buffer.getvalue()
 
 
+def _owned(user: str, file_id: str) -> dict:
+    try:
+        return datasets.get(user, file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(status_code=404, detail="Uploaded file not found") from None
+
+
 @router.post("/export/barchart")
-async def export_barchart(request: ExportBarchartRequest):
+async def export_barchart(request: ExportBarchartRequest, user: str = Depends(current_user)):
     """
     Export analysis results as a high-resolution PNG barchart.
     """
-    # Check if file exists
-    if request.file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
-    
-    file_info = uploaded_files[request.file_id]
+    file_info = _owned(user, request.file_id)
     geometry_type = file_info["geometry_type"]
     infrastructure_gdf = file_info["gdf"]
     
@@ -857,15 +863,11 @@ async def export_barchart(request: ExportBarchartRequest):
 
 
 @router.post("/export/map")
-async def export_map(request: ExportMapRequest):
+async def export_map(request: ExportMapRequest, user: str = Depends(current_user)):
     """
     Export analysis results as a high-resolution PNG map.
     """
-    # Check if file exists
-    if request.file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
-    
-    file_info = uploaded_files[request.file_id]
+    file_info = _owned(user, request.file_id)
     geometry_type = file_info["geometry_type"]
     infrastructure_gdf = file_info["gdf"]
     
@@ -961,7 +963,7 @@ async def export_map(request: ExportMapRequest):
 
 
 @router.post("/export/data")
-async def export_data(request: ExportDataRequest):
+async def export_data(request: ExportDataRequest, user: str = Depends(current_user)):
     """
     Export analysis results as CSV (points or line aggregate) or GPKG (line split segments).
     """
@@ -978,6 +980,7 @@ async def export_data(request: ExportDataRequest):
             request.hazard_id,
             request.intensity_threshold,
             request.mode,
+            user,
         )
     except ValueError as e:
         code = str(e)

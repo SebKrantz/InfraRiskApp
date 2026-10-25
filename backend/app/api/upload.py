@@ -2,27 +2,29 @@
 File upload endpoints
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 import os
 import zipfile
 import tempfile
 from pathlib import Path
-from typing import Optional
 
+from app import datasets
 from app.config import settings
+from app.identity import current_user
 from app.utils.geospatial import load_spatial_file, load_csv_points, validate_geometry_type, convert_polygons_to_centroids
 
 router = APIRouter()
 
-# Store uploaded file metadata and GeoDataFrame in memory (in production, use a database or cache)
-uploaded_files = {}
+# Uploaded file metadata and GeoDataFrames, in memory, each with an owner. The
+# store lives in app/datasets.py; read it through datasets.get / list_for.
+uploaded_files = datasets.STORE
 
 
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    file_id: Optional[str] = None
+    user: str = Depends(current_user),
 ):
     """
     Upload a spatial file (Shapefile, GeoPackage, GeoJSON, or CSV with coordinates)
@@ -38,7 +40,8 @@ async def upload_file(
     Shapefile and GeoPackage may contain Polygon or MultiPolygon geometries
     (e.g. buildings); these are converted to centroid points for analysis.
 
-    Returns file metadata including geometry type and feature count
+    Returns file metadata including geometry type and feature count. The
+    file_id is always issued here and the dataset belongs to the uploader.
     """
     # Validate file extension
     file_ext = Path(file.filename).suffix.lower()
@@ -55,11 +58,6 @@ async def upload_file(
             status_code=413,
             detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE / (1024*1024)} MB"
         )
-    
-    # Generate file ID if not provided
-    if not file_id:
-        import uuid
-        file_id = str(uuid.uuid4())
     
     try:
         # Save uploaded file
@@ -123,8 +121,8 @@ async def upload_file(
         if gdf.crs and gdf.crs != "EPSG:4326":
             gdf = gdf.to_crs("EPSG:4326")
         
-        # Store metadata and GeoDataFrame
-        uploaded_files[file_id] = {
+        # Store metadata and GeoDataFrame, owned by the uploader
+        info = {
             "filename": file.filename,
             "geometry_type": geometry_type,
             "feature_count": len(gdf),
@@ -137,6 +135,10 @@ async def upload_file(
             },
             "gdf": gdf  # Store GeoDataFrame for analysis (already cleaned and in WGS84)
         }
+        try:
+            file_id = datasets.add(user, info)
+        except datasets.QuotaExceeded as e:
+            raise HTTPException(status_code=413, detail=str(e))
         
         # Convert to GeoJSON for display (gdf is already in WGS84 and cleaned)
         # Strip per-feature bbox to avoid MapLibre geojson-vt tiler issues
@@ -155,12 +157,14 @@ async def upload_file(
             "filename": file.filename,
             "geometry_type": geometry_type,
             "feature_count": len(gdf),
-            "crs": uploaded_files[file_id]["crs"],
-            "bounds": uploaded_files[file_id]["bounds"],
+            "crs": info["crs"],
+            "bounds": info["bounds"],
             "geojson": geo_json,  # Include GeoJSON for initial display
             "message": "File uploaded successfully"
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -168,14 +172,19 @@ async def upload_file(
         )
 
 
+def owned_dataset(user: str, file_id: str) -> dict:
+    """The user's dataset, or a 404 exactly like an unknown id."""
+    try:
+        return datasets.get(user, file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(status_code=404, detail="File not found") from None
+
+
 @router.get("/upload/{file_id}")
-async def get_upload_info(file_id: str):
+async def get_upload_info(file_id: str, user: str = Depends(current_user)):
     """Get metadata for an uploaded file"""
-    if file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="File not found")
-    
     # The stored entry also holds the GeoDataFrame, which is not JSON-serialisable
-    info = uploaded_files[file_id]
+    info = owned_dataset(user, file_id)
     return JSONResponse(content={
         "file_id": file_id,
         "filename": info["filename"],
@@ -187,16 +196,11 @@ async def get_upload_info(file_id: str):
 
 
 @router.delete("/upload/{file_id}")
-async def delete_upload(file_id: str):
-    """Delete an uploaded file"""
-    if file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="File not found")
-    
-    del uploaded_files[file_id]
-    
-    # Clear any cached raster values for this file
-    from app.api.analyze import clear_raster_cache_for_file
-    clear_raster_cache_for_file(file_id)
-    
+async def delete_upload(file_id: str, user: str = Depends(current_user)):
+    """Delete an uploaded file (and its cached rasters and analyses)"""
+    try:
+        datasets.remove(user, file_id)
+    except datasets.DatasetNotFound:
+        raise HTTPException(status_code=404, detail="File not found") from None
     return JSONResponse(content={"message": "File deleted successfully"})
 

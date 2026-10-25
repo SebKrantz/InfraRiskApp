@@ -108,10 +108,10 @@ def _facade(module) -> SimpleNamespace:
     return SimpleNamespace(**public)
 
 
-def _datasets_view() -> Mapping:
-    """The app's dataset store as python_exec sees it: always current, read-only,
-    and handing out copies of the GeoDataFrames."""
-    from ..api.upload import uploaded_files as store
+def _datasets_view(owner: str) -> Mapping:
+    """The owner's datasets as python_exec sees them: always current, read-only,
+    and handing out copies of the GeoDataFrames. Other owners' are not there."""
+    from .. import datasets
 
     refusal = (
         "uploaded_files is read-only in python_exec: datasets are registered by "
@@ -120,14 +120,17 @@ def _datasets_view() -> Mapping:
 
     class UploadedFiles(Mapping):
         def __getitem__(self, key):
-            info = store[key]
+            try:
+                info = datasets.get(owner, key)
+            except datasets.DatasetNotFound:
+                raise KeyError(key) from None
             return MappingProxyType({**info, "gdf": info["gdf"].copy()})
 
         def __iter__(self):
-            return iter(list(store))
+            return iter([fid for fid, _ in datasets.list_for(owner)])
 
         def __len__(self):
-            return len(store)
+            return len(datasets.list_for(owner))
 
         def __setitem__(self, key, value):
             raise TypeError(refusal)
@@ -136,7 +139,7 @@ def _datasets_view() -> Mapping:
             raise TypeError(refusal)
 
         def __repr__(self):
-            return f"<uploaded_files (read-only): {list(store)}>"
+            return f"<uploaded_files (read-only): {list(self)}>"
 
     return UploadedFiles()
 
@@ -167,7 +170,7 @@ def ensure(conv: Conversation) -> dict[str, Any]:
     ns.setdefault("hazards", _facade(hazards))
     ns.setdefault("analyze", _facade(analyze))
     ns.setdefault("export", _facade(export))
-    ns.setdefault("uploaded_files", _datasets_view())
+    ns.setdefault("uploaded_files", _datasets_view(conv.owner))
     ns.setdefault("HAZARDS", copy.deepcopy(hazards.load_hazards_dict()))
 
     def save_artifact(obj: Any, filename: str, title: str | None = None) -> str:

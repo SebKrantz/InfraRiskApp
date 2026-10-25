@@ -1,14 +1,13 @@
 """Turning uploaded files into things the app can analyse.
 
-`load_infrastructure` registers a dataset in the app's own `uploaded_files`
-store, so the very same object is available to the analysis tools AND can be
-displayed on the map with ui_show_dataset. `load_vulnerability_curve` parses a
+`load_infrastructure` registers a dataset in the app's own dataset store, owned
+by the conversation's owner, so the very same object is available to the
+analysis tools AND can be displayed on the map with ui_show_dataset. `load_vulnerability_curve` parses a
 curve once and keeps the interpolators on the conversation.
 """
 
 from __future__ import annotations
 
-import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -57,7 +56,7 @@ def load_infrastructure(conv: Conversation, file: str) -> dict[str, Any]:
     import numpy as np
     import pandas as pd
 
-    from ...api.upload import uploaded_files
+    from ... import datasets
     from ...utils.geospatial import (
         convert_polygons_to_centroids,
         load_csv_points,
@@ -101,8 +100,7 @@ def load_infrastructure(conv: Conversation, file: str) -> dict[str, Any]:
     if gdf.crs and gdf.crs != "EPSG:4326":
         gdf = gdf.to_crs("EPSG:4326")
 
-    file_id = str(uuid.uuid4())
-    uploaded_files[file_id] = {
+    info = {
         "filename": path.name,
         "geometry_type": geometry_type,
         "feature_count": len(gdf),
@@ -115,10 +113,11 @@ def load_infrastructure(conv: Conversation, file: str) -> dict[str, Any]:
         },
         "gdf": gdf,
     }
+    file_id = datasets.add(conv.owner, info, scope=conv.id)
     conv.datasets.append(file_id)
     conv.namespace[f"gdf_{len(conv.datasets)}"] = gdf
 
-    out = domain.dataset_brief(file_id, uploaded_files[file_id])
+    out = domain.dataset_brief(file_id, info)
     out["stored_as"] = f"gdf_{len(conv.datasets)}"
     out["head"] = gdf.drop(columns="geometry").head(5).to_string(max_cols=12)
     out["note"] = (
