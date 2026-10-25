@@ -211,7 +211,8 @@ pip install -r requirements.txt
 ```
 
 Without a key the assistant is simply absent: the button never renders and the app behaves exactly
-as before. A provider appears in the model picker only when its key is set.
+as before. A provider appears in the model picker only when its key is set (Gemini: when its
+backend is configured, see below).
 
 **Assistant model defaults** (optional; the same four variables in every AEI Labs app):
 `ASSISTANT_DEFAULT_PROVIDER` is the provider the assistant starts on (`anthropic`, `gemini` or
@@ -219,6 +220,59 @@ as before. A provider appears in the model picker only when its key is set.
 gemini, openai. `ANTHROPIC_MODEL`, `GEMINI_MODEL` and `OPENAI_MODEL` replace that provider's
 default model, honoured only when the value is one of the provider's models in the assistant's
 model table; any other value is ignored with a warning in the log.
+
+### Gemini on Vertex AI
+
+The Gemini provider runs on one of two backends, chosen by `GEMINI_BACKEND` in `backend/.env`:
+
+- `vertex`: Vertex AI, which Google now calls the Gemini Enterprise Agent Platform. Usage is billed
+  to the Google Cloud project `VERTEX_PROJECT` and draws on that project's credits.
+  `VERTEX_LOCATION` defaults to `global`.
+- `developer`: the Gemini Developer API (an AI Studio key, `GEMINI_API_KEY`). It is also what runs
+  when `GEMINI_BACKEND` is unset, so a deployment keeps working until its `.env` switches.
+
+Gemini is offered in the model picker when its backend has what it needs: `VERTEX_PROJECT` or
+`VERTEX_API_KEY` on `vertex`, `GEMINI_API_KEY` on `developer`. `backend/.env.example` shows the
+`vertex` setup. The code is `make_client` and `_flex_options` in
+`backend/app/assistant/providers/gemini.py`, and `gemini_configured` in `backend/app/config.py`; it
+needs `google-genai` 1.74 or later, the first release with `Client(enterprise=...)`.
+
+**Authentication on Vertex**, one of two:
+
+1. *Application Default Credentials.* On a dev machine, enable the Vertex AI API
+   (`aiplatform.googleapis.com`) in the project, link the billing account that carries the credit,
+   and log in with `gcloud auth application-default login` (then
+   `gcloud auth application-default set-quota-project <project>`); the account needs the Vertex AI
+   User role. On a server, create a service account with that role, keep its JSON key outside the
+   repository (the Docker image copies `backend/`), and set `GOOGLE_APPLICATION_CREDENTIALS` to its
+   path. The server
+   removes secret-named variables from its environment at startup (`app/redact.py`), so
+   `config.py` reads that path first and the adapter loads the key file for the client itself.
+2. *`VERTEX_API_KEY`.* A Google Cloud API key: requests go to the global endpoint with no project in
+   the path, and the key's own project is billed. `VERTEX_PROJECT` and `VERTEX_LOCATION` are then
+   unused. Google documents this form for express mode, whose model list (checked 2026-10-13) has
+   `gemini-3.1-pro-preview` but not `gemini-3.8-flash` or `gemini-3.5-flash-lite`; try each model
+   before relying on a key.
+
+**Flex.** On Vertex, flex is [Flex PayGo](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo),
+asked for with the header `X-Vertex-AI-LLM-Shared-Request-Type: flex` instead of `service_tier`. It
+runs only at the `global` location and only for the models in `VERTEX_FLEX_MODELS`, which holds all
+three models of the table; any other model or location logs a warning and runs at the standard
+tier. The 15-minute timeout and the back-off-then-standard fallback are unchanged, and the fallback
+drops the header.
+
+**Docker.** `docker-compose.yml` passes no assistant settings to the container today, so the
+assistant is off there. To run Gemini on Vertex it needs `GEMINI_BACKEND`, `VERTEX_PROJECT` and
+`VERTEX_LOCATION` under `environment:`, and either `VERTEX_API_KEY` or a service-account key file
+mounted read-only, from outside the repository, with `GOOGLE_APPLICATION_CREDENTIALS` naming the
+mounted path.
+
+**Credentials and `python_exec`.** The kernel runs in the server process, confined by
+`app/assistant/sandbox.py`: it cannot read gcloud's `application_default_credentials.json` or the
+key file `GOOGLE_APPLICATION_CREDENTIALS` names, wherever that file is kept, and it finds neither
+that variable nor `VERTEX_API_KEY` in its environment. As a second layer, `app/redact.py` masks
+Google refresh tokens (`1//…`), access tokens (`ya29.…`), PEM private-key blocks and the values of
+`refresh_token`, `client_secret` and `private_key` fields in anything a tool returns.
 
 ### What it can do
 
@@ -258,6 +312,7 @@ Set `ASSISTANT_MCP_ENABLED=0` to turn it off.
 - `PORT`: Server port (default: `8000`)
 - `DEBUG`: Debug mode (default: `False`)
 - `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`: enable the AI assistant (read from `backend/.env`)
+- `GEMINI_BACKEND` (`vertex` | `developer`, unset = `developer`), `VERTEX_PROJECT`, `VERTEX_LOCATION` (`global`), `VERTEX_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`: where Gemini runs and how it authenticates, see "Gemini on Vertex AI"
 - `ASSISTANT_MAX_ITERATIONS` (30), `ASSISTANT_EXEC_TIMEOUT` (180 s), `ASSISTANT_UPLOAD_MAX_MB` (100), `ASSISTANT_MCP_ENABLED` (1)
 
 The frontend dev proxy targets `http://localhost:8000`; override with `BACKEND_URL` if that port is

@@ -131,10 +131,13 @@ def lines_split_to_gpkg_bytes(
     line_data: list[dict[str, Any]],
     vulnerability_interp: Optional[Callable[[float], float]],
     replacement_value: Optional[float],
+    keep_attributes: bool = False,
 ) -> bytes:
     """
     GPKG: consecutive sample pairs per line part; columns id, hazard_intensity,
-    and optionally damage_ratio, damage_cost (no original line attributes).
+    and optionally damage_ratio, damage_cost; with keep_attributes, the input
+    line's own attributes follow (any that share a name with an output column,
+    or with GeoPackage's fid, get an _input suffix).
 
     Where neither endpoint of a span was measured, hazard_intensity is NaN but
     damage_ratio is 0.0. The asymmetry is deliberate: an intensity is a
@@ -197,6 +200,21 @@ def lines_split_to_gpkg_bytes(
             data["damage_ratio"] = np.concatenate(ratio)
             data["damage_cost"] = np.concatenate(cost)
         gdf = gpd.GeoDataFrame(data, geometry=geoms, crs="EPSG:4326")
+        if keep_attributes:
+            taken = {"id", "fid", "hazard_intensity", "damage_ratio", "damage_cost", "geometry"}
+            attrs = pd.DataFrame(
+                [
+                    {
+                        (f"{k}_input" if k.lower() in taken else k): v
+                        for k, v in ld["row_dict"].items()
+                        if k != "geometry"
+                    }
+                    | {"id": int(ld["line_id"])}
+                    for ld in line_data
+                    if len(ld["sampled_points"]) >= 2
+                ]
+            ).drop_duplicates("id")
+            gdf = gdf.merge(attrs, on="id", how="left")
     else:
         empty_cols: dict[str, Any] = {
             "id": pd.Series(dtype="int64"),

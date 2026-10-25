@@ -66,9 +66,37 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
 
+# Where Gemini runs (README, "Gemini on Vertex AI"). "vertex": Vertex AI, billed to
+# VERTEX_PROJECT and authenticated by Application Default Credentials, or by VERTEX_API_KEY
+# when that is set. "developer": the Gemini Developer API with GEMINI_API_KEY. Unset means
+# developer, so a deployment whose .env predates this keeps working.
+GEMINI_BACKEND = os.environ.get("GEMINI_BACKEND", "").strip().lower() or "developer"
+VERTEX_PROJECT = os.environ.get("VERTEX_PROJECT", "").strip()
+VERTEX_LOCATION = os.environ.get("VERTEX_LOCATION", "").strip() or "global"
+VERTEX_API_KEY = os.environ.get("VERTEX_API_KEY", "").strip()
+# A service-account key file for Application Default Credentials (the server case; gcloud's
+# own login on a dev machine needs no variable). Its name holds "CREDENTIAL", so the scrub at
+# the end of this file takes it out of the environment before the SDK could read it: it is
+# kept here and the Gemini adapter loads the file for the client itself. Made absolute now,
+# because python_exec changes the working directory while it runs.
+_CREDENTIALS_FILE = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
+GOOGLE_APPLICATION_CREDENTIALS = (
+    os.path.abspath(os.path.expanduser(_CREDENTIALS_FILE)) if _CREDENTIALS_FILE else ""
+)
+
+
+def gemini_configured() -> bool:
+    """Whether GEMINI_BACKEND has what it needs. On Vertex that is a project (the auth is
+    Application Default Credentials, which cannot be checked without a call) or
+    VERTEX_API_KEY: configuration only."""
+    if GEMINI_BACKEND == "vertex":
+        return bool(VERTEX_PROJECT or VERTEX_API_KEY)
+    return GEMINI_BACKEND == "developer" and bool(GEMINI_API_KEY)
+
+
 # The model table (providers, models, effort, tiers) is app/assistant/models.py. A provider
-# is offered iff its key is set. These env overrides pick the default MODEL of a provider
-# and count only when they name a model of its table.
+# is offered iff its key is set (Gemini: iff gemini_configured()). These env overrides pick
+# the default MODEL of a provider and count only when they name a model of its table.
 ASSISTANT_MODEL_ENV = {
     "anthropic": os.environ.get("ANTHROPIC_MODEL", "").strip(),
     "gemini": os.environ.get("GEMINI_MODEL", "").strip(),
@@ -85,11 +113,17 @@ ASSISTANT_PROVIDER_TIMEOUT = float(os.environ.get("ASSISTANT_PROVIDER_TIMEOUT", 
 # Wall-clock cap on one server-side tool call, seconds. Remote COG reads are
 # slow and occasionally never return.
 ASSISTANT_TOOL_TIMEOUT = float(os.environ.get("ASSISTANT_TOOL_TIMEOUT", "600"))
+# Wall-clock cap on one background job (start_run_analysis /
+# start_compare_hazards over MCP), seconds.
+ASSISTANT_JOB_TIMEOUT = float(os.environ.get("ASSISTANT_JOB_TIMEOUT", "3600"))
 # Wall-clock cap on one python_exec call, seconds. Generous: sampling a remote
 # COG over a large network is minutes of work, not seconds.
 ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))
 # Per-file cap on uploads to the assistant, megabytes.
 ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100"))
+# Per-file cap on MCP upload_file (base64 inside a JSON-RPC body), megabytes
+# decoded. Larger files go through the raw-body REST route above.
+ASSISTANT_MCP_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_MCP_UPLOAD_MAX_MB", "25"))
 # Mount the MCP server at /mcp (external clients bring their own model, so this
 # is independent of the API keys above).
 ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
@@ -151,6 +185,42 @@ def check_identity_settings() -> None:
 
 
 check_identity_settings()
+
+# Extra Host (and matching Origin) values the MCP HTTP transport accepts, comma-separated,
+# e.g. "eps-mcp:*,aei-eps-mcp:*". The MCP SDK turns DNS-rebinding protection ON whenever the
+# app is built for a localhost bind, with allowed_hosts of 127.0.0.1/localhost/[::1] only, and
+# then answers any other Host header with 421 Misdirected Request. That is correct for a
+# desktop install, but it refuses a client that reaches this service by its container or
+# service name, which is how it is addressed inside a Docker network.
+#
+# Empty (the default) leaves the SDK's behaviour exactly as it was.
+ASSISTANT_MCP_ALLOWED_HOSTS = [
+    h.strip() for h in os.environ.get("ASSISTANT_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()
+]
+
+# The localhost patterns the SDK itself would use, which stay allowed either way.
+_MCP_LOCAL_HOSTS = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+_MCP_LOCAL_ORIGINS = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+
+
+def mcp_transport_security():
+    """Transport security for the MCP HTTP app.
+
+    Returns None when ASSISTANT_MCP_ALLOWED_HOSTS is unset, which keeps the SDK's own
+    default. Otherwise keeps DNS-rebinding protection ON and widens the allow-list to the
+    configured names as well as localhost.
+    """
+    if not ASSISTANT_MCP_ALLOWED_HOSTS:
+        return None
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=_MCP_LOCAL_HOSTS + ASSISTANT_MCP_ALLOWED_HOSTS,
+        allowed_origins=_MCP_LOCAL_ORIGINS
+        + [f"http://{h}" for h in ASSISTANT_MCP_ALLOWED_HOSTS],
+    )
+
 
 # Every key is read above. Take the secret-named variables out of the environment
 # now, so python_exec (which runs in this process) and any child process find none;

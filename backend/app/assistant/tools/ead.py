@@ -16,6 +16,7 @@ replacement value and a plausibility flag.
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any, Optional
 
@@ -24,7 +25,8 @@ import numpy as np
 from .. import curve_library, domain
 from ..conversations import Conversation
 from . import tool
-from .analysis import _ANALYSIS_PROPS, _curve
+from .analysis import _ANALYSIS_PROPS, _curve, _damage_inputs
+from .data import resolve_dataset
 
 # Catalogue layers of each family, by hazard_id prefix. Each has one return
 # period per layer, and the flood and cyclone families several climate variants.
@@ -295,7 +297,7 @@ def _plausibility(ead_value: float, asset_value: float) -> dict[str, Any]:
                 "items": {"type": "string"},
                 "description": "`stored_as` names of run_analysis results with a "
                 "curve, instead of running the layers. Takes no threshold, curve or "
-                "replacement_value — they come from the analyses.",
+                "replacement values — they come from the analyses.",
             },
             "threshold": _ANALYSIS_PROPS["threshold"],
             "curve": {
@@ -305,6 +307,8 @@ def _plausibility(ead_value: float, asset_value: float) -> dict[str, Any]:
                 "loaded on first use.",
             },
             "replacement_value": _ANALYSIS_PROPS["replacement_value"],
+            "replacement_value_column": _ANALYSIS_PROPS["replacement_value_column"],
+            "replacement_value_map": _ANALYSIS_PROPS["replacement_value_map"],
             "currency": {
                 "type": "string",
                 "description": "Currency of the replacement value, e.g. 'USD'.",
@@ -340,6 +344,8 @@ def expected_annual_damage(
     threshold: Optional[float] = None,
     curve: Optional[str] = None,
     replacement_value: Optional[float] = None,
+    replacement_value_column: Optional[str] = None,
+    replacement_value_map: Optional[dict] = None,
     currency: Optional[str] = None,
     price_basis: Optional[str] = None,
     protection_rp: Optional[float] = None,
@@ -356,26 +362,25 @@ def expected_annual_damage(
         )
 
     if analyses:
-        if any(x is not None for x in (threshold, curve, replacement_value)):
+        given = (threshold, curve, replacement_value, replacement_value_column,
+                 replacement_value_map)
+        if any(x is not None for x in given):
             raise ValueError(
                 "with `analyses`, the threshold, curve and replacement value are the "
                 "analyses' own — leave them out"
             )
-        points, setting = _reused(conv, analyses, file_id)
+        # An uploaded file's name names the dataset its analyses were run on.
+        points, setting = _reused(conv, analyses, file_id and resolve_dataset(conv, file_id))
         info = domain.get_dataset(setting["file_id"], conv.owner)
     else:
         if not file_id:
             raise ValueError("file_id is required with `family` or `hazards`")
+        file_id = resolve_dataset(conv, file_id)
         info = domain.get_dataset(file_id, conv.owner)
         if not curve:
             raise ValueError(
                 "expected annual damage needs a vulnerability curve: a loaded curve's "
                 "name or a library id"
-            )
-        if replacement_value is None or replacement_value <= 0:
-            raise ValueError(
-                "replacement_value is required and must be greater than zero (per "
-                "feature for points, per metre for lines)"
             )
         if family:
             if family not in FAMILIES:
@@ -398,7 +403,11 @@ def expected_annual_damage(
             )
 
     if not analyses:
-        vc, curve = _ead_curve(conv, curve)
+        curve = _ead_curve(conv, curve)[1]
+        vc, values, per_feature = _damage_inputs(
+            conv, info, curve, replacement_value, replacement_value_column,
+            replacement_value_map,
+        )
         layer_of = {h["hazard_id"]: h for h in layers}
         for pt in points:
             haz = layer_of[pt["hazard_id"]]
@@ -407,19 +416,22 @@ def expected_annual_damage(
                 haz,
                 threshold=threshold,
                 vulnerability_curve_interp=vc["interp"],
-                replacement_value=replacement_value,
+                replacement_value=values,
                 vulnerability_curve_lower_interp=vc["lower"],
                 vulnerability_curve_upper_interp=vc["upper"],
                 owner=conv.owner,
                 curve_digest=domain.curve_digest(vc),
             )
             pt.update(_losses(result, domain.summarise(result, info, haz, threshold)))
-        asset_value = _asset_value(result, info, replacement_value)
+        asset_value = _asset_value(result, info, values)
         setting = {
             "file_id": file_id,
             "threshold": threshold,
             "curve": curve,
             "replacement_value": replacement_value,
+            "replacement_value_column": replacement_value_column,
+            "replacement_value_map": replacement_value_map,
+            "per_feature": per_feature,
             "provenance": vc.get("provenance"),
         }
     else:
@@ -503,6 +515,11 @@ def expected_annual_damage(
             "currency": currency,
             "price_basis": price_basis,
             "asset_total": asset_value,
+            **{
+                k: setting[k]
+                for k in ("replacement_value_column", "replacement_value_map", "per_feature")
+                if setting.get(k)
+            },
         },
         "estimate": estimate,
         "conventions": [
@@ -566,12 +583,10 @@ def _reused(
         ("threshold", "thresholds"),
         ("curve_path", "curves"),
         ("replacement_value", "replacement values"),
+        ("replacement_value_column", "replacement value columns"),
+        ("replacement_value_map", "replacement value maps"),
     ):
-        # 100 and 100.0 are the same threshold
-        seen = {
-            float(v) if isinstance(v, (int, float)) else v
-            for v in (m.get(key) for m in settings)
-        }
+        seen = {_same(m.get(key)) for m in settings}
         if len(seen) > 1:
             per = ", ".join(
                 f"{n}: {m.get('curve' if key == 'curve_path' else key)}"
@@ -586,11 +601,30 @@ def _reused(
         raise ValueError(f"the analyses are of {first['file_id']!r}, not {file_id!r}")
     curve = conv.curves.get(first["curve"], {})
     info = domain.get_dataset(first["file_id"], conv.owner)
+    column = first.get("replacement_value_column")
+    values = (
+        domain.replacement_values(
+            info, column, first.get("replacement_value_map"), first["replacement_value"]
+        )[0]
+        if column
+        else first["replacement_value"]
+    )
     return points, {
-        "asset_value": _asset_value(results[0], info, first["replacement_value"]),
+        "asset_value": _asset_value(results[0], info, values),
         "file_id": first["file_id"],
         "threshold": first["threshold"],
         "curve": first["curve"],
         "replacement_value": first["replacement_value"],
+        "replacement_value_column": first.get("replacement_value_column"),
+        "replacement_value_map": first.get("replacement_value_map"),
         "provenance": curve.get("provenance"),
     }
+
+
+def _same(value: Any) -> Any:
+    """A hashable form in which 100 and 100.0, or two equal maps, are equal."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, dict):
+        return json.dumps(value, sort_keys=True, default=str)
+    return value

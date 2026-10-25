@@ -23,7 +23,7 @@ import numpy as np  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from shapely.geometry import Point  # noqa: E402
 
-from app import config, datasets  # noqa: E402
+from app import config, datasets, identity  # noqa: E402
 from app.api import analyze  # noqa: E402
 from app.api.hazards import load_hazards_dict  # noqa: E402
 from app.assistant import conversations, domain, mcp_server, tools  # noqa: E402
@@ -122,8 +122,10 @@ class Isolation(unittest.TestCase):
         self.assertEqual(res["result"], repr([self.fid]))
 
     def test_the_mcp_scope_is_its_own_owner(self):
-        conv = conversations.get_or_create(mcp_server._MCP_CONVERSATION_ID, owner=mcp_server._owner())
-        self.assertEqual(query.list_datasets(conv)["count"], 0)
+        for cid in (mcp_server._MCP_CONVERSATION_ID, "mcp:agui-chat-1"):
+            conv = conversations.get_or_create(cid, owner=identity.scope_principal(cid))
+            self.addCleanup(conversations.drop, cid)
+            self.assertEqual(query.list_datasets(conv)["count"], 0)
 
 
 class SingleUserMode(unittest.TestCase):

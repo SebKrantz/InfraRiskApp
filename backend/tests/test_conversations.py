@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app import identity  # noqa: E402
 from app.api import assistant_api  # noqa: E402
 from app.assistant import artifacts, conversations, mcp_server, mcp_state  # noqa: E402
 
@@ -121,8 +122,9 @@ class RoutesRefuseOtherUsers(unittest.TestCase):
         self.client.post("/api/assistant/app_state", json={"file_id": "f-b"}, headers=signed_in(B))
         self.assertEqual(mcp_state.read(A)["state"], {"file_id": "f-a"})
         self.assertEqual(mcp_state.read(B)["state"], {"file_id": "f-b"})
-        # the MCP endpoint's shared scope is its own principal and sees neither
-        self.assertFalse(mcp_state.read(mcp_server._owner())["available"])
+        # an MCP scope is its own principal and sees neither
+        for cid in (mcp_server._MCP_CONVERSATION_ID, "mcp:agui-chat-1"):
+            self.assertFalse(mcp_state.read(identity.scope_principal(cid))["available"])
 
 
 class Limits(unittest.TestCase):

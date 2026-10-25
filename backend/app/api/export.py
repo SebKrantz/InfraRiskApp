@@ -98,9 +98,11 @@ def _run_data_export(
     intensity_threshold: Optional[float],
     mode: str,
     owner: Optional[str] = None,
+    keep_attributes: bool = False,
 ) -> tuple[bytes, str, str]:
     """Returns (body, filename, media_type). Raises ValueError for bad input,
-    UPLOAD_NOT_FOUND also for another owner's dataset."""
+    UPLOAD_NOT_FOUND also for another owner's dataset. keep_attributes adds the
+    input lines' attributes to gpkg_lines_split."""
     try:
         file_info = datasets.get(owner or identity.local_user(), file_id)
     except datasets.DatasetNotFound:
@@ -148,7 +150,7 @@ def _run_data_export(
                 np.asarray(vi, dtype=np.float64),
                 np.asarray(vp, dtype=np.float64),
             )
-        body = lines_split_to_gpkg_bytes(line_data, interp, repl)
+        body = lines_split_to_gpkg_bytes(line_data, interp, repl, keep_attributes)
         return body, f"lines_split_{short_f}_{short_h}.gpkg", "application/geopackage+sqlite3"
 
     raise ValueError("INVALID_MODE")

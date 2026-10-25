@@ -145,7 +145,8 @@ class Tool(unittest.TestCase):
     def setUp(self):
         line = LineString([(15.0, -4.0), (15.1, -4.0)])
         uploaded_files[FILE_ID] = {
-            "gdf": gpd.GeoDataFrame({"name": ["a"]}, geometry=[line], crs="EPSG:4326"),
+            "gdf": gpd.GeoDataFrame({"name": ["a"], "kind": ["rail"], "value": [7000.0]},
+                                    geometry=[line], crs="EPSG:4326"),
             "filename": "line.gpkg",
             "geometry_type": "LineString",
             "feature_count": 1,
@@ -163,6 +164,8 @@ class Tool(unittest.TestCase):
 
     def tearDown(self):
         uploaded_files.pop(FILE_ID, None)
+        for file_id in self.conv.datasets:
+            uploaded_files.pop(file_id, None)
         conversations._cleanup(self.conv)
 
     def ead(self, **kw):
@@ -277,6 +280,23 @@ class Tool(unittest.TestCase):
         self.assertEqual([x["analysis"] for x in v["losses"]], names)
         self.assertEqual((out["threshold"], out["curve"]), (100.0, "rail"))
 
+    def test_reused_analyses_of_an_upload_named_by_file_name(self):
+        path = self.conv.workdir / "line.gpkg"
+        uploaded_files[FILE_ID]["gdf"].to_file(path)
+        self.conv.uploads["line.gpkg"] = path
+        names = [
+            analysis.run_analysis(
+                self.conv, "line.gpkg", f"flood_hazard_{t}_years_existing_climate",
+                threshold=100, curve="rail", replacement_value=500,
+            )["stored_as"]
+            for t in RPS
+        ]
+        out = self.ead(analyses=names, file_id="line.gpkg")
+        self.assertEqual(out["file_id"], self.conv.datasets[0])
+        self.assertAlmostEqual(out["variants"][0]["ead_central"], 1.0)
+        with self.assertRaisesRegex(ValueError, "the analyses are of"):
+            self.ead(analyses=names, file_id=FILE_ID)
+
     def test_refuses_a_single_return_period(self):
         with self.assertRaisesRegex(ValueError, "single return period"):
             self.ead(file_id=FILE_ID, hazards=["flood_hazard_100_years_existing_climate"],
@@ -348,6 +368,27 @@ class Tool(unittest.TestCase):
                 "susceptibility_class_of_landslides_triggered_by_earthquakes",
                 "flood_hazard_25_years_existing_climate",
             ])
+
+    def test_per_asset_replacement_values(self):
+        hazards = [f"flood_hazard_{t}_years_existing_climate" for t in RPS]
+        out = self.ead(file_id=FILE_ID, hazards=hazards, curve="rail",
+                       replacement_value_column="kind", replacement_value_map={"rail": 7000})
+        values = self.run_exposure.call_args.kwargs["replacement_value"]
+        self.assertEqual(list(values), [7000.0])
+        self.assertEqual(out["replacement_value"]["replacement_value_column"], "kind")
+        self.assertEqual(out["replacement_value"]["per_feature"]["min"], 7000.0)
+        self.assertEqual(out["replacement_value"]["asset_total"], 7000.0 * 10_000.0)
+
+    def test_refuses_mixed_replacement_value_specs(self):
+        names = [
+            self.analyse("flood_hazard_25_years_existing_climate", replacement_value=7000),
+            analysis.run_analysis(
+                self.conv, FILE_ID, "flood_hazard_50_years_existing_climate", threshold=100,
+                curve="rail", replacement_value_column="value",
+            )["stored_as"],
+        ]
+        with self.assertRaisesRegex(ValueError, "mix replacement value"):
+            self.ead(analyses=names)
 
     def test_loads_a_library_curve_by_id(self):
         out = self.ead(file_id=FILE_ID, family="pga", curve="E8.9", replacement_value=500)

@@ -5,12 +5,15 @@ removes every secret-looking variable from the process environment, so code
 python_exec runs (in this process) finds none through os.environ, os.getenv,
 posix.environ or a child process. `redact()` runs on everything a tool hands
 back — MCP results, errors, the in-app assistant's tool results — and replaces
-any secret value it still finds, and drops credential parameters from URLs.
+any secret value it still finds, drops credential parameters from URLs, and masks
+Google credentials by their shape (see _GOOGLE_CREDENTIALS) for a key or token that
+python_exec reads from a file instead of the environment.
 
 A library that reads a credential from the environment at use time (GDAL's
 AWS_* for /vsis3, say) would lose it here; pass such a value to the library
 explicitly instead. The server holds none today: only the CARTO and model keys,
-which config.py reads once.
+which config.py reads once, and the path of the Vertex service-account key file
+(GOOGLE_APPLICATION_CREDENTIALS), which the Gemini adapter loads for its client itself.
 """
 
 from __future__ import annotations
@@ -29,6 +32,22 @@ REDACTED = "[redacted]"
 _URL_CREDENTIAL = re.compile(
     r"([?&])(?:api[_-]?key|key|access[_-]?token|token|auth|secret|password)=[^&#\s\"'<>]*&?",
     re.I,
+)
+
+# Google credentials, found by shape rather than by value because they come out of files
+# (gcloud's application_default_credentials.json, a service-account key) the server never
+# put in the environment: a refresh token (1//…), an access token (ya29.…), a PEM private-key
+# block (up to its END line, or to the end of the text when the output was cut inside the
+# key), and the value of a "refresh_token" / "client_secret" / "private_key" field in JSON
+# (double quotes) or a printed dict (single quotes).
+_GOOGLE_CREDENTIALS = (
+    (re.compile(r"1//[0-9A-Za-z_-]{20,}"), REDACTED),
+    (re.compile(r"ya29\.[0-9A-Za-z_.-]{20,}"), REDACTED),
+    (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)",
+                re.S), REDACTED),
+    (re.compile(r"""(["'])(refresh_token|client_secret|private_key)\1(\s*:\s*)(["'])"""
+                r"""(?:(?!\4)[^\\]|\\.)*\4"""),
+     rf"\1\2\1\3\4{REDACTED}\4"),
 )
 
 _secrets: set[str] = set()
@@ -71,6 +90,8 @@ def redact_text(text: str) -> str:
             text = text.replace(secret, REDACTED)
     if "=" in text:
         text = _strip_url_credentials(text)
+    for pattern, replacement in _GOOGLE_CREDENTIALS:
+        text = pattern.sub(replacement, text)
     return text
 
 

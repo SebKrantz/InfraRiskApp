@@ -1,4 +1,5 @@
-"""Provider selection. A provider is offered iff its API key is configured."""
+"""Provider selection. A provider is offered iff its API key is configured (Gemini: iff its
+backend is, config.gemini_configured())."""
 
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ def available() -> dict[str, bool]:
 def get(name: str):
     """Instantiate the named provider adapter (import deferred: heavy SDKs)."""
     if not available().get(name):
-        raise ValueError(f"provider {name!r} is not configured (no API key)")
+        raise ValueError(f"provider {name!r} is not configured")
     if name == "anthropic":
         from .anthropic import AnthropicProvider
 
