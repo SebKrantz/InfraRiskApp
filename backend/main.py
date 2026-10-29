@@ -64,14 +64,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS for frontend integration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# The frontend is served from the same origin (and proxied there by `vite dev`), so no
+# other site may call the API from a browser unless CORS_ORIGINS names it. A wildcard
+# with credentials let any page read the API with the user's cookies.
+if settings.CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Include routers
 app.include_router(upload.router, prefix="/api", tags=["upload"])
