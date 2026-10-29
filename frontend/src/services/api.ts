@@ -23,6 +23,17 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
 }
 
 /**
+ * Delete an upload on the server (its data and cached results). Fire and forget, and
+ * `keepalive` so the request still goes out while the page is closing.
+ */
+export function deleteUpload(fileId: string): void {
+  fetch(`${API_BASE_URL}/upload/${encodeURIComponent(fileId)}`, {
+    method: 'DELETE',
+    keepalive: true,
+  }).catch(() => {})
+}
+
+/**
  * Get list of available hazard layers
  */
 export async function getHazards(): Promise<Hazard[]> {

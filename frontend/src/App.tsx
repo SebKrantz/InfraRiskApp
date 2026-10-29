@@ -5,7 +5,7 @@ import MapView from './components/MapView'
 import Assistant from './components/assistant/Assistant'
 import type { AssistantBindings } from './lib/assistantTools'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from './types'
-import { getHazards, uploadFile, analyze as analyzeApi, getHazardStats } from './services/api'
+import { getHazards, uploadFile, deleteUpload, analyze as analyzeApi, getHazardStats } from './services/api'
 
 function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -74,6 +74,7 @@ function App() {
       setLoadingUpload(true)
       setError(null)
       const uploaded = await uploadFile(file)
+      ownUploads.current.add(uploaded.file_id)
       setUploadedFile(uploaded)
       // Clear previous analysis when new file is uploaded
       setAnalysisResult(null)
@@ -84,6 +85,27 @@ function App() {
       setLoadingUpload(false)
     }
   }
+
+  // The server keeps a file this browser uploaded only while it is on screen: replacing or
+  // clearing it, or leaving the page, deletes it there too. Datasets the page did not upload
+  // itself are never deleted from here. (A page kept in the back/forward cache keeps its
+  // file; the server's own expiry catches that and any request that never arrives.)
+  const ownUploads = useRef(new Set<string>())
+  const uploadedFileId = uploadedFile?.file_id
+  useEffect(() => {
+    if (!uploadedFileId || !ownUploads.current.has(uploadedFileId)) return
+    const drop = () => {
+      if (ownUploads.current.delete(uploadedFileId)) deleteUpload(uploadedFileId)
+    }
+    const onPageHide = (e: PageTransitionEvent) => {
+      if (!e.persisted) drop()
+    }
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      window.removeEventListener('pagehide', onPageHide)
+      drop()
+    }
+  }, [uploadedFileId])
 
   // Handle clear data
   const handleClearData = () => {

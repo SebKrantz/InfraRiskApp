@@ -15,6 +15,7 @@ from typing import Optional, Dict, Tuple
 import numpy as np
 
 from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve_data
+from app.config import settings
 from app.api.upload import uploaded_files
 from app.api.hazards import load_hazards_dict
 
@@ -169,7 +170,11 @@ async def analyze_intersections(
     
     # Check if file exists
     if actual_file_id not in uploaded_files:
-        raise HTTPException(status_code=404, detail="Uploaded file not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Uploaded file not found — uploads are deleted after "
+            f"{settings.UPLOAD_TTL_HOURS:g} hours without use; please upload it again",
+        )
     
     file_info = uploaded_files[actual_file_id]
     geometry_type = file_info["geometry_type"]
