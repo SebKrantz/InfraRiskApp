@@ -38,6 +38,16 @@ class Settings:
     # File upload settings
     MAX_UPLOAD_SIZE: int = 100 * 1024 * 1024  # 100 MB
     ALLOWED_EXTENSIONS: set = {".shp", ".gpkg", ".zip", ".csv", ".geojson"}
+    # An upload unused for this long is deleted from memory, with its cached results.
+    # The browser deletes its own upload when the user replaces it or leaves the page;
+    # this catches the rest (a closed laptop, a lost connection).
+    UPLOAD_TTL_HOURS: float = float(os.getenv("UPLOAD_TTL_HOURS", "4"))
+
+    # Other origins allowed to call the API from a browser, comma-separated. Empty (the
+    # default): none — the app's own pages are same-origin and need no CORS.
+    CORS_ORIGINS: list = [
+        o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()
+    ]
 
 settings = Settings()
 
