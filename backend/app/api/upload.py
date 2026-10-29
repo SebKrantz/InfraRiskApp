@@ -4,7 +4,9 @@ File upload endpoints
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+import asyncio
 import os
+import time
 import zipfile
 import tempfile
 from pathlib import Path
@@ -15,8 +17,64 @@ from app.utils.geospatial import load_spatial_file, load_csv_points, validate_ge
 
 router = APIRouter()
 
-# Store uploaded file metadata and GeoDataFrame in memory (in production, use a database or cache)
-uploaded_files = {}
+class _UploadStore(dict):
+    """Uploaded datasets by file_id, in memory only. Reading an entry marks it as used,
+    so expire_uploads() drops only the ones nobody has touched for UPLOAD_TTL_HOURS."""
+
+    def __getitem__(self, file_id):
+        info = super().__getitem__(file_id)
+        if "last_used" in info:
+            info["last_used"] = time.monotonic()
+        return info
+
+    def get(self, file_id, default=None):
+        return self[file_id] if file_id in self else default
+
+
+# Store uploaded file metadata and GeoDataFrame in memory (never on disk)
+uploaded_files = _UploadStore()
+
+# How often the expiry runs while the server is up, seconds.
+_SWEEP_INTERVAL_S = 600
+_sweeper: Optional[asyncio.Task] = None
+
+
+def forget_upload(file_id: str) -> bool:
+    """Delete an upload and every cached result computed from it."""
+    from app.api.analyze import clear_raster_cache_for_file
+
+    found = uploaded_files.pop(file_id, None) is not None
+    clear_raster_cache_for_file(file_id)
+    return found
+
+
+def expire_uploads(now: Optional[float] = None) -> list:
+    """Delete the uploads unused for longer than UPLOAD_TTL_HOURS. Only uploads made
+    through this endpoint carry `last_used`; anything else is left alone."""
+    now = time.monotonic() if now is None else now
+    ttl = settings.UPLOAD_TTL_HOURS * 3600
+    stale = [
+        file_id for file_id, info in list(uploaded_files.items())
+        if now - info.get("last_used", now) > ttl
+    ]
+    for file_id in stale:
+        forget_upload(file_id)
+    return stale
+
+
+async def _sweep_forever() -> None:
+    while True:
+        await asyncio.sleep(_SWEEP_INTERVAL_S)
+        expire_uploads()
+
+
+def _start_sweeper() -> None:
+    """Run the expiry on this event loop from the first upload on, so data expires even
+    when no further request arrives."""
+    global _sweeper
+    loop = asyncio.get_running_loop()
+    if _sweeper is None or _sweeper.done() or _sweeper.get_loop() is not loop:
+        _sweeper = loop.create_task(_sweep_forever())
 
 
 @router.post("/upload")
@@ -56,6 +114,9 @@ async def upload_file(
             detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE / (1024*1024)} MB"
         )
     
+    expire_uploads()
+    _start_sweeper()
+
     # Generate file ID if not provided
     if not file_id:
         import uuid
@@ -135,7 +196,8 @@ async def upload_file(
                 "maxx": float(gdf.bounds.maxx.max()),
                 "maxy": float(gdf.bounds.maxy.max())
             },
-            "gdf": gdf  # Store GeoDataFrame for analysis (already cleaned and in WGS84)
+            "gdf": gdf,  # Store GeoDataFrame for analysis (already cleaned and in WGS84)
+            "last_used": time.monotonic(),
         }
         
         # Convert to GeoJSON for display (gdf is already in WGS84 and cleaned)
@@ -189,14 +251,8 @@ async def get_upload_info(file_id: str):
 @router.delete("/upload/{file_id}")
 async def delete_upload(file_id: str):
     """Delete an uploaded file"""
-    if file_id not in uploaded_files:
+    if not forget_upload(file_id):
         raise HTTPException(status_code=404, detail="File not found")
-    
-    del uploaded_files[file_id]
-    
-    # Clear any cached raster values for this file
-    from app.api.analyze import clear_raster_cache_for_file
-    clear_raster_cache_for_file(file_id)
-    
+
     return JSONResponse(content={"message": "File deleted successfully"})
 
