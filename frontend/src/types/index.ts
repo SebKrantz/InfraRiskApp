@@ -34,6 +34,16 @@ export interface AnalysisResult {
     unaffected_count?: number
     affected_meters?: number
     unaffected_meters?: number
+    /** Sample points (features for points, 100 m points along a line) and how many had no data;
+     *  no data counts as unaffected, so it is part of the unaffected figures */
+    samples?: number
+    nodata_samples?: number
+    nodata_share_pct?: number
+    /** Lines: length of the spans with no data at either end, and its share of the length */
+    nodata_km?: number
+    nodata_length_share_pct?: number | null
+    /** What no data means for this layer and threshold (present when there is any) */
+    nodata_note?: string
     total_damage_cost?: number
     /** Lower-bound damage cost (from 4-column vulnerability CSV with uncertainty bands) */
     total_damage_cost_lower?: number

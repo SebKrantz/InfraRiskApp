@@ -8,6 +8,7 @@ import { Slider } from './ui/slider'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
 import BarChart from './BarChart'
 import { exportBarchart, exportMap, exportData } from '../services/api'
+import { nodataLine } from '../lib/nodata'
 
 interface SidebarProps {
   isOpen: boolean
@@ -663,7 +664,14 @@ export default function Sidebar({
                 </div>
               )}
               {!loadingAnalysis && analysisResult ? (
-                <BarChart data={analysisResult} />
+                <>
+                  <BarChart data={analysisResult} />
+                  {nodataLine(analysisResult.summary, analysisResult.geometry_type) && (
+                    <p className="text-xs text-amber-300 mt-2">
+                      {nodataLine(analysisResult.summary, analysisResult.geometry_type)}
+                    </p>
+                  )}
+                </>
               ) : !loadingAnalysis && !analysisResult ? (
                 <div className="w-full h-48 flex items-center justify-center text-sm text-gray-500 border border-gray-700 rounded bg-gray-800 px-4 text-center">
                   {vulnerabilityWarning
