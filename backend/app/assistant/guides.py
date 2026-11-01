@@ -29,9 +29,27 @@ EXPOSURE_ANALYSIS = """\
   **intensity > 0**. There is no other rule.
 - **No hazard type is treated inversely.** Peak ground acceleration, flood depth
   and wind speed all use the same `>=` comparison. Higher intensity = worse.
-- No-data (NaN) always counts as UNAFFECTED. For points this means
-  `unaffected_count` silently includes assets that fell outside the raster —
-  say so when a dataset extends beyond a layer's coverage.
+- No-data (NaN) always counts as UNAFFECTED, so `unaffected_*` includes it, and
+  every result says how much: `nodata_share_pct` (of `samples`: the features for
+  points, the 100 m sample points for a line) and, for lines, `nodata_km` and
+  `nodata_length_share_pct`. Report that share beside the exposed figure — in
+  every table row (`compare_hazards` and `sweep_thresholds` carry it per layer)
+  — and use `nodata_note`, which says what no data means for that layer and
+  threshold. An asset outside a layer's coverage is no data too: say so when a
+  dataset extends beyond one.
+- **What no data means belongs to the layer.** The three PGA layers (250 / 475 /
+  975 years) hold no value below **49 cm/s²**: their lowest stored value is
+  exactly 49.0 and their empty cells follow the 49 contour (`get_hazard` says
+  so). On a PGA layer no data therefore means PGA below 49 cm/s². Against the
+  98 cm/s² default that is a known "not exposed", not an unknown: a line with
+  100 % no data on the 475-year layer has no PGA at or above 98 cm/s² anywhere
+  on it, and the report says that ("PGA stays below 49 cm/s² along the whole
+  line, under the 98 cm/s² threshold"), never "earthquake unquantified" or
+  "not zero". With a threshold at or below 49 the no-data part cannot be judged
+  and the note says so. For every other layer the catalogue documents no
+  meaning: no data there is a place where the hazard is unknown ("no data —
+  hazard unknown here"), so the no-data share is a limit on the result, stated
+  as one.
 - **Points** give counts: `affected_count`, `unaffected_count`.
 - **Lines** are densified every 100 m, each sample point classified, and runs of
   the same class merged into segments. The result is **metres**
@@ -69,7 +87,10 @@ picked and why, and run `sweep_thresholds` to show how much it matters.
   the share of total network length.
 - Never read a number off the UI — the numbers come from `run_analysis`.
 - Sanity-check: if affected share is 0% or 100%, say so explicitly and check the
-  threshold against `get_hazard_stats` before reporting it as a finding.
+  threshold against `get_hazard_stats` before reporting it as a finding. Read
+  `nodata_share_pct` with it: a 0 % exposed result on a mostly no-data layer is
+  the no-data note's finding, not "no exposure" and not "unquantified" until the
+  note has said which.
 """
 
 VULNERABILITY_ANALYSIS = """\
@@ -191,7 +212,9 @@ per layer — tell the user before starting a long batch.
 
 ## Return-period table
 One row per return period; columns: layer, exposure (count or km), share of
-total, and — with a curve — damage cost. Return periods are **annual exceedance
+total, the no-data share (`nodata_share_pct`; on the PGA layers no data is
+PGA below 49 cm/s², read_guide('exposure_analysis')), and — with a curve —
+damage cost. Return periods are **annual exceedance
 probabilities**: a 100-year layer is the intensity with a 1% chance of being
 exceeded in any year, NOT "the flood that happens every 100 years". Say it that
 way. Exposure rises with return period; if it does not, investigate before
@@ -340,7 +363,9 @@ REPORTS = """\
 5. **Caveats and limitations**: never skip this. The standard set for this app:
    raster resolution vs asset size; centroid treatment of polygons; the
    threshold is a modelling choice, not a physical certainty; no-data areas
-   count as unaffected; damage curves are engineering judgements (a PGA curve
+   count as unaffected (give the no-data share, and what no data means for the
+   layer: PGA below 49 cm/s² on the PGA layers, hazard unknown on the others);
+   damage curves are engineering judgements (a PGA curve
    for railway track is a proxy: ground failure, not shaking, damages track);
    return periods
    are annual exceedance probabilities, so one layer's damage is an event loss,

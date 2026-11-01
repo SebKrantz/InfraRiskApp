@@ -53,6 +53,7 @@ Required columns:
 Optional columns:
 - `description`: Description of the hazard
 - `background_paper`: URL or path to background paper/metadata
+- `nodata_below`: intensity (in the layer's `unit`) under which a cell carries no data, e.g. `49` for the PGA layers; leave empty where unknown. Analysis results use it to say what no data means for the layer.
 
 **Note:** The CSV file uses semicolon (`;`) as delimiter, not comma.
 

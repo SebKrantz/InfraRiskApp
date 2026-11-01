@@ -209,6 +209,13 @@ per metre for lines — one scalar, or per feature via replacement_value_column 
 id_column carries your own feature ids into the result tables. Hazard layers are remote COGs: expect 5-60 s per layer \
 for the first read of a dataset, near-instant re-thresholding after that.
 
+No data: it counts as not exposed, so run_analysis / compare_hazards rows give its \
+share (`nodata_share_pct` of `samples`; lines also `nodata_km`, \
+`nodata_length_share_pct`) and a `nodata_note` on what it means for that layer and \
+threshold. On the PGA layers no data is PGA below 49 cm/s² (a known "not exposed" \
+at the 98 cm/s² default); on every other layer it is a place where the hazard is \
+unknown. Report the share beside the exposed figure; get_hazard gives `nodata_means`.
+
 Limits: every call has a {config.ASSISTANT_TOOL_TIMEOUT:g} s server-side timeout; \
 compare_hazards stops starting new layers when its time budget runs out and \
 reports the rest as not run. Long work: start_run_analysis / \

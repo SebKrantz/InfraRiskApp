@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ...api.hazards import nodata_below
 from .. import domain
 from ..conversations import Conversation
 from . import tool
@@ -48,10 +49,11 @@ def list_hazards(
 
 @tool(
     "get_hazard",
-    "Full metadata for one hazard layer: the modelling description and the "
-    "background paper. Read this before writing a method or caveats section "
-    "about a layer — it is the authoritative source for how the layer was "
-    "produced and what its units mean.",
+    "Full metadata for one hazard layer: the modelling description, the "
+    "background paper and what a no-data cell means (`nodata_means`). Read this "
+    "before writing a method or caveats section about a layer — it is the "
+    "authoritative source for how the layer was produced and what its units "
+    "mean.",
     {
         "type": "object",
         "properties": {
@@ -69,6 +71,13 @@ def get_hazard(conv: Conversation, hazard: str) -> dict[str, Any]:
     out["dataset_url"] = h.get("dataset_url")
     out["description"] = domain._clean(h.get("description"))
     out["background_paper"] = domain._clean(h.get("background_paper"))
+    floor = nodata_below(h)
+    unit = f" {out['unit']}" if out["unit"] else ""
+    out["nodata_means"] = (
+        f"below {floor:g}{unit}: the layer stores no value under its minimum"
+        if floor is not None
+        else "not documented: a no-data cell is a place where the hazard is unknown"
+    )
     return out
 
 

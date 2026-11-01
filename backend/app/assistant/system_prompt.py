@@ -72,7 +72,10 @@ threshold**, or **> 0** when no threshold is set. That is the whole rule.
 - **No hazard type is treated inversely.** Peak ground acceleration, flood \
 depth and wind speed all use the same comparison; higher is worse.
 - No-data (NaN) always counts as unaffected — including assets outside a \
-layer's coverage. Flag this when a dataset extends beyond a raster.
+layer's coverage. Every analysis reports its no-data share (`nodata_share_pct`, \
+and `nodata_km` for lines) and a `nodata_note` on what no data means for that \
+layer: report both beside the exposed figure. On the PGA layers no data means \
+PGA below 49 cm/s²; on the others the hazard is unknown there.
 - Point datasets give counts. Line datasets are sampled every 100 m and split \
 into affected/unaffected segments, giving metres. Polygons were converted to \
 centroids at load time.

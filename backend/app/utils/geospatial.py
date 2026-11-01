@@ -656,6 +656,11 @@ def analyze_intersection(
         Dictionary with analysis results:
         - affected_count/unaffected_count (for points)
         - affected_meters/unaffected_meters (for lines)
+        - samples / nodata_samples: how many sample points (features for points,
+          100 m points along the line for lines) were read, and how many of them
+          had no data. nodata_meters (lines): length of the spans whose two
+          ends both had no data. No data counts as unaffected, so this is the
+          part of unaffected_* that is unknown rather than known to be safe.
         - full_gdf: GeoDataFrame with all features and affected status
         - raster_values: (for points) sampled values for caching
     """
@@ -751,6 +756,8 @@ def analyze_intersection(
             "unaffected_count": n_points - affected_count,
             "affected_meters": 0.0,
             "unaffected_meters": 0.0,
+            "samples": n_points,
+            "nodata_samples": int(n_points - valid_mask.sum()),
             "full_gdf": infrastructure_gdf,
             "raster_values": raster_values,
         }
@@ -841,6 +848,9 @@ def analyze_intersection(
     per_row_value = vuln_on and np.ndim(replacement_value) > 0
     affected_length = 0.0
     unaffected_length = 0.0
+    nodata_length = 0.0
+    samples_total = 0
+    nodata_samples = 0
     total_damage_cost = 0.0
     total_damage_cost_lower = 0.0
     total_damage_cost_upper = 0.0
@@ -866,6 +876,9 @@ def analyze_intersection(
 
         span_intensity = pairwise_mean(rv, valid)
         measured = ~np.isnan(span_intensity)
+        samples_total += n_pts
+        nodata_samples += int(n_pts - valid.sum())
+        nodata_length += float(span_len[~measured].sum())
         cs_len = np.concatenate(([0.0], np.cumsum(span_len)))
         cs_int = np.concatenate(([0.0], np.cumsum(
             np.where(measured, span_intensity, 0.0) * span_len)))
@@ -962,6 +975,9 @@ def analyze_intersection(
         "unaffected_count": 0,
         "affected_meters": float(affected_length),
         "unaffected_meters": float(unaffected_length),
+        "nodata_meters": float(nodata_length),
+        "samples": samples_total,
+        "nodata_samples": nodata_samples,
         "full_gdf": segment_gdf,
         "line_data": line_data,
         "raster_values": all_raster_values
