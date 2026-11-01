@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 import pandas as pd
 import hashlib
+import math
 import re
 import csv
 
@@ -174,6 +175,40 @@ def load_hazards_dict() -> Dict[str, Dict]:
         return _hazards_cache
     except Exception as e:
         raise ValueError(f"Error reading hazard_layers.csv: {str(e)}")
+
+
+def nodata_below(hazard: Optional[Dict]) -> Optional[float]:
+    """The intensity under which a cell of this layer carries no data, as its
+    catalogue row documents it (`nodata_below`, in the layer's unit); None when
+    the catalogue says nothing, which is every layer but the PGA ones."""
+    try:
+        value = float((hazard or {}).get("nodata_below"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def nodata_note(hazard: Optional[Dict], threshold: Optional[float]) -> str:
+    """What no data means for this layer and threshold, in a sentence for a result.
+
+    No-data cells are always counted as not exposed. Where the catalogue says a
+    cell is empty because it lies below the layer's minimum, that is a known
+    "not exposed" only if the threshold is above the minimum; below it the
+    no-data share could be exposed and is unquantified.
+    """
+    floor = nodata_below(hazard)
+    if floor is None:
+        return "no data — hazard unknown here; counted as not exposed"
+    unit = str((hazard or {}).get("unit") or "").strip()
+    unit = f" {unit}" if unit and len(unit) <= 24 else ""
+    below = f"no data = below {floor:g}{unit} (the layer's minimum)"
+    if threshold is not None and threshold >= floor:
+        return f"{below}, under the threshold of {threshold:g}; treated as not exposed"
+    given = "no threshold, so any intensity > 0" if threshold is None else f"the threshold of {threshold:g}"
+    return (
+        f"{below}, but {given} is not above that, so the no-data part could be "
+        "exposed; it is counted as not exposed here (unquantified, not zero)"
+    )
 
 
 def clear_hazards_cache():

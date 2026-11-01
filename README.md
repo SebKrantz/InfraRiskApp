@@ -325,7 +325,10 @@ taken (`BACKEND_URL=http://127.0.0.1:8123 npm run dev`).
 **Hazard Layers CSV** (`data/hazard_layers.csv`):
 - Delimiter: semicolon (`;`)
 - Required columns: `hazard`, `dataset_url`
-- Optional columns: `description`, `background_paper`
+- Optional columns: `description`, `background_paper`, `nodata_below` (the intensity, in the layer's
+  `unit`, under which a cell carries no data; set only where the layer's own values show it,
+  e.g. 49 for the PGA layers. Results then say "no data = below 49 cm/s²"; for a layer without it
+  they say "no data — hazard unknown here")
 
 **Infrastructure Upload Formats**:
 - Shapefile: Zipped with `.shp`, `.shx`, `.dbf` (and optionally `.prj`)

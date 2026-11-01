@@ -19,7 +19,7 @@ from app import config, datasets, identity
 from app.identity import current_user
 from app.utils.sizing import approx_bytes
 from app.utils.geospatial import analyze_intersection, parse_vulnerability_curve_data
-from app.api.hazards import load_hazards_dict
+from app.api.hazards import load_hazards_dict, nodata_note
 
 router = APIRouter()
 
@@ -101,6 +101,45 @@ class ByteBudgetCache:
                 self._by_owner[owner] = left
             else:
                 del self._by_owner[owner]
+
+
+def nodata_summary(
+    analysis_result: dict,
+    geometry_type: str,
+    hazard: Optional[dict],
+    threshold: Optional[float],
+) -> dict:
+    """How much of an analysis had no data, beside the exposed figures.
+
+    No data counts as not exposed, so a result with a large no-data share
+    understates exposure by an amount the layer cannot tell. `samples` are the
+    features for points and the 100 m sample points for lines; lines also give
+    the no-data length (spans whose two ends both had none). The note says what
+    no data means for this layer (see hazards.nodata_note). Empty for a result
+    that carries no counts (empty dataset, or one cached before they existed).
+    """
+    samples = int(analysis_result.get("samples") or 0)
+    if not samples:
+        return {}
+    nodata = int(analysis_result.get("nodata_samples") or 0)
+    out = {
+        "samples": samples,
+        "nodata_samples": nodata,
+        "nodata_share_pct": round(100.0 * nodata / samples, 2),
+    }
+    if geometry_type == "LineString":
+        nodata_m = float(analysis_result.get("nodata_meters", 0.0))
+        total_m = float(analysis_result.get("affected_meters", 0.0)) + float(
+            analysis_result.get("unaffected_meters", 0.0)
+        )
+        out["nodata_km"] = round(nodata_m / 1000.0, 3)
+        out["nodata_length_share_pct"] = (
+            round(100.0 * nodata_m / total_m, 2) if total_m else None
+        )
+    if nodata:
+        out["nodata_note"] = nodata_note(hazard, threshold)
+    return out
+
 
 
 # Sampled raster values: (file_id, hazard_id) -> for Points an array of values,
@@ -424,6 +463,13 @@ async def analyze_intersections(
             result["summary"]["unaffected_count"] = 0
             result["summary"]["affected_meters"] = safe_float(analysis_result["affected_meters"])
             result["summary"]["unaffected_meters"] = safe_float(analysis_result["unaffected_meters"])
+
+        result["summary"].update(nodata_summary(
+            analysis_result,
+            geometry_type,
+            load_hazards_dict().get(actual_hazard_id),
+            actual_threshold,
+        ))
         
         # Include full infrastructure GeoJSON with affected status
         try:

@@ -28,6 +28,7 @@ from ..api.analyze import (
     curve_digest as _digest_of,
     get_cached_raster_values,
     get_exact_analysis_result,
+    nodata_summary,
     set_cached_analysis_result,
 )
 from .. import datasets, identity
@@ -359,6 +360,7 @@ def summarise(
         out["affected_km"] = round(aff / 1000.0, 3)
         out["total_km"] = round((aff + un) / 1000.0, 3)
     out["affected_share_pct"] = affected_share_pct(result, info)
+    out.update(nodata_summary(result, geometry_type, hazard, threshold))
     for key in ("total_damage_cost", "total_damage_cost_lower", "total_damage_cost_upper"):
         if key in result and result[key] is not None:
             out[key] = float(result[key])
