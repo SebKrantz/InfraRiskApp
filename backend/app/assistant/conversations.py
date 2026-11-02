@@ -48,6 +48,9 @@ class Conversation:
     curves: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Datasets this conversation registered into the app's uploaded_files.
     datasets: list[str] = field(default_factory=list)
+    # The errors and notices the stream sent, kept for the export (transcript.py): each
+    # {"at": messages in the history then, "time", "type", "message"}.
+    events: list[dict[str, Any]] = field(default_factory=list)
     # Serialises turns: one running /chat leg per conversation.
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     # Serialises python_exec against itself.

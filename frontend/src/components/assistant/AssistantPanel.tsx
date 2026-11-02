@@ -6,6 +6,7 @@ import { Eraser, Loader2, Paperclip, Send, Square, X } from 'lucide-react'
 
 import type { UseAssistant } from '../../hooks/useAssistant'
 import type { AssistantChoice, AssistantMeta } from '../../types/assistant'
+import ExportMenu from './ExportMenu'
 import MessageList from './MessageList'
 import ModelPicker from './ModelPicker'
 
@@ -22,7 +23,7 @@ export default function AssistantPanel({
   onChoice: (choice: AssistantChoice) => void
   onClose: () => void
 }) {
-  const { items, streaming, send, stop, clear } = assistant
+  const { items, streaming, conversationId, send, stop, clear } = assistant
   const [text, setText] = useState('')
   const [files, setFiles] = useState<File[]>([])
   const [dragOver, setDragOver] = useState(false)
@@ -72,6 +73,7 @@ export default function AssistantPanel({
       <div className="relative flex items-center gap-2 border-b border-gray-800 px-3 py-2">
         <span className="text-sm font-semibold text-gray-100">Assistant</span>
         <ModelPicker meta={meta} choice={choice} onChange={onChoice} disabled={streaming} />
+        <ExportMenu conversationId={conversationId} disabled={items.length === 0} />
         <button
           type="button"
           title="Clear conversation"
