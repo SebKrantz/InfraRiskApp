@@ -214,7 +214,20 @@ def _provider_with_pings(source: Iterator[Any]) -> Iterator[Any]:
         stop.set()
 
 
+def record_event(conv: Conversation, name: str, data: dict[str, Any]) -> None:
+    """Keep an error or notice on the conversation: the stream is the only other place it
+    exists, and the export (transcript.py) wants it."""
+    conv.events.append({"at": len(conv.messages), "time": time.time(), "type": name, **data})
+
+
+def _event(conv: Conversation, name: str, data: dict[str, Any]) -> str:
+    """An SSE event that is also recorded (errors and notices)."""
+    record_event(conv, name, data)
+    return schema.sse(name, data)
+
+
 def _tool_result_message(results: list[dict[str, Any]]) -> dict[str, Any]:
+    # `meta` and `seconds` are for the export; the provider adapters read neither
     return {
         "role": "user",
         "parts": [
@@ -224,9 +237,11 @@ def _tool_result_message(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "name": r["name"],
                 "ok": r["ok"],
                 "content": r["content"],
+                **({"seconds": r["seconds"]} if "seconds" in r else {}),
             }
             for r in results
         ],
+        "meta": {"created": time.time()},
     }
 
 
@@ -278,12 +293,12 @@ def run(
         parts: list[dict[str, Any]] = list(file_parts or [])
         note = system_prompt.state_note(app_state)
         parts.append({"type": "text", "text": user_message + (note or "")})
-        conv.messages.append({"role": "user", "parts": parts})
+        conv.messages.append({"role": "user", "parts": parts, "meta": {"created": time.time()}})
     elif tool_results is not None:
         pending = {c["id"]: c for c in conv.pending_calls}
         unknown = [r for r in tool_results if r.get("id") not in pending]
         if unknown or not pending:
-            yield schema.sse("error", {"message": "stale or unknown tool results"})
+            yield _event(conv, "error", {"message": "stale or unknown tool results"})
             yield schema.sse("done", {"reason": "error"})
             return
         client_results = [
@@ -311,7 +326,7 @@ def run(
         conv.pending_calls = []
         conv.buffered_results = []
     else:
-        yield schema.sse("error", {"message": "nothing to do"})
+        yield _event(conv, "error", {"message": "nothing to do"})
         yield schema.sse("done", {"reason": "error"})
         return
 
@@ -323,12 +338,16 @@ def run(
     for _ in range(config.ASSISTANT_MAX_ITERATIONS):
         calls: list[schema.ToolCall] = []
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
+        usage: dict[str, int] | None = None
         stop = "end_turn"
         raw = None
         # Retrying is only safe while nothing has been emitted; once tokens have
         # streamed to the browser a second attempt would duplicate them.
         for attempt in range(MAX_PROVIDER_RETRIES + 1):
             failure: Exception | None = None
+            thinking_parts.clear()  # a retried attempt starts its record afresh
+            usage = None
             try:
                 for event in _provider_with_pings(
                     provider.stream_turn(
@@ -347,17 +366,16 @@ def run(
                         text_parts.append(event.text)
                         yield schema.sse("text", {"delta": event.text})
                     elif isinstance(event, schema.ThinkingDelta):
+                        thinking_parts.append(event.text)
                         yield schema.sse("thinking", {"delta": event.text})
                     elif isinstance(event, schema.ToolCall):
                         calls.append(event)
                     elif isinstance(event, schema.Usage):
-                        yield schema.sse(
-                            "usage",
-                            {
-                                "input_tokens": event.input_tokens,
-                                "output_tokens": event.output_tokens,
-                            },
-                        )
+                        usage = {
+                            "input_tokens": event.input_tokens,
+                            "output_tokens": event.output_tokens,
+                        }
+                        yield schema.sse("usage", usage)
                     elif isinstance(event, schema.TurnEnd):
                         stop, raw = event.stop_reason, event.raw
             except Exception as exc:  # noqa: BLE001 — provider errors are data
@@ -372,7 +390,8 @@ def run(
                 # the next call. Either say why, or try again.
                 if stop in TERMINAL_EMPTY_STOPS:
                     log.info("provider %s returned nothing, stop=%s", provider_name, stop)
-                    yield schema.sse(
+                    yield _event(
+                        conv,
                         "error",
                         {
                             "message": _TERMINAL_EMPTY_MESSAGE.get(
@@ -393,13 +412,14 @@ def run(
             if not retriable:
                 message = redact_text(f"{provider_name}: {failure}")
                 log.warning("provider error: %s", message)
-                yield schema.sse("error", {"message": message})
+                yield _event(conv, "error", {"message": message})
                 yield schema.sse("done", {"reason": "error"})
                 return
             wait = RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S) - 1)]
             log.info("provider %s transient error, retrying in %.0fs: %s",
                      provider_name, wait, failure)
-            yield schema.sse(
+            yield _event(
+                conv,
                 "notice",
                 {
                     "message": (
@@ -425,7 +445,23 @@ def run(
             {"type": "tool_call", "id": c.id, "name": c.name, "args": c.args} for c in calls
         )
         conv.messages.append(
-            {"role": "assistant", "parts": parts, "raw": raw, "raw_provider": provider_name}
+            {
+                "role": "assistant",
+                "parts": parts,
+                "raw": raw,
+                "raw_provider": provider_name,
+                # what the export shows beside the turn (the adapters ignore it)
+                "meta": {
+                    "created": time.time(),
+                    "provider": provider_name,
+                    "model": model,
+                    "effort": effort,
+                    "service_tier": service_tier or "standard",
+                    "stop_reason": stop,
+                    "usage": usage,
+                    "thinking": "".join(thinking_parts),
+                },
+            }
         )
 
         if not calls:
@@ -463,8 +499,10 @@ def run(
         for call in server_calls:
             before = {a.id for a in artifacts.for_conversation(conv.id)}
             holder: dict[str, Any] = {}
+            started = time.time()
             yield from _tool_with_pings(conv, call, holder)
             res = holder["res"]
+            res["seconds"] = round(time.time() - started, 2)
             conv.buffered_results.append(res)
             conv.pending_calls = [c for c in conv.pending_calls if c["id"] != call.id]
             yield schema.sse(
@@ -500,6 +538,8 @@ def run(
         "I hit the tool-call limit for one turn — tell me to continue if you "
         "want me to keep going."
     )
-    conv.messages.append(schema.text_message("assistant", closing))
+    conv.messages.append(
+        {**schema.text_message("assistant", closing), "meta": {"created": time.time()}}
+    )
     yield schema.sse("text", {"delta": "\n\n" + closing})
     yield schema.sse("done", {"reason": "max_iterations"})

@@ -137,13 +137,13 @@ def build(app_state: dict[str, Any] | None = None) -> str:
     return _PROMPT.format(catalogue=catalogue)
 
 
+STATE_NOTE_START = "\n\n[Current app state (context, not a user request): "
+
+
 def state_note(app_state: dict[str, Any] | None) -> str | None:
     """The frontend's snapshot, appended to the user turn as context (kept out
-    of the system prompt so prompt caching stays effective)."""
+    of the system prompt so prompt caching stays effective). The conversation
+    export splits the user's words from it at STATE_NOTE_START."""
     if not app_state:
         return None
-    return (
-        "\n\n[Current app state (context, not a user request): "
-        + json.dumps(app_state, default=str)
-        + "]"
-    )
+    return STATE_NOTE_START + json.dumps(app_state, default=str) + "]"

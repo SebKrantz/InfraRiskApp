@@ -72,6 +72,9 @@ class Conversation:
     # Uploads already loaded as datasets: (name, mtime_ns, size) -> file_id, so
     # passing an upload's name as a file_id loads it once, not on every call.
     upload_datasets: dict[tuple, str] = field(default_factory=dict)
+    # The errors and notices the stream sent, kept for the export (transcript.py): each
+    # {"at": messages in the history then, "time", "type", "message"}.
+    events: list[dict[str, Any]] = field(default_factory=list)
     # Serialises turns: one running /chat leg per conversation.
     turn_lock: threading.Lock = field(default_factory=threading.Lock)
     # Serialises python_exec against itself.
