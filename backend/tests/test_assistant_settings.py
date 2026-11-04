@@ -583,7 +583,8 @@ class LoopHandsOverTheChoice(unittest.TestCase):
                 yield schema.TurnEnd(stop_reason="end_turn")
 
         conv = SimpleNamespace(
-            id="c", messages=[], pending_calls=[], buffered_results=[], provider=None, model=None
+            id="c", messages=[], pending_calls=[], buffered_results=[], events=[], provider=None,
+            model=None,
         )
         with mock.patch.object(loop, "get_provider", lambda name: Fake()):
             out = "".join(loop.run(conv, "gemini", "gemini-3.8-flash", user_message="hi",
@@ -602,7 +603,8 @@ class KeepAlive(unittest.TestCase):
 
     def _run(self, provider):
         conv = SimpleNamespace(
-            id="c", messages=[], pending_calls=[], buffered_results=[], provider=None, model=None
+            id="c", messages=[], pending_calls=[], buffered_results=[], events=[], provider=None,
+            model=None,
         )
         with mock.patch.object(loop, "PING_EVERY", 0.05), mock.patch.object(
             loop, "get_provider", lambda name: provider

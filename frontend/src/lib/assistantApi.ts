@@ -93,6 +93,26 @@ export async function uploadAssistantFile(
   return data
 }
 
+/** The whole conversation as a download (Content-Disposition: attachment). */
+export function exportUrl(conversationId: string, format: 'md' | 'json'): string {
+  return `/api/assistant/conversations/${encodeURIComponent(conversationId)}/export?format=${format}`
+}
+
+export async function exportMarkdown(conversationId: string): Promise<string> {
+  const res = await fetch(exportUrl(conversationId, 'md'))
+  if (!res.ok) {
+    let detail = `export failed (${res.status})`
+    try {
+      const data = (await res.json()) as { detail?: string }
+      if (data.detail) detail = data.detail
+    } catch {
+      /* not JSON */
+    }
+    throw new Error(detail)
+  }
+  return res.text()
+}
+
 export function pushAppState(state: Record<string, unknown>): void {
   // Fire-and-forget; the snapshot is advisory context for MCP clients.
   void fetch('/api/assistant/app_state', {

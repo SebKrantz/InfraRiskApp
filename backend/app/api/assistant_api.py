@@ -7,7 +7,10 @@ the results back to the same endpoint to continue the turn.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -15,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import config
-from ..assistant import artifacts, conversations, loop, models, schema, tools
+from ..assistant import artifacts, conversations, loop, models, schema, tools, transcript
 
 log = logging.getLogger("infrarisk.assistant")
 
@@ -129,6 +132,9 @@ async def chat(request: Request) -> StreamingResponse:
                 effort=choice.effort,
                 service_tier=choice.service_tier,
             )
+        except Exception as exc:  # noqa: BLE001 — recorded here; iter_sse_safe reports it
+            loop.record_event(conv, "error", {"message": f"internal error: {exc}"})
+            raise
         finally:
             conv.turn_lock.release()
 
@@ -226,6 +232,33 @@ def download_curve(conversation_id: str, name: str) -> Response:
         content=path.read_bytes(),
         media_type="text/csv",
         headers={"Content-Disposition": f'inline; filename="{path.name}"'},
+    )
+
+
+@router.get("/conversations/{conversation_id}/export")
+def export_conversation(conversation_id: str, format: str = "md") -> Response:  # noqa: A002
+    """The whole conversation for debugging, as a Markdown or JSON download: every message
+    with its tool calls and full results, thinking, errors, time, model and tokens
+    (see assistant/transcript.py). Secrets are redacted."""
+    if format not in ("md", "json"):
+        raise HTTPException(422, "format must be md or json")
+    conv = conversations.get(conversation_id)
+    if conv is None:
+        raise HTTPException(
+            404, "conversation not found (it was cleared or evicted, or the server restarted)"
+        )
+    doc = transcript.document(conv)
+    short = re.sub(r"[^A-Za-z0-9_-]", "", conv.id)[:8]  # a client may name its conversation
+    name = f"infrarisk-assistant-{datetime.fromtimestamp(conv.created):%Y%m%d-%H%M}-{short}.{format}"
+    headers = {"Content-Disposition": f'attachment; filename="{name}"'}
+    if format == "json":
+        return Response(
+            json.dumps(doc, indent=2, ensure_ascii=False),
+            media_type="application/json",
+            headers=headers,
+        )
+    return Response(
+        transcript.markdown(doc), media_type="text/markdown; charset=utf-8", headers=headers
     )
 
 
