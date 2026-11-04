@@ -285,13 +285,16 @@ def download_curve(
 
 
 @router.get("/conversations/{conversation_id}/export")
-def export_conversation(conversation_id: str, format: str = "md") -> Response:  # noqa: A002
+def export_conversation(
+    conversation_id: str, format: str = "md", user: str = Depends(current_user)  # noqa: A002
+) -> Response:
     """The whole conversation for debugging, as a Markdown or JSON download: every message
     with its tool calls and full results, thinking, errors, time, model and tokens
-    (see assistant/transcript.py). Secrets are redacted."""
+    (see assistant/transcript.py). Secrets are redacted. Only the owner's: another user's
+    is not found."""
     if format not in ("md", "json"):
         raise HTTPException(422, "format must be md or json")
-    conv = conversations.get(conversation_id)
+    conv = conversations.get(conversation_id, owner=user)
     if conv is None:
         raise HTTPException(
             404, "conversation not found (it was cleared or evicted, or the server restarted)"

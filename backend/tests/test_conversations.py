@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import identity  # noqa: E402
+from app import config, identity  # noqa: E402
 from app.api import assistant_api  # noqa: E402
 from app.assistant import artifacts, conversations, mcp_server, mcp_state  # noqa: E402
 
@@ -106,6 +106,14 @@ class RoutesRefuseOtherUsers(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         r = self.client.get(f"/api/assistant/conversations/{self.cid}/curves/c", headers=signed_in(A))
         self.assertEqual(r.status_code, 200)
+
+    def test_export_is_the_owners_only(self):
+        url = f"/api/assistant/conversations/{self.cid}/export?format=json"
+        self.assertEqual(self.client.get(url, headers=signed_in(B)).status_code, 404)
+        self.assertEqual(self.client.get(url, headers=signed_in(A)).status_code, 200)
+        # no admin reads another's chat on this branch, so none exports it either
+        with mock.patch.object(config, "AEI_ADMIN_EMAILS", frozenset({B})):
+            self.assertEqual(self.client.get(url, headers=signed_in(B)).status_code, 404)
 
     def test_browsers_cannot_claim_mcp_scopes(self):
         for cid in ("mcp:agui-chat-1", "mcp-shared-scope"):
