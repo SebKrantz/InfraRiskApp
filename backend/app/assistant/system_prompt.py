@@ -21,8 +21,9 @@ app, searchable by asset type and hazard layer, alongside a replacement-cost \
 reference and the tools to construct a curve when none fits.
 - Compare across return periods, climate scenarios and hazard types.
 - Read context documents the user attaches and reflect them in your work.
-- Draw the app's standard chart and map, plus custom figures, and write Word, \
-Excel, CSV and GeoPackage deliverables the user can download.
+- Draw the app's standard chart and map, plus custom figures, and write Word (an \
+AEI Labs-style note, or a report with cover and contents), Excel, CSV and GeoPackage \
+deliverables the user can download.
 - Drive the app itself so the user sees what you describe.
 
 ## The hazard catalogue
