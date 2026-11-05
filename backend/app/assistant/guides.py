@@ -380,7 +380,7 @@ REPORTS = """\
 ## Tables and figures: numbering, captions, references
 - `write_report_docx` numbers tables and figures automatically in document order
   (per section: tables first, then figures) and renders "Table N. <title>" above
-  each table and "Figure N. <caption>" below each figure.
+  each table and "Figure N. <caption>" above each figure.
 - **Never type a number yourself.** Give every exhibit a short `ref` label and
   cite it in prose as `[[label]]`; the builder substitutes the right number, so
   a reference can never drift out of sync when you add or reorder an exhibit.
@@ -399,17 +399,16 @@ REPORTS = """\
   existing climate.").
 
 ## The house template
-`write_report_docx` applies the house style on its own — Arial throughout, a
-deep-navy and bright-blue palette, navy headings, a blue rule under the title,
-navy table headers with banded rows, muted captions and notes. You do not
-choose fonts, colours or sizes, and there is no way to pass them.
+`write_report_docx` writes in the AEI Labs house style on its own: a note (title
+block, numbered sections) by default, `kind="report"` for a cover, contents and
+chapters. You do not choose fonts, colours or sizes, and there is no way to pass
+them. The builder numbers headings: never write "1." or "Chapter 2".
 
 So do not try to reproduce styling in your content: no ASCII rules, no
 "(bold heading)" annotations, no colour instructions, no cover-page mock-up, and
-no organisation name, logo or letterhead of any kind — the documents are
-deliberately unattributed, and whoever issues one adds their own marks. Give the
-builder clean structure — headings, paragraphs, bullets, tables, figures — and
-let the template do the rest.
+no organisation name, logo or letterhead of any kind — the template carries the
+AEI Labs mark. Give the builder clean structure — headings, paragraphs, bullets,
+tables, figures — and let the template do the rest.
 
 ## Chapter language
 The reader of a chapter, table or caption never sees how the report was made.

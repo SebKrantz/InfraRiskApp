@@ -34,7 +34,7 @@ anthropic>=1          # Claude provider
 google-genai>=1.74    # Gemini provider (Client(enterprise=...), for Vertex AI, is from 1.74)
 openai>=3             # OpenAI provider (Responses API)
 mcp>=2                # MCP server grafted at /mcp
-python-docx           # Word report generation
+python-docx           # Word report generation (AEI Labs builder, assistant/report_theme/)
 openpyxl              # Excel export
 python-dotenv         # backend/.env with API keys; was already installed
 
