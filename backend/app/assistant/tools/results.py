@@ -118,6 +118,20 @@ def stem_for(result: dict[str, Any], kind: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", stem)[:100]
 
 
+def _own(conv: Conversation, file_id: str, hazard_id: str, threshold: Optional[float]):
+    """This conversation's latest stored analysis of the dataset, layer and
+    threshold. The app's analysis cache has one slot for them, which a run in
+    another chat, or with another curve, overwrites."""
+    for obj in reversed(list(conv.namespace.values())):
+        if isinstance(obj, dict) and "full_gdf" in obj:
+            meta = obj.get("_assistant_meta") or {}
+            if (meta.get("file_id"), meta.get("hazard_id"), meta.get("threshold")) == (
+                file_id, hazard_id, threshold
+            ):
+                return obj
+    return None
+
+
 def _resolve(
     conv: Conversation,
     stored_as: Optional[str],
@@ -126,8 +140,8 @@ def _resolve(
     threshold: Optional[float],
     run_if_missing: bool = False,
 ) -> dict[str, Any]:
-    """An analysis result by `stored_as`, or by (dataset, hazard, threshold)
-    from the app's analysis cache."""
+    """An analysis result by `stored_as`, or by (dataset, hazard, threshold):
+    this conversation's own latest run, else the app's analysis cache."""
     from ...api.analyze import get_cached_analysis_result
 
     if stored_as:
@@ -142,7 +156,9 @@ def _resolve(
         raise ValueError("pass `stored_as`, or `file_id` and `hazard` (and the threshold used)")
     fid = resolve_dataset(conv, file_id)
     haz = domain.resolve_hazard(hazard)
-    result = get_cached_analysis_result(fid, haz["hazard_id"], threshold)
+    result = _own(conv, fid, haz["hazard_id"], threshold) or get_cached_analysis_result(
+        fid, haz["hazard_id"], threshold
+    )
     if result is None and run_if_missing:
         result = domain.run_exposure(fid, haz, threshold=threshold, owner=conv.readers)
     if result is None:
@@ -184,7 +200,8 @@ def _table(conv: Conversation, result: dict[str, Any], id_column: Optional[str])
     "(limit ≤ 5000, offset); export='csv' or 'gpkg' returns the WHOLE table as a "
     "downloadable artifact (GeoPackage keeps the geometry). Identify the "
     "analysis by `stored_as` from run_analysis, or by file_id + hazard + the "
-    "threshold it was run with.",
+    "threshold it was run with (this conversation's latest such run; "
+    "`stored_as` pins one).",
     {
         "type": "object",
         "properties": {
