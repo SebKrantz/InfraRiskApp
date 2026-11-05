@@ -498,9 +498,17 @@ def write_report_docx(
     figure_paths = {a.id: a.path for a in artifacts.for_conversation(conv.id)}
     conv._counter += 1
     dest = conv.workdir / f"{conv._counter}_{filename}"
-    _, labels = reports.build_docx(dest, title, subtitle, sections, figure_paths, kind)
+    _, labels, warnings = reports.build_docx(dest, title, subtitle, sections, figure_paths, kind)
     art = artifacts.add(dest, filename, "docx", title, conv.id)
-    return {"artifact": art.public(), "numbering": labels}
+    out: dict[str, Any] = {"artifact": art.public(), "numbering": labels}
+    missing = [str(f.get("artifact_id")) for s in sections for f in (s.get("figures") or [])
+               if str(f.get("artifact_id")) not in figure_paths]
+    if missing:
+        out["note"] = (f"{len(missing)} figure id(s) did not exist and were skipped: "
+                       + ", ".join(missing[:4]))
+    if warnings:
+        out["builder_warnings"] = warnings[:8]
+    return out
 
 
 @tool(

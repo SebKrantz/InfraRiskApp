@@ -138,7 +138,8 @@ def sections_to_markdown(sections: list[dict[str, Any]], figure_paths: dict[str,
 
 
 def build_docx(dest: Path, title: str, subtitle: str | None, sections: list[dict[str, Any]],
-               figure_paths: dict[str, Path], kind: str = "note") -> tuple[Path, dict[str, str]]:
+               figure_paths: dict[str, Path],
+               kind: str = "note") -> tuple[Path, dict[str, str], list[str]]:
     """sections = [{heading, paragraphs: [str], bullets: [str],
     table | tables: {columns: [...], rows: [[...]], title?, note?, ref?},
     figures: [{artifact_id, caption?, note?, ref?}]}], written as an AEI Labs Word document at
@@ -146,7 +147,7 @@ def build_docx(dest: Path, title: str, subtitle: str | None, sections: list[dict
     '- ' bullets and '## ' subheadings. Tables and figures are numbered in document order
     ("Table 1", "Figure 1", ...); `[[ref]]` in any text resolves to the number of the exhibit
     carrying that `ref` (an unknown ref keeps its brackets, visible rather than silently wrong).
-    Returns the path and the resolved label map."""
+    Returns the path, the resolved label map and the builder's warnings."""
     from .report_theme import aeilabs_docx
 
     labels = _number_exhibits(sections, figure_paths)
@@ -154,9 +155,9 @@ def build_docx(dest: Path, title: str, subtitle: str | None, sections: list[dict
                     sections_to_markdown(sections, figure_paths))
     meta = {"type": kind, "title": title, "subtitle": subtitle,
             "doc_label": f"Infrastructure risk {kind}", "date": dt.date.today().isoformat()}
-    aeilabs_docx.build_document(text, dest, meta=meta, base_dir=str(Path(dest).parent),
-                                paginate=False)
-    return dest, labels
+    built = aeilabs_docx.build_document(text, dest, meta=meta, base_dir=str(Path(dest).parent),
+                                        paginate=False)
+    return dest, labels, built["warnings"]
 
 
 def build_xlsx(dest: Path, sheets: list[dict[str, Any]]) -> Path:
