@@ -30,7 +30,7 @@ A high-performance web application for analyzing infrastructure assets against h
 ### Frontend
 - **React** + **TypeScript** - Component-based UI
 - **Vite** - Fast build tool and dev server
-- **MapLibre GL** - High-performance map rendering
+- **MapLibre GL 6** - High-performance map rendering (WebGL 2)
 - **Recharts** - Data visualization
 - **TailwindCSS** + **shadcn/ui** - Modern styling and UI components
 
@@ -40,6 +40,7 @@ A high-performance web application for analyzing infrastructure assets against h
 
 - **Backend**: Python 3.9 or higher
 - **Frontend**: Node.js 18+ and npm
+- **Users**: a browser with WebGL 2 for the map (any current Chrome, Edge, Firefox or Safari)
 
 ### Backend Setup
 
