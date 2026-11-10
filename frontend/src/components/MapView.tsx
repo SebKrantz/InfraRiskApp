@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import maplibregl from 'maplibre-gl'
+import * as maplibregl from 'maplibre-gl'
 // Bundled with the app rather than loaded from a CDN: no third-party request on page load.
 import 'maplibre-gl/dist/maplibre-gl.css'
+// MapLibre 6 cannot find its worker inside a bundle; Vite emits it as a file of its own
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { Hazard, UploadedFile, AnalysisResult, ColorPalette, Basemap } from '../types'
 import { Select } from './ui/select'
 import { formatFeatureProperties } from '../lib/featurePopup'
+
+maplibregl.setWorkerUrl(workerUrl)
 
 interface MapViewProps {
   uploadedFile: UploadedFile | null
@@ -269,6 +273,9 @@ export default function MapView({
   const [mapLoaded, setMapLoaded] = useState(false)
   const isRestoringLayers = useRef(false)
   const popup = useRef<maplibregl.Popup | null>(null)
+  // The GeoJSON last given to the infrastructure source, to tell whether new data differs
+  // (the source's own copy is internal, and since MapLibre 5.20 no longer the object passed in)
+  const infraSourceData = useRef<any>(null)
   
   // Layer visibility state (basemap always on)
   const [infrastructureVisible, setInfrastructureVisible] = useState(true)
@@ -349,10 +356,6 @@ export default function MapView({
         }
       })
 
-      map.current.on('style.error', (e: any) => {
-        console.error('Map style error:', e)
-      })
-      
       // Track zoom changes to detect when tiles should reload
       map.current.on('zoom', () => {
         if (map.current) {
@@ -531,6 +534,7 @@ export default function MapView({
     removeInfrastructure()
     try {
       map.current.addSource(sourceId, { type: 'geojson', data: geoJson })
+      infraSourceData.current = geoJson
       if (hasAffected) {
         const needsGradientLayer = isVulnMode
           || (isPoint ? (props.analysisResult?.summary?.affected_count || 0) > 0 : (props.analysisResult?.summary?.affected_meters || 0) > 0)
@@ -668,6 +672,7 @@ export default function MapView({
             type: 'geojson',
             data: needsRestore.geoJson,
           })
+          infraSourceData.current = needsRestore.geoJson
           
           // Add layers based on whether we have affected status
           const isRestoreVulnMode = needsRestore.vulnerabilityAnalysisEnabled && needsRestore.hasAffected
@@ -1067,8 +1072,8 @@ export default function MapView({
           needsUpdate = true
         } else {
           // Even if layers exist, check if source data needs updating
-          if (existingSource && (existingSource as any)._data) {
-            const currentData = JSON.stringify((existingSource as any)._data)
+          if (existingSource && infraSourceData.current) {
+            const currentData = JSON.stringify(infraSourceData.current)
             const newData = JSON.stringify(geoJson)
             needsUpdate = currentData !== newData
             // If data is the same but we have analysis results, we still need to update
@@ -1086,8 +1091,8 @@ export default function MapView({
         isPoint = uploadedFile.geometry_type === 'Point'
         
         // Check if source data needs updating
-        if (existingSource && (existingSource as any)._data) {
-          const currentData = JSON.stringify((existingSource as any)._data)
+        if (existingSource && infraSourceData.current) {
+          const currentData = JSON.stringify(infraSourceData.current)
           const newData = JSON.stringify(geoJson)
           needsUpdate = currentData !== newData
         } else {
@@ -1147,6 +1152,7 @@ export default function MapView({
             type: 'geojson',
             data: geoJson,
           })
+          infraSourceData.current = geoJson
 
           // If we have analysis results, show affected/unaffected coloring
           if (analysisResult?.infrastructure_features) {
