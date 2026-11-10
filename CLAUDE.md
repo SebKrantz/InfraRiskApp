@@ -64,7 +64,7 @@ Start backend first (port 8000), then frontend (port 5173). Vite proxies `/api/*
 - **Entry:** `main.tsx` → `App.tsx` (all top-level state via useState/useEffect)
 - **Components:**
   - `Sidebar.tsx` — main control panel: file upload, hazard selector, color palette, opacity/threshold sliders, analysis results, vulnerability toggle, export buttons
-  - `MapView.tsx` — MapLibre GL + deck.gl rendering, basemap selector (11 options), hazard tile overlay, infrastructure GeoJSON layer
+  - `MapView.tsx` — MapLibre GL 6 map (ESM only: `import * as maplibregl`, and the worker URL comes from Vite's `?worker&url` import via `setWorkerUrl`; WebGL 2 required), basemap selector (nine options), hazard tile overlay, infrastructure GeoJSON layer. Whether new data differs from the infrastructure source is judged against `infraSourceData`, the GeoJSON last given to it (the source's internal copy is not the object passed in since 5.20)
   - `BarChart.tsx` — Recharts visualization of affected/unaffected counts or meters
   - `ui/` — shadcn-style reusable components (button, input, select, slider, card, dialog)
 - **API client:** `services/api.ts` — typed fetch wrappers for all backend endpoints
