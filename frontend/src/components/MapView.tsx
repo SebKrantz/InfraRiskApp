@@ -299,7 +299,7 @@ export default function MapView({
   const lastZoomLevel = useRef<number | null>(null)
   const lastBounds = useRef<string | null>(null)
   const boundsSetForFile = useRef<string | null>(null)
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null)
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   
   // Update refs when props change
   useEffect(() => {
