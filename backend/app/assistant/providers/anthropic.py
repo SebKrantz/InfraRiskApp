@@ -89,9 +89,9 @@ def _messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class AnthropicProvider:
     name = "anthropic"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         self.client = anthropic.Anthropic(
-            api_key=config.ANTHROPIC_API_KEY,
+            api_key=api_key or config.ANTHROPIC_API_KEY,
             timeout=config.ASSISTANT_PROVIDER_TIMEOUT,
         )
 

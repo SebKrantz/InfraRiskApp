@@ -86,6 +86,12 @@ ASSISTANT_MODEL_ENV = {
 # Unset: the first keyed of anthropic, gemini, openai.
 ASSISTANT_DEFAULT_PROVIDER = os.environ.get("ASSISTANT_DEFAULT_PROVIDER", "").strip()
 
+# Bring your own key: users may enter their own Anthropic, Google or OpenAI key in the
+# assistant's model menu. The browser keeps it and sends it with each chat request; the
+# server uses it for that request only and never stores, logs or returns it. With it on,
+# the assistant shows even when this server has no key of its own.
+ASSISTANT_BYOK = os.environ.get("ASSISTANT_BYOK", "1") == "1"
+
 # Tool round-trips allowed per user turn before the loop gives up.
 ASSISTANT_MAX_ITERATIONS = int(os.environ.get("ASSISTANT_MAX_ITERATIONS", "30"))
 # Wall-clock cap on one provider request, seconds. Without it a hung stream

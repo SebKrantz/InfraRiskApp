@@ -4,15 +4,31 @@
 //
 // The popover is positioned against the nearest positioned ancestor (the panel header), so
 // it spans the panel's width and the notes below fit on two lines.
+//
+// On a server that accepts user keys (meta.byok) it also holds "Your API keys": one row per
+// provider to paste, see (masked) or remove the user's own key (lib/assistantKeys.ts).
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 
 import { canFlex, effortsFor, withModel, withProvider } from '../../lib/assistantChoice'
-import type { AssistantChoice, AssistantMeta } from '../../types/assistant'
+import {
+  KEY_HINTS,
+  clearKey,
+  getKey,
+  isRemembered,
+  looksLikeKey,
+  maskKey,
+  setKey,
+} from '../../lib/assistantKeys'
+import type { AssistantChoice, AssistantMeta, AssistantProvider } from '../../types/assistant'
 
 const FLEX_NOTE =
   'Flex: about half the price, but slower (minutes per step); falls back to standard when busy.'
+
+const KEY_NOTE =
+  'Your key stays in this browser (this tab only, unless remembered). Each request sends it ' +
+  "to this app's server, which passes it to the provider for that request and never stores or logs it."
 
 const selectCls =
   'min-w-0 flex-1 rounded border border-gray-700 bg-gray-800 px-2 py-1 font-mono text-[11.5px] text-gray-200 focus:border-blue-500 focus:outline-none'
@@ -39,18 +55,93 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+function KeyRow({
+  provider,
+  remember,
+  onKeys,
+}: {
+  provider: AssistantProvider
+  remember: boolean
+  onKeys: (provider: string) => void
+}) {
+  const [draft, setDraft] = useState('')
+  const key = getKey(provider.id)
+  const save = () => {
+    if (!looksLikeKey(draft)) return
+    setKey(provider.id, draft, remember)
+    setDraft('')
+    onKeys(provider.id)
+  }
+  return (
+    <div className="flex items-center gap-2 px-3 py-1">
+      <span className="w-16 shrink-0 truncate text-[11px] text-gray-300">{provider.label}</span>
+      {key ? (
+        <>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-emerald-300">
+            {maskKey(key)}{' '}
+            <span className="font-sans text-[10px] text-gray-500">
+              {isRemembered(provider.id) ? 'remembered' : 'this tab'}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              clearKey(provider.id)
+              onKeys(provider.id)
+            }}
+            className="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-gray-400 hover:bg-gray-800 hover:text-gray-200"
+          >
+            Remove
+          </button>
+        </>
+      ) : (
+        <>
+          <input
+            type="password"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') save()
+            }}
+            autoComplete="off"
+            spellCheck={false}
+            aria-label={`${provider.label} API key`}
+            placeholder={`${KEY_HINTS[provider.id] ?? 'API key'}${provider.available ? ' (optional)' : ''}`}
+            className={selectCls}
+          />
+          <button
+            type="button"
+            onClick={save}
+            disabled={!looksLikeKey(draft)}
+            className="shrink-0 rounded bg-blue-600 px-1.5 py-0.5 text-[11px] text-white hover:bg-blue-500 disabled:opacity-40"
+          >
+            Save
+          </button>
+        </>
+      )}
+    </div>
+  )
+}
+
 export default function ModelPicker({
   meta,
   choice,
   onChange,
+  onKeys,
   disabled,
+  openOnMount,
 }: {
   meta: AssistantMeta
   choice: AssistantChoice
   onChange: (choice: AssistantChoice) => void
+  /** a key of the user's for `provider` was added or removed */
+  onKeys: (provider: string) => void
   disabled?: boolean
+  /** open at once (no provider has a key yet: the key rows are where to start) */
+  openOnMount?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(!!openOnMount)
+  const [remember, setRemember] = useState(false)
   const box = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -114,12 +205,30 @@ export default function ModelPicker({
               >
                 {meta.providers.map((p) => (
                   <option key={p.id} value={p.id} disabled={!p.available}>
-                    {p.available ? p.label : `${p.label} (no key)`}
+                    {p.available ? p.label : `${p.label} (${meta.byok ? 'add a key below' : 'no key'})`}
                   </option>
                 ))}
               </select>
             </Field>
           </div>
+
+          {meta.byok && (
+            <Section title="Your API keys">
+              {meta.providers.map((p) => (
+                <KeyRow key={p.id} provider={p} remember={remember} onKeys={onKeys} />
+              ))}
+              <label className="flex items-center gap-2 px-3 py-1 text-[11px] text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  className="h-3 w-3 accent-blue-500"
+                />
+                Remember new keys on this device
+              </label>
+              <div className="px-3 pb-1 text-[11px] leading-snug text-gray-500">{KEY_NOTE}</div>
+            </Section>
+          )}
 
           <Section title="Assistant">
             <Field label="Model">

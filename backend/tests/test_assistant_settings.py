@@ -583,7 +583,7 @@ class LoopHandsOverTheChoice(unittest.TestCase):
             id="c", messages=[], pending_calls=[], buffered_results=[], events=[], provider=None,
             model=None,
         )
-        with mock.patch.object(loop, "get_provider", lambda name: Fake()):
+        with mock.patch.object(loop, "get_provider", lambda name, api_key=None: Fake()):
             out = "".join(loop.run(conv, "gemini", "gemini-3.8-flash", user_message="hi",
                                    effort="low", service_tier="flex"))
         self.assertEqual(seen, {"model": "gemini-3.8-flash", "effort": "low", "service_tier": "flex"})
@@ -604,7 +604,7 @@ class KeepAlive(unittest.TestCase):
             model=None,
         )
         with mock.patch.object(loop, "PING_EVERY", 0.05), mock.patch.object(
-            loop, "get_provider", lambda name: provider
+            loop, "get_provider", lambda name, api_key=None: provider
         ), mock.patch.object(loop, "RETRY_BACKOFF_S", (0.0,)):
             return list(loop.run(conv, "openai", "gpt-6-luna", user_message="hi"))
 

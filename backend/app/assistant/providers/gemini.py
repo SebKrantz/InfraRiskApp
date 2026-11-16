@@ -105,9 +105,9 @@ def _contents(messages: list[dict[str, Any]]) -> list[types.Content]:
 class GeminiProvider:
     name = "gemini"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         self.client = genai.Client(
-            api_key=config.GEMINI_API_KEY,
+            api_key=api_key or config.GEMINI_API_KEY,
             # Without a cap a stalled stream hangs the whole turn; a timeout
             # reads as transient and the loop retries it.
             http_options=types.HttpOptions(

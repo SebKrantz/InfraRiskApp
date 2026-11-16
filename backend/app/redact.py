@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import quote
 
 SECRET_NAME = re.compile(r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL", re.I)
@@ -29,6 +29,13 @@ REDACTED = "[redacted]"
 _URL_CREDENTIAL = re.compile(
     r"([?&])(?:api[_-]?key|key|access[_-]?token|token|auth|secret|password)=[^&#\s\"'<>]*&?",
     re.I,
+)
+
+# The key formats the three providers issue. A user's own key (bring your own key) is never
+# remembered below, so wherever one turns up — an SDK error quoting it, say — its shape
+# gives it away; the request that carries it also passes it in as `extra`.
+_KEY_SHAPES = re.compile(
+    r"\b(?:sk-ant-[A-Za-z0-9_-]{16,}|sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{30,})"
 )
 
 _secrets: set[str] = set()
@@ -65,10 +72,14 @@ def _strip_url_credentials(text: str) -> str:
     return _URL_CREDENTIAL.sub(drop, text)
 
 
-def redact_text(text: str) -> str:
-    for secret in _secrets:
+def redact_text(text: str, extra: Iterable[str | None] = ()) -> str:
+    """`text` without any remembered key, any of the `extra` values (a request's own key),
+    anything shaped like a provider key, or credential parameters in a URL."""
+    request_keys = {v for k in extra if k and len(k) >= _MIN_SECRET_LEN for v in (k, quote(k, safe=""))}
+    for secret in (*_secrets, *request_keys):
         if secret in text:
             text = text.replace(secret, REDACTED)
+    text = _KEY_SHAPES.sub(REDACTED, text)
     if "=" in text:
         text = _strip_url_credentials(text)
     return text

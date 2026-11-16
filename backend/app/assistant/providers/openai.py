@@ -135,9 +135,9 @@ def _args(arguments: str | None) -> dict[str, Any]:
 class OpenAIProvider:
     name = "openai"
 
-    def __init__(self) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         self.client = OpenAI(
-            api_key=config.OPENAI_API_KEY, timeout=config.ASSISTANT_PROVIDER_TIMEOUT
+            api_key=api_key or config.OPENAI_API_KEY, timeout=config.ASSISTANT_PROVIDER_TIMEOUT
         )
 
     def _create(self, kwargs: dict[str, Any]) -> Any:

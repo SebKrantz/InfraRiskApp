@@ -26,7 +26,10 @@ export interface AssistantChoice {
 }
 
 export interface AssistantMeta {
+  /** the server has a key of its own for at least one provider */
   available: boolean
+  /** users may bring their own key (lib/assistantKeys.ts) */
+  byok?: boolean
   default_provider: string | null
   providers: AssistantProvider[]
 }

@@ -16,7 +16,7 @@ from typing import Any, Iterator
 
 from .. import config
 from ..redact import redact, redact_text
-from . import artifacts, schema, system_prompt, tools
+from . import artifacts, models, schema, system_prompt, tools
 from .conversations import Conversation
 from .providers import get as get_provider
 
@@ -75,6 +75,17 @@ def _is_transient(exc: Exception) -> bool:
     if "insufficient_quota" in text:  # OpenAI's 429 for an exhausted quota: waiting won't help
         return False
     return any(marker in text for marker in TRANSIENT_MARKERS)
+
+
+# How the three SDKs word a key they will not take.
+_KEY_REFUSED_MARKERS = ("invalid x-api-key", "invalid_api_key", "incorrect api key", "api key not valid")
+
+
+def _key_refused(exc: Exception) -> bool:
+    """The provider turned the API key down (401, or its own wording for it)."""
+    status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+    text = str(exc).lower()
+    return status == 401 or any(marker in text for marker in _KEY_REFUSED_MARKERS)
 
 
 def _summary(name: str, ok: bool, content: Any) -> str:
@@ -274,9 +285,12 @@ def run(
     app_state: dict[str, Any] | None = None,
     effort: str | None = None,
     service_tier: str | None = None,
+    api_key: str | None = None,
 ) -> Iterator[str]:
     """One SSE leg. Exactly one of user_message / tool_results drives it. `effort` and
-    `service_tier` are validated (models.choose) and handed to the provider as given."""
+    `service_tier` are validated (models.choose) and handed to the provider as given.
+    `api_key` is the user's own key (bring your own key): it goes to the provider adapter
+    and nowhere else — never onto `conv` — and is scrubbed from every error and log line."""
     yield schema.sse(
         "start",
         {
@@ -330,7 +344,7 @@ def run(
         yield schema.sse("done", {"reason": "error"})
         return
 
-    provider = get_provider(provider_name)
+    provider = get_provider(provider_name, api_key)
     conv.provider, conv.model = provider_name, model
     system = system_prompt.build()
     toolset = tools.specs()
@@ -410,14 +424,22 @@ def run(
                 and attempt < MAX_PROVIDER_RETRIES
             )
             if not retriable:
-                message = redact_text(f"{provider_name}: {failure}")
+                message = redact_text(f"{provider_name}: {failure}", extra=(api_key,))
                 log.warning("provider error: %s", message)
+                if _key_refused(failure):
+                    label = models.PROVIDERS.get(provider_name, {}).get("label", provider_name)
+                    message = (
+                        f"{label} refused the API key you entered — check it under Your API "
+                        "keys in the model menu."
+                        if api_key
+                        else f"{label} refused this server's API key."
+                    )
                 yield _event(conv, "error", {"message": message})
                 yield schema.sse("done", {"reason": "error"})
                 return
             wait = RETRY_BACKOFF_S[min(attempt, len(RETRY_BACKOFF_S) - 1)]
             log.info("provider %s transient error, retrying in %.0fs: %s",
-                     provider_name, wait, failure)
+                     provider_name, wait, redact_text(str(failure), extra=(api_key,)))
             yield _event(
                 conv,
                 "notice",

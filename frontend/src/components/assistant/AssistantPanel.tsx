@@ -15,12 +15,15 @@ export default function AssistantPanel({
   meta,
   choice,
   onChoice,
+  onKeys,
   onClose,
 }: {
   assistant: UseAssistant
   meta: AssistantMeta
   choice: AssistantChoice
   onChoice: (choice: AssistantChoice) => void
+  /** a key of the user's for `provider` was added or removed */
+  onKeys: (provider: string) => void
   onClose: () => void
 }) {
   const { items, streaming, conversationId, send, stop, clear } = assistant
@@ -30,8 +33,11 @@ export default function AssistantPanel({
   const fileInput = useRef<HTMLInputElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
 
+  // no server key and none of the user's for the chosen provider: ask for one, send nothing
+  const needsKey = !meta.providers.find((p) => p.id === choice.provider)?.available
+
   const submit = () => {
-    if (streaming || (!text.trim() && files.length === 0)) return
+    if (needsKey || streaming || (!text.trim() && files.length === 0)) return
     send(text.trim(), files, choice)
     setText('')
     setFiles([])
@@ -72,7 +78,14 @@ export default function AssistantPanel({
       {/* header */}
       <div className="relative flex items-center gap-2 border-b border-gray-800 px-3 py-2">
         <span className="text-sm font-semibold text-gray-100">Assistant</span>
-        <ModelPicker meta={meta} choice={choice} onChange={onChoice} disabled={streaming} />
+        <ModelPicker
+          meta={meta}
+          choice={choice}
+          onChange={onChoice}
+          onKeys={onKeys}
+          disabled={streaming}
+          openOnMount={needsKey}
+        />
         <ExportMenu conversationId={conversationId} disabled={items.length === 0} />
         <button
           type="button"
@@ -165,13 +178,18 @@ export default function AssistantPanel({
               type="button"
               title="Send"
               onClick={submit}
-              disabled={!text.trim() && files.length === 0}
+              disabled={needsKey || (!text.trim() && files.length === 0)}
               className="shrink-0 rounded-md bg-blue-600 p-1.5 text-white hover:bg-blue-500 disabled:opacity-40"
             >
               <Send className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
+        {needsKey && (
+          <div className="mt-1 text-[11px] leading-snug text-amber-300/90">
+            Add your own Anthropic, Google or OpenAI API key in the model menu above to start.
+          </div>
+        )}
         {streaming && (
           <div className="mt-1 flex items-center gap-1 text-[10px] text-gray-500">
             <Loader2 className="h-3 w-3 animate-spin" /> working — hazard rasters can

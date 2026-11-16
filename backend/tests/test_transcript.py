@@ -47,7 +47,7 @@ class Scripted:
 
 
 def run_leg(conv, provider, **kw):
-    with mock.patch.object(loop, "get_provider", lambda name: provider):
+    with mock.patch.object(loop, "get_provider", lambda name, api_key=None: provider):
         return "".join(loop.run(conv, "fake", "fake-1", effort="high", service_tier="flex", **kw))
 
 

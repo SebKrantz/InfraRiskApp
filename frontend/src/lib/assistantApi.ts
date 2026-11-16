@@ -12,6 +12,8 @@ export interface ChatRequest {
   model?: string
   effort?: string
   service_tier?: 'standard' | 'flex'
+  /** the user's own key for `provider` (bring your own key); sent with every leg */
+  api_key?: string
   message?: string
   tool_results?: ClientToolOutcome[]
   files?: string[]

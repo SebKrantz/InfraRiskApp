@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { pushAppState, streamChat, uploadAssistantFile, type ChatRequest } from '../lib/assistantApi'
+import { getKey } from '../lib/assistantKeys'
 import { executeClientTool, snapshot, type BindingsRef } from '../lib/assistantTools'
 import type {
   AssistantArtifact,
@@ -135,10 +136,13 @@ export function useAssistant(bindings: BindingsRef, enabled: boolean): UseAssist
       const ctl = abortRef.current ?? new AbortController()
       abortRef.current = ctl
       const pending: PendingToolCall[] = []
+      // the user's own key, read at every leg so removing it takes effect at once
+      const apiKey = getKey(choiceRef.current.provider)
       await streamChat(
         {
           conversation_id: conversationRef.current ?? undefined,
           ...choiceRef.current,
+          ...(apiKey ? { api_key: apiKey } : {}),
           ...body,
           app_state: snapshot(bindings.current),
         },

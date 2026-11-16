@@ -149,6 +149,9 @@ def meta() -> dict[str, Any]:
     ]
     return {
         "available": any(p["available"] for p in providers),
+        # users may bring their own key (config.ASSISTANT_BYOK); `available` above is the
+        # server's own keys only
+        "byok": config.ASSISTANT_BYOK,
         "default_provider": default_provider(),
         "providers": providers,
     }
@@ -166,15 +169,19 @@ def choose(
     model: str | None,
     effort: str | None = None,
     service_tier: str | None = None,
+    user_key: bool = False,
 ) -> Choice:
     """Validate a request's choice against the table. A model the provider does not
     offer runs at the provider's default model, a level the model does not take is
-    dropped (its default applies), flex on a provider without it runs standard. Raises
-    ValueError for a missing or unavailable provider."""
+    dropped (its default applies), flex on a provider without it runs standard. A
+    provider without a server key is available when the request brings its own key
+    (`user_key`, and config.ASSISTANT_BYOK). Raises ValueError for a missing or
+    unavailable provider."""
     provider = provider or default_provider()
     if not provider:
         raise ValueError("no assistant provider configured")
-    if provider not in PROVIDERS or not keys().get(provider):
+    own_key = user_key and config.ASSISTANT_BYOK
+    if provider not in PROVIDERS or not (keys().get(provider) or own_key):
         raise ValueError(f"provider {provider!r} is not available")
     if model not in PROVIDERS[provider]["models"]:
         fallback = default_model(provider)

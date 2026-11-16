@@ -88,5 +88,7 @@ def iter_sse_safe(gen: Iterator[str]) -> Iterator[str]:
     except GeneratorExit:  # client disconnected — normal cancellation path
         raise
     except Exception as exc:  # noqa: BLE001 — last-resort stream guard
-        yield sse("error", {"message": f"internal error: {exc}"})
+        from ..redact import redact_text
+
+        yield sse("error", {"message": redact_text(f"internal error: {exc}")})
         yield sse("done", {"reason": "error"})

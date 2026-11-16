@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -18,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .. import config
+from ..redact import redact_text
 from ..assistant import artifacts, conversations, loop, models, schema, tools, transcript
 
 log = logging.getLogger("infrarisk.assistant")
@@ -55,13 +57,30 @@ def meta() -> dict[str, Any]:
     return assistant_meta()
 
 
-def _pick_model(body: dict[str, Any]) -> models.Choice:
+def _user_key(body: dict[str, Any]) -> str | None:
+    """Take the user's own API key out of the body (bring your own key), so nothing that
+    reads the body afterwards can see it. It is checked for shape only: the provider tells
+    whether it works. Error messages never repeat it."""
+    key = body.pop("api_key", None)
+    if key is None or key == "":
+        return None
+    if not config.ASSISTANT_BYOK:
+        raise HTTPException(422, "this server does not accept user API keys")
+    if not isinstance(key, str) or not 8 <= len(key.strip()) <= 512 or any(
+        c.isspace() or not c.isprintable() for c in key.strip()
+    ):
+        raise HTTPException(422, "that does not look like an API key")
+    return key.strip()
+
+
+def _pick_model(body: dict[str, Any], user_key: bool = False) -> models.Choice:
     try:
         return models.choose(
             body.get("provider"),
             body.get("model"),
             body.get("effort"),
             body.get("service_tier"),
+            user_key=user_key,
         )
     except ValueError as exc:
         if not models.default_provider() and not body.get("provider"):
@@ -75,9 +94,11 @@ def _pick_model(body: dict[str, Any]) -> models.Choice:
 
 @router.post("/chat")
 async def chat(request: Request) -> StreamingResponse:
-    """Body: {conversation_id?, provider?, model?, effort?, service_tier?,
+    """Body: {conversation_id?, provider?, model?, effort?, service_tier?, api_key?,
     message? | tool_results?, files?, app_state?}. Returns an SSE stream (see
-    assistant/loop.py); effort and service_tier are checked against /meta's table."""
+    assistant/loop.py); effort and service_tier are checked against /meta's table.
+    `api_key` is the user's own key for `provider`, sent with every leg: it is used for
+    this request only, never stored, logged or returned."""
     try:
         body = await request.json()
     except Exception as exc:  # noqa: BLE001
@@ -89,7 +110,8 @@ async def chat(request: Request) -> StreamingResponse:
     if (message is None) == (tool_results is None):
         raise HTTPException(422, "pass exactly one of `message` or `tool_results`")
 
-    choice = _pick_model(body)
+    api_key = _user_key(body)
+    choice = _pick_model(body, user_key=api_key is not None)
     conv = conversations.get_or_create(body.get("conversation_id"))
 
     # Uploads attached to this message: images and PDFs become multimodal file
@@ -130,10 +152,17 @@ async def chat(request: Request) -> StreamingResponse:
                 app_state=body.get("app_state"),
                 effort=choice.effort,
                 service_tier=choice.service_tier,
+                api_key=api_key,
             )
-        except Exception as exc:  # noqa: BLE001 — recorded here; iter_sse_safe reports it
-            loop.record_event(conv, "error", {"message": f"internal error: {exc}"})
-            raise
+        except Exception as exc:  # noqa: BLE001 — reported here, scrubbed of the user's key
+            failure = redact_text(f"internal error: {exc}", extra=(api_key,))
+            log.error(
+                "chat stream failed:\n%s",
+                redact_text("".join(traceback.format_exception(exc)), extra=(api_key,)),
+            )
+            loop.record_event(conv, "error", {"message": failure})
+            yield schema.sse("error", {"message": failure})
+            yield schema.sse("done", {"reason": "error"})
         finally:
             conv.turn_lock.release()
 
