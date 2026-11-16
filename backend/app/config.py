@@ -106,8 +106,10 @@ ASSISTANT_EXEC_TIMEOUT = float(os.environ.get("ASSISTANT_EXEC_TIMEOUT", "180"))
 # Per-file cap on uploads to the assistant, megabytes.
 ASSISTANT_UPLOAD_MAX_MB = float(os.environ.get("ASSISTANT_UPLOAD_MAX_MB", "100"))
 # Mount the MCP server at /mcp (external clients bring their own model, so this
-# is independent of the API keys above).
-ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "1") == "1"
+# is independent of the API keys above). Off by default on this public deployment:
+# /mcp has no sign-in, so anyone could drive every tool through it. The in-app
+# assistant does not use it.
+ASSISTANT_MCP_ENABLED = os.environ.get("ASSISTANT_MCP_ENABLED", "0") == "1"
 
 # Every key is read above. Take the secret-named variables out of the environment
 # now, so python_exec (which runs in this process) and any child process find none;
