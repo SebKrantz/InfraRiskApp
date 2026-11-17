@@ -9,6 +9,7 @@ general-purpose complement for comparisons the app has no built-in view for.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Any, Optional
 
 from .. import artifacts, domain, figures, reports
@@ -94,6 +95,8 @@ def make_barchart(
 ) -> dict[str, Any]:
     from ...api.export import generate_barchart_png
 
+    title = figures.capitalise(title)
+    figures.require_plain([title], conv.curves)
     result = _analysis(conv, analysis)
     meta = result.get("_assistant_meta", {})
     haz = domain.resolve_hazard(meta.get("hazard_id", ""))
@@ -133,7 +136,11 @@ def make_barchart(
     "button produces it: the hazard raster as a blue intensity wash over a web "
     "basemap, with infrastructure coloured red/green by exposure — or along a "
     "green-amber-red damage-ratio ramp in vulnerability mode — plus colourbar, "
-    "legend and title. Frames itself on the dataset's extent.",
+    "legend and title. Frames itself on the dataset's extent. A class layer (the "
+    "landslide susceptibility scales, 1-5) shows only its upper classes, within "
+    "15 km of the asset, because the low classes cover most terrain. The file is "
+    "a JPEG sized for a report. Titles use plain words: a curve id in one is "
+    "refused.",
     {
         "type": "object",
         "properties": {
@@ -162,6 +169,8 @@ def make_map(
 ) -> dict[str, Any]:
     from ...api.export import generate_map_png
 
+    title = figures.capitalise(title)
+    figures.require_plain([title], conv.curves)
     result = _analysis(conv, analysis)
     meta = result.get("_assistant_meta", {})
     haz = domain.resolve_hazard(meta.get("hazard_id", ""))
@@ -192,8 +201,12 @@ def make_map(
         meta.get("threshold"),
         basemap,
         domain.hazard_brief(haz)["unit"],
+        CLASS_FOCUS_KM,
     )
-    return _png_artifact(conv, _fit_png(png, REPORT_MAX_PX), filename, title or default_title, "map")
+    jpeg_name = f"{Path(filename).stem}.jpg"
+    return _image_artifact(
+        conv, _report_jpeg(png, REPORT_MAX_PX), jpeg_name, title or default_title, "map"
+    )
 
 
 def _small_exposure_note(result: dict[str, Any], info: dict, share: float) -> str:
@@ -210,36 +223,47 @@ def _small_exposure_note(result: dict[str, Any], info: dict, share: float) -> st
     )
 
 
-# Report builders re-encode a wider, large PNG as JPEG, which smears a map's
-# fine hazard detail; at or under this size a PNG goes in as it is.
-REPORT_MAX_PX = 2400
+# A class layer (landslide susceptibility 1-5) is drawn only this close to the asset.
+CLASS_FOCUS_KM = 15.0
+
+# A map goes into a report at 6.5 in, so 1600 px is plenty. The app's 300 dpi PNG
+# (3600 px, a basemap under a raster wash) runs to 4-8 MB and made a 20 MB Word file;
+# the JPEG below is under 0.5 MB. Palette PNGs were tried: they band the raster wash
+# and muddy the thin damage-ratio line.
+REPORT_MAX_PX = 1600
+REPORT_JPEG_QUALITY = 88  # with full chroma (4:4:4): the coloured line stays crisp
 
 
-def _fit_png(png: bytes, max_px: int) -> bytes:
-    """The PNG scaled down, still a PNG, to at most `max_px` on its long side."""
+def _report_jpeg(png: bytes, max_px: int) -> bytes:
+    """The map as a JPEG of at most `max_px` on its long side."""
     from PIL import Image
 
     with Image.open(io.BytesIO(png)) as im:
-        w, h = im.size
-        if max(w, h) <= max_px:
-            return png
-        scale = max_px / max(w, h)
+        img = im.convert("RGB")
+        w, h = img.size
+        if max(w, h) > max_px:
+            scale = max_px / max(w, h)
+            img = img.resize((round(w * scale), round(h * scale)), Image.LANCZOS)
         out = io.BytesIO()
-        im.resize((round(w * scale), round(h * scale)), Image.LANCZOS).save(
-            out, "PNG", optimize=True
-        )
+        img.save(out, "JPEG", quality=REPORT_JPEG_QUALITY, subsampling=0, optimize=True)
     return out.getvalue()
+
+
+def _image_artifact(
+    conv: Conversation, data: bytes, filename: str, title: str, kind: str
+) -> dict[str, Any]:
+    conv._counter += 1
+    dest = conv.workdir / f"{conv._counter}_{filename}"
+    dest.write_bytes(data)
+    art = artifacts.add(dest, filename, kind, title, conv.id)
+    return {"artifact": art.public()}
 
 
 def _png_artifact(
     conv: Conversation, png: bytes, filename: str, title: str, kind: str
 ) -> dict[str, Any]:
-    conv._counter += 1
     safe = filename if filename.lower().endswith(".png") else f"{filename}.png"
-    dest = conv.workdir / f"{conv._counter}_{safe}"
-    dest.write_bytes(png)
-    art = artifacts.add(dest, safe, kind, title, conv.id)
-    return {"artifact": art.public()}
+    return _image_artifact(conv, png, safe, title, kind)
 
 
 # --------------------------------------------------------------------------- #
@@ -253,8 +277,11 @@ def _png_artifact(
     "exposure across return periods, climate scenarios, hazard types, datasets "
     "or thresholds. Series named 'Affected'/'Unaffected'/'Damage cost'/"
     "'Exposure' inherit the app's colours; everything else gets a "
-    "colour-blind-safe palette. Axis ticks are humanised (12k, 3.4M). For "
-    "anything more bespoke, draw it with matplotlib in python_exec.",
+    "colour-blind-safe palette; series named lower / central / upper run blue, "
+    "amber, vermillion. Axis ticks are humanised (12k, 3.4M), except that a "
+    "'US$ million' axis reaching 1,000 is redrawn in US$ billion. Titles, labels "
+    "and series names are plain words: a curve id or snake_case name in one is "
+    "refused. For anything more bespoke, draw it with matplotlib in python_exec.",
     {
         "type": "object",
         "properties": {
@@ -297,6 +324,9 @@ def make_chart(
     sort: bool = False,
     filename: str = "chart.png",
 ) -> dict[str, Any]:
+    figures.require_plain(
+        [title, xlabel, ylabel, *labels, *(s.get("name") for s in series)], conv.curves
+    )
     conv._counter += 1
     dest = conv.workdir / f"{conv._counter}_{filename}"
     figures.chart(
@@ -388,7 +418,10 @@ def make_custom_map(
             raise ValueError(f"no variable {name!r} in the namespace")
         if not isinstance(obj, gpd.GeoDataFrame):
             raise ValueError(f"variable {name!r} is not a GeoDataFrame")
-        resolved.append({**layer, "gdf": obj, "label": layer.get("label") or name})
+        # a variable name is not a legend entry
+        label = layer.get("label") or figures.capitalise(str(name).replace("_", " "))
+        resolved.append({**layer, "gdf": obj, "label": label})
+    figures.require_plain([title, *(layer.get("label") for layer in layers)], conv.curves)
 
     conv._counter += 1
     dest = conv.workdir / f"{conv._counter}_{filename}"

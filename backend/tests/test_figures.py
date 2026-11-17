@@ -163,15 +163,16 @@ class MapDeclinesWhenAlmostNothingIsExposed(unittest.TestCase):
 
 
 class MapFitsTheReportBuilder(unittest.TestCase):
-    def test_a_wide_map_is_scaled_down_and_stays_a_png(self):
-        out = output._fit_png(png((3600, 3000)), output.REPORT_MAX_PX)
+    def test_a_wide_map_is_scaled_down_to_a_jpeg(self):
+        out = output._report_jpeg(png((3600, 3000)), output.REPORT_MAX_PX)
         with Image.open(io.BytesIO(out)) as im:
-            self.assertEqual(im.format, "PNG")
-            self.assertEqual(im.size, (2400, 2000))
+            self.assertEqual(im.format, "JPEG")
+            self.assertEqual(im.size, (1600, 1333))
 
-    def test_a_map_within_the_limit_is_untouched(self):
-        small = png((2400, 1800))
-        self.assertIs(output._fit_png(small, output.REPORT_MAX_PX), small)
+    def test_a_map_within_the_limit_keeps_its_size(self):
+        out = output._report_jpeg(png((1200, 900)), output.REPORT_MAX_PX)
+        with Image.open(io.BytesIO(out)) as im:
+            self.assertEqual((im.format, im.size), ("JPEG", (1200, 900)))
 
 
 class DollarSigns(unittest.TestCase):
