@@ -44,8 +44,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install Python deps first (better layer caching)
-COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+COPY backend/requirements.txt backend/requirements-lock.txt /app/backend/
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt -c /app/backend/requirements-lock.txt
 
 # Application code
 COPY backend/ /app/backend/
