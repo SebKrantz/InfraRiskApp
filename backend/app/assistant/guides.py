@@ -128,7 +128,8 @@ numbers and must never be conflated.
    bar when the curve has bounds). `make_map` colours assets along a
    green-amber-red damage ratio ramp, and declines when 1 % or less of the asset
    is exposed. `plot_curve` shows the curve itself — include it whenever you
-   chose or built the curve rather than the user.
+   chose or built the curve rather than the user; in a report it goes in an
+   annex, not in the chapter (read_guide('figures')).
 6. Drive the UI too: `ui_set_vulnerability` with the curve and replacement value.
 
 ## A damage cost for every hazard the asset is exposed to
@@ -355,11 +356,15 @@ REPORTS = """\
    Say what the number MEANS, not that it "is shown in the table". Figures
    follow a budget per exposed hazard family: at most a map (only when it is
    drawn: a hazard reaching 1 % or less of the asset gets one sentence and its
-   table row, no map and no chart), one loss chart and the curve
-   (read_guide('figures')). Every hazard shown has a damage cost, a labelled
-   proxy where no curve fits (read_guide('vulnerability_analysis')); a hazard
-   without one gets no figure. An EAD flagged `high` for plausibility is
-   reported as implausible, never as a bound or a stress case.
+   table row, no map and no chart) and one loss chart
+   (read_guide('figures')). The vulnerability curve is a method figure: it goes
+   in an annex (a last section headed "Annex A. Vulnerability curves"; a report
+   builder letters it as an annex) or is left out, never in the chapter body; the
+   chapter keeps only the figures that carry results. Every hazard shown has a
+   damage cost, a labelled proxy where no curve fits
+   (read_guide('vulnerability_analysis')); a hazard without one gets no figure.
+   An EAD flagged `high` for plausibility is reported as implausible, never as a
+   bound or a stress case.
 5. **Caveats and limitations**: never skip this. The standard set for this app:
    raster resolution vs asset size; centroid treatment of polygons; the
    threshold is a modelling choice, not a physical certainty; no-data areas
@@ -484,16 +489,18 @@ and damage mode:
 
 ## Figure budget
 A hazard FAMILY the asset is exposed to (flood, cyclone, earthquake, landslide)
-gets at most three figures in a report:
+gets at most two figures in the body of a report:
 1. its map — the central layer only (existing-climate flood, the middle return
    period), and only when `make_map` draws one;
 2. ONE loss chart — `make_barchart` for a single layer, or `make_chart` holding
-   every return period and climate variant of the family;
-3. the vulnerability curve (`plot_curve`), when you chose or built it.
+   every return period and climate variant of the family.
+The vulnerability curve (`plot_curve`) is a method figure, not a result: it goes
+in an annex (a last section headed "Annex A. Vulnerability curves") or is left
+out, and the chapter says in a sentence which curve it used.
 Never a map or a chart per return period, per climate variant or per
 threshold: the ladder goes in the one loss chart and the table. A hazard with no
-damage cost gets none of the three — a sentence and a table row. Count them
-before writing: a report with more than three figures for one hazard has the
+damage cost gets none of them — a sentence and a table row. Count them
+before writing: a chapter with more than two figures for one hazard has the
 wrong figures, and one with a figure per layer is padding.
 
 ## The general tools — for anything comparative
@@ -532,10 +539,26 @@ wrong figures, and one with a figure per layer is padding.
 - One unit per quantity, in every figure and table of a report: lengths in km
   (never metres in one chart and km in the next), damage in US$ million with
   thousands separators ("1,250"), percentages as percentages. Convert before
-  you call `make_chart`: pass km and US$ million, and name the unit in `ylabel`.
-- Report figures are PNG. In `python_exec` save with `fig.savefig('name.png')`
+  you call `make_chart`: pass km and US$ million, and name the unit in `ylabel`
+  ("US$ million"): an axis that reaches 1,000 is redrawn in US$ billion, so a
+  tick never reads "1k" on a million axis. In a figure you draw yourself do the
+  same: never "k" or "M" on an axis whose unit already says million.
+- Plain words in every figure: the title, axis labels, legend entries and
+  category labels say what is shown (the asset, the hazard, the estimate), never
+  a curve id, a variable or file name, a layer code, or derivation notation (a
+  formula, a multiplier such as "2x bounds"). Those go in the caption, the note
+  or the text.
+  `make_chart`, `make_map` and `plot_curve` refuse a curve id or a snake_case
+  name in a title or label; `plot_curve` names each curve by its asset itself.
+- Colour: for damage, loss and cost, higher is warm (red, orange) and lower is
+  blue; a chart of one series is one colour; a hazard-intensity wash is blue.
+  A lower / central / upper set of estimates runs blue, amber, vermillion
+  (`make_chart` does it by the words lower, central and upper in the series
+  names).
+- Charts you draw are PNG. In `python_exec` save with `fig.savefig('name.png')`
   or `save_artifact(fig, 'name.png')`, never `.jpg`: JPEG compression smears
-  hazard rasters and thin lines.
+  hazard rasters and thin lines. `make_map` hands back a JPEG already sized for
+  a report (1600 px, well under 1 MB): do not re-save it.
 - A dollar sign in a matplotlib label you draw yourself: write `US\\$` (or leave
   the sign out). Two bare `$` in one string switch on math mode and garble the
   text between them. The built-in chart tools already escape it.
@@ -543,7 +566,9 @@ wrong figures, and one with a figure per layer is padding.
   can jump a class or two along a straight, axis-aligned edge where source
   tiles meet; on a map it shows as a rectangle. That is the data, not the
   terrain and not a drawing fault: do not read the edge as geography, and say
-  in the caveats that the layer has such seams.
+  in the caveats that the layer has such seams. `make_map` draws only the upper
+  classes (3 to 5 on a 1-5 layer) within 15 km of the asset, which keeps the
+  line readable but does not hide a seam, so name it in the caveats.
 - Caption every figure with what, where, units and scenario.
 - Do not draw a chart of two numbers you already stated in a sentence.
 - Generate every figure BEFORE writing the report, then embed by artifact_id.

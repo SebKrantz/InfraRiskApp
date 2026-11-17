@@ -15,6 +15,7 @@ than no damage analysis at all.
 from __future__ import annotations
 
 import csv
+import re
 from typing import Any, Optional
 
 import numpy as np
@@ -211,6 +212,7 @@ def use_library_curve(
     house = bool(row.get("_house"))
     provenance = {
         "kind": "library",
+        "house": house,
         "curve_id": row["curve_id"],
         "asset": row["asset"],
         "characteristics": row["characteristics"],
@@ -455,14 +457,39 @@ def create_curve(
     return out
 
 
+def _curve_labels(curves: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Legend text for loaded curves: what each describes (asset, and where it was
+    studied or that it is a default or constructed one), never its id or file name.
+    Curves that would read the same are told apart by their characteristics."""
+    labels = {}
+    for name, curve in curves.items():
+        p = curve.get("provenance") or {}
+        asset = re.sub(r"\s*\([^)]*\)", "", str(p.get("asset") or "")).strip(" ,;-")
+        if p.get("kind") == "library":
+            geo = str(p.get("geography") or "").strip()
+            labels[name] = f"{asset} (default curve)" if p.get("house") else (
+                f"{asset}, {geo}" if asset and geo else asset or name)
+        elif p.get("kind") == "constructed":
+            labels[name] = f"{asset} (constructed curve)" if asset else "Constructed curve"
+        else:  # an uploaded curve: the name its owner gave it, as words
+            labels[name] = re.sub(r"\.(csv|txt|xlsx?)$", "", name, flags=re.I).replace("_", " ").strip()
+        labels[name] = figures.capitalise(labels[name])
+    same = list(labels.values())
+    for name, text in list(labels.items()):
+        if same.count(text) > 1:
+            detail = str((curves[name].get("provenance") or {}).get("characteristics") or "").strip()
+            labels[name] = f"{text}: {detail[:48]}" if detail else text
+    return labels
+
+
 @tool(
     "plot_curve",
     "Draw one or more vulnerability curves on an intensity axis, with the "
     "uncertainty band shaded where a curve has one. Use it to show the user "
-    "which curve you picked, to compare candidates before choosing, and as a "
-    "report exhibit whenever the curve is doing real work in the answer — "
-    "especially for a constructed curve, where the reader has to be able to see "
-    "what was assumed.",
+    "which curve you picked and to compare candidates before choosing. In a "
+    "report a curve is a method figure: it goes in an annex, not in the chapter "
+    "body. The legend names each curve by its asset, never its id, and the title "
+    "must not carry a curve id either.",
     {
         "type": "object",
         "properties": {
@@ -490,15 +517,19 @@ def plot_curve(
     xlabel: Optional[str] = None,
     filename: str = "vulnerability_curve.png",
 ) -> dict[str, Any]:
-    series = []
+    figures.require_plain([title, xlabel], conv.curves)
+    title = figures.capitalise(title)
     for name in curves:
-        curve = conv.curves.get(name)
-        if curve is None:
+        if name not in conv.curves:
             raise ValueError(
                 f"no curve {name!r}; loaded curves: {sorted(conv.curves) or 'none'}"
             )
+    plain = _curve_labels({name: conv.curves[name] for name in curves})
+    series = []
+    for name in curves:
+        curve = conv.curves[name]
         entry = {
-            "name": name,
+            "name": plain[name],
             "intensity": curve["intensity"],
             "central": curve["proportion"],
         }
