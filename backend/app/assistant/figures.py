@@ -14,8 +14,9 @@ breaks on the value axis and a plain left-aligned title.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import matplotlib
 
@@ -46,8 +47,70 @@ NEGLIGIBLE_SHARE = 0.005  # categories below this share of the peak are invisibl
 FLAT_SPREAD = 0.05  # bars within this share of the tallest say nothing a sentence does not
 
 
+# Estimates of one quantity named for their bound: the higher the damage or cost, the
+# warmer the colour (lower blue, central amber, upper vermillion).
+_BOUNDS = (
+    ("upper", re.compile(r"\bupper\b", re.I), "#d55e00"),
+    ("lower", re.compile(r"\blower\b", re.I), "#0072b2"),
+    ("central", re.compile(r"\bcentral\b", re.I), "#e69f00"),
+)
+
+
 def _color(label: str, i: int) -> str:
     return SEMANTIC_COLORS.get(str(label).strip().lower(), _FALLBACK[i % len(_FALLBACK)])
+
+
+def _series_colors(names: list[str]) -> list[str]:
+    """One colour per series; a chart that has a lower or an upper estimate colours the
+    lower / central / upper ones by their rank."""
+    bound = [next((c for k, p, c in _BOUNDS if p.search(n)), None) for n in names]
+    if not any(c in ("#d55e00", "#0072b2") for c in bound):
+        bound = [None] * len(names)
+    return [c or _color(n, i) for i, (n, c) in enumerate(zip(names, bound))]
+
+
+def capitalise(text: str | None) -> str | None:
+    """A title or caption starts with a capital."""
+    return text[:1].upper() + text[1:] if text else text
+
+
+_SNAKE_CASE = re.compile(r"(?<![A-Za-z0-9])[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+(?![A-Za-z0-9])")
+
+
+def _id_patterns(curve_names: Iterable[str]) -> list[tuple[str, re.Pattern]]:
+    """The curve ids to look for in figure text: the library's and the conversation's
+    own, those that look like an id (a separator or a digit in them), in any case and
+    with any of space, _, - or . between their parts."""
+    from . import curve_library
+
+    ids = {str(n) for n in curve_names}
+    if curve_library.available():
+        ids |= {row["curve_id"] for row in curve_library.index()}
+    out = []
+    for i in sorted(ids):
+        parts = [p for p in re.split(r"[^A-Za-z0-9]+", i) if p]
+        if parts and (len(parts) > 1 or any(c.isdigit() for c in i)):
+            joined = r"[\s_.\-]+".join(map(re.escape, parts))
+            out.append((i, re.compile(rf"(?<![A-Za-z0-9]){joined}(?![A-Za-z0-9])", re.I)))
+    return out
+
+
+def require_plain(texts: Iterable[str | None], curve_names: Iterable[str] = ()) -> None:
+    """Raise when text that goes into a figure (title, axis label, legend entry, category)
+    carries an internal identifier: a curve id ('aei_rail_pga', 'F7.1') or any snake_case
+    name. A reader sees plain words; the id says nothing to them."""
+    patterns = _id_patterns(curve_names)
+    for text in texts:
+        if not text:
+            continue
+        text = str(text)
+        found = _SNAKE_CASE.findall(text) + [i for i, p in patterns if p.search(text)]
+        if found:
+            raise ValueError(
+                f"{text!r} has an internal identifier ({found[0]!r}) in it. A figure uses plain "
+                "words for what it shows (the asset, the hazard, the estimate), never a curve id, "
+                "variable or file name: say what it is and draw it again."
+            )
 
 
 def flat_series(series: list[dict[str, Any]]) -> list[str]:
@@ -68,6 +131,14 @@ def _human_ticks(v: float, _pos: int = 0) -> str:
         if a >= div:
             return f"{v / div:.10g}{suffix}"
     return f"{v:.10g}"
+
+
+_SCALED_UNIT = re.compile(r"\b(thousand|million|billion|trillion)\b", re.I)
+_US_MILLION = re.compile(r"US\$\s*million\b", re.I)
+
+
+def _plain_ticks(v: float, _pos: int = 0) -> str:
+    return f"{v:,.10g}"
 
 
 def _legend(ax: Any, n_items: int) -> None:
@@ -92,6 +163,7 @@ def _style(
     xlabel: str | None,
     ylabel: str | None,
     value_axis: str = "y",
+    plain_ticks: bool = False,
 ) -> None:
     from matplotlib.ticker import FuncFormatter, MaxNLocator
 
@@ -104,7 +176,8 @@ def _style(
     ax.tick_params(direction="out", length=5, width=0.5, color="black", labelsize=8.5)
     value = ax.yaxis if value_axis == "y" else ax.xaxis
     value.set_major_locator(MaxNLocator(nbins=7))
-    value.set_major_formatter(FuncFormatter(_human_ticks))
+    # an axis whose unit already says million or billion never gets a "k" or "M" on top of it
+    value.set_major_formatter(FuncFormatter(_plain_ticks if plain_ticks else _human_ticks))
     if title:
         ax.set_title(title, fontsize=12, loc="left", pad=10)
     if xlabel:
@@ -140,8 +213,25 @@ def chart(
 
     from ..api.export import tex_safe  # two `$` in one label would switch on mathtext
 
-    labels = [tex_safe(x) for x in labels]
     values = [[float(v) for v in s["values"]] for s in series]
+    # Money in US$ million that reaches a thousand is drawn in US$ billion: a "1k" or
+    # "2.5k" tick on a million axis reads as billions.
+    value_on_x = horizontal and kind in ("bar", "stacked_bar")
+    unit = xlabel if value_on_x else ylabel
+    plain_ticks = bool(unit and kind != "pie" and _SCALED_UNIT.search(unit))
+    if plain_ticks and _US_MILLION.search(unit):
+        stack = stacked or kind == "stacked_bar"
+        top = max(
+            (sum(col[i] for col in values) if stack else max(abs(col[i]) for col in values))
+            for i in range(len(labels))
+        )
+        if top >= 1000:
+            values = [[v / 1000.0 for v in col] for col in values]
+            billion = _US_MILLION.sub("US$ billion", unit)
+            xlabel, ylabel = (billion, ylabel) if value_on_x else (xlabel, billion)
+
+    labels = [tex_safe(x) for x in labels]
+    title = capitalise(title)
     title, xlabel, ylabel = (tex_safe(t) if t else t for t in (title, xlabel, ylabel))
 
     # Drop categories that would render as invisible slivers.
@@ -162,6 +252,7 @@ def chart(
         fig, ax = plotting.subplots(figsize=(8, 4.8))
         x = np.arange(len(labels))
         names = [tex_safe(s.get("name", f"Series {i + 1}")) for i, s in enumerate(series)]
+        colors = _series_colors(names)
 
         if kind == "pie":
             colors = [_color(l, i) for i, l in enumerate(labels)]
@@ -176,10 +267,10 @@ def chart(
         elif kind == "line":
             for i, (name, col) in enumerate(zip(names, values)):
                 ax.plot(x, col, marker="o", markersize=4, linewidth=1.6,
-                        color=_color(name, i), label=name)
+                        color=colors[i], label=name)
             ax.set_xticks(x)
             ax.set_xticklabels(labels, fontsize=8.5)
-            _style(ax, title, xlabel, ylabel, "y")
+            _style(ax, title, xlabel, ylabel, "y", plain_ticks)
             if len(names) > 1:
                 _legend(ax, len(names))
         elif kind in ("bar", "stacked_bar"):
@@ -189,35 +280,35 @@ def chart(
                 if stacked:
                     left = np.zeros(len(labels))
                     for i, (name, col) in enumerate(zip(names, values)):
-                        ax.barh(x, col, left=left, color=_color(name, i), label=name)
+                        ax.barh(x, col, left=left, color=colors[i], label=name)
                         left = left + np.array(col)
                 else:
                     h = 0.8 / n
                     for i, (name, col) in enumerate(zip(names, values)):
                         ax.barh(x + (i - (n - 1) / 2) * h, col, height=h,
-                                color=_color(name, i), label=name)
+                                color=colors[i], label=name)
                 ax.set_yticks(x)
                 ax.set_yticklabels(labels, fontsize=8.5)
                 ax.invert_yaxis()
-                _style(ax, title, xlabel, ylabel, "x")
+                _style(ax, title, xlabel, ylabel, "x", plain_ticks)
             else:
                 if stacked:
                     bottom = np.zeros(len(labels))
                     for i, (name, col) in enumerate(zip(names, values)):
-                        ax.bar(x, col, bottom=bottom, color=_color(name, i), label=name)
+                        ax.bar(x, col, bottom=bottom, color=colors[i], label=name)
                         bottom = bottom + np.array(col)
                 else:
                     w = 0.8 / n
                     for i, (name, col) in enumerate(zip(names, values)):
                         ax.bar(x + (i - (n - 1) / 2) * w, col, width=w,
-                               color=_color(name, i), label=name)
+                               color=colors[i], label=name)
                 ax.set_xticks(x)
                 ax.set_xticklabels(
                     labels, fontsize=8.5,
                     rotation=30 if max(len(l) for l in labels) > 10 else 0,
                     ha="right" if max(len(l) for l in labels) > 10 else "center",
                 )
-                _style(ax, title, xlabel, ylabel, "y")
+                _style(ax, title, xlabel, ylabel, "y", plain_ticks)
             if len(names) > 1:
                 _legend(ax, len(names))
         else:
@@ -315,7 +406,7 @@ def custom_map(
 
         ax.set_axis_off()
         if title:
-            ax.set_title(title, fontsize=13, loc="left", pad=10)
+            ax.set_title(capitalise(title), fontsize=13, loc="left", pad=10)
         if legend and handles:
             ax.legend(handles=handles, loc="lower right", fontsize=9,
                       frameon=True, framealpha=0.85)
@@ -337,7 +428,7 @@ def curve_plot(
     """
     from ..api.export import tex_safe
 
-    title, xlabel = (tex_safe(t) if t else t for t in (title, xlabel))
+    title, xlabel = (tex_safe(t) if t else t for t in (capitalise(title), xlabel))
     with plotting.LOCK:
         fig, ax = plotting.subplots(figsize=(8, 4.8))
         for i, curve in enumerate(curves):

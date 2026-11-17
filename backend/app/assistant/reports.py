@@ -32,7 +32,8 @@ def _cell(v: Any) -> str:
 
 
 def _caption(v: Any) -> str:
-    return _NUMBERED.sub("", _cell(v), count=1)
+    text = _NUMBERED.sub("", _cell(v), count=1)
+    return text[:1].upper() + text[1:]
 
 
 def _heading(text: str) -> str:

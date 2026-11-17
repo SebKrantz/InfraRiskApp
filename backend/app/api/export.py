@@ -426,6 +426,36 @@ def generate_barchart_png(
         return img_buffer.getvalue()
 
 
+def _class_levels(values: np.ndarray, max_classes: int = 10) -> Optional[np.ndarray]:
+    """The distinct values of a class raster (a few whole numbers), else None."""
+    levels = np.unique(values)
+    if 1 < len(levels) <= max_classes and np.all(levels == np.round(levels)):
+        return levels
+    return None
+
+
+def _corridor_mask(
+    infrastructure_mercator: gpd.GeoDataFrame,
+    bbox_wgs84: list,
+    win_bounds: tuple,
+    shape: tuple,
+    km: float,
+) -> np.ndarray:
+    """True for the raster cells (window bounds `win_bounds` = left, bottom, right, top,
+    in degrees) within `km` of the infrastructure, which is in Web Mercator."""
+    from rasterio.features import rasterize
+    from rasterio.transform import from_bounds
+
+    # Web Mercator stretches distances by 1 / cos(latitude)
+    stretch = 1.0 / np.cos(np.radians((bbox_wgs84[1] + bbox_wgs84[3]) / 2))
+    reach = infrastructure_mercator.geometry.buffer(km * 1000.0 * stretch)
+    reach = gpd.GeoSeries(reach, crs='EPSG:3857').to_crs('EPSG:4326').union_all()
+    return rasterize(
+        [(reach, 1)], out_shape=shape,
+        transform=from_bounds(*win_bounds, shape[1], shape[0]), fill=0, dtype='uint8',
+    ).astype(bool)
+
+
 @plotting.locked
 def generate_map_png(
     infrastructure_gdf: gpd.GeoDataFrame,
@@ -438,6 +468,7 @@ def generate_map_png(
     intensity_threshold: Optional[float] = None,
     basemap: str = 'positron',
     hazard_unit: Optional[str] = None,
+    focus_km: Optional[float] = None,
 ) -> bytes:
     """
     Generate PNG map from infrastructure and hazard data.
@@ -462,6 +493,11 @@ def generate_map_png(
         Basemap tile provider name
     hazard_unit : str, optional
         Unit string from hazard metadata for colorbar and legend labels
+    focus_km : float, optional
+        For a class raster (a few integer classes, e.g. a 1-5 susceptibility scale)
+        only: draw just the classes from the middle of the scale up (and at or above
+        the threshold), one flat colour each, within this many km of the
+        infrastructure. Other rasters are drawn as before.
     
     Returns:
     --------
@@ -503,6 +539,7 @@ def generate_map_png(
     
     # Deferred colorbars for vulnerability mode (drawn after tight_layout for stable positioning)
     hazard_sm = None
+    hazard_ticks = None  # set for a class raster: one tick per class drawn
     vuln_sm = None
     hazard_cbar_label = _hazard_intensity_cbar_label(hazard_unit)
     
@@ -577,59 +614,90 @@ def generate_map_png(
                 vmin = np.nanmin(hazard_data[valid_mask])
                 vmax = np.nanmax(hazard_data[valid_mask])
                 
-                if vmax > vmin:
-                    # Use sqrt normalization like tile service
-                    normalized = (np.sqrt(hazard_data) - np.sqrt(vmin)) / (np.sqrt(vmax) - np.sqrt(vmin))
-                    normalized = np.clip(normalized, 0, 1)
+                levels = _class_levels(hazard_data[valid_mask]) if focus_km is not None else None
+                if levels is not None:
+                    # A class raster (a few integer classes, e.g. susceptibility 1-5): the low
+                    # classes cover most of the terrain and flood the map, so draw the upper
+                    # classes only, in one flat colour each, within `focus_km` of the asset.
+                    first = max(float(np.ceil((vmin + vmax) / 2)), float(intensity_threshold or vmin))
+                    shown = [float(c) for c in levels if c >= first]
+                    sm = None  # nothing at or above the threshold: no wash, no colourbar
+                    show = valid_mask & (hazard_data >= first) & _corridor_mask(
+                        infrastructure_mercator, bbox_wgs84, win_bounds, hazard_data.shape, focus_km)
+                    if shown:
+                        from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
+                        from matplotlib.cm import ScalarMappable
+                        ramp = LinearSegmentedColormap.from_list('hazard_classes', ['#93c5fd', '#1e3a8a'])
+                        colors = [ramp(i / max(len(shown) - 1, 1)) for i in range(len(shown))]
+                        classes_img = np.zeros(hazard_data.shape + (4,), dtype=np.uint8)
+                        for color, c in zip(colors, shown):
+                            classes_img[show & (hazard_data == c)] = [round(255 * v) for v in color[:3]] + [round(255 * 0.8 * hazard_opacity)]
+                        ax.imshow(classes_img, extent=extent, interpolation='nearest',
+                                  aspect='auto', origin='upper', zorder=1)
+                        sm = ScalarMappable(
+                            norm=BoundaryNorm([c - 0.5 for c in shown] + [shown[-1] + 0.5], len(shown)),
+                            cmap=ListedColormap(colors))
+                        sm.set_array([])
+                        hazard_ticks = shown
+                        ax.text(0.01, 0.01, f"Classes {shown[0]:g}-{shown[-1]:g} within {focus_km:g} km of the asset",
+                                transform=ax.transAxes, fontsize=9, zorder=5,
+                                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='none', alpha=0.85))
                 else:
-                    normalized = np.zeros_like(hazard_data, dtype=np.float32)
-                normalized[~valid_mask] = np.nan
+                    if vmax > vmin:
+                        # Use sqrt normalization like tile service
+                        normalized = (np.sqrt(hazard_data) - np.sqrt(vmin)) / (np.sqrt(vmax) - np.sqrt(vmin))
+                        normalized = np.clip(normalized, 0, 1)
+                    else:
+                        normalized = np.zeros_like(hazard_data, dtype=np.float32)
+                    normalized[~valid_mask] = np.nan
                 
-                # Create single-color (blue-ish) overlay with variable transparency
-                # Dark blue color: #1e40af (RGB: 30, 64, 175) - darker blue, clearly different from red and green
-                blue_color = np.array([30, 64, 175]) / 255.0  # Normalize to 0-1
+                    # Create single-color (blue-ish) overlay with variable transparency
+                    # Dark blue color: #1e40af (RGB: 30, 64, 175) - darker blue, clearly different from red and green
+                    blue_color = np.array([30, 64, 175]) / 255.0  # Normalize to 0-1
                 
-                # Create RGBA image: blue color with alpha based on normalized hazard
-                # Alpha goes from 0 (transparent) at hazard=0 to full opacity at hazard=max
-                h, w = normalized.shape
-                colored_rgba = np.zeros((h, w, 4), dtype=np.float32)
-                colored_rgba[:, :, 0] = blue_color[0]  # Red channel
-                colored_rgba[:, :, 1] = blue_color[1]  # Green channel
-                colored_rgba[:, :, 2] = blue_color[2]  # Blue channel
-                colored_rgba[:, :, 3] = normalized * hazard_opacity  # Alpha channel (0 to hazard_opacity)
+                    # Create RGBA image: blue color with alpha based on normalized hazard
+                    # Alpha goes from 0 (transparent) at hazard=0 to full opacity at hazard=max
+                    h, w = normalized.shape
+                    colored_rgba = np.zeros((h, w, 4), dtype=np.float32)
+                    colored_rgba[:, :, 0] = blue_color[0]  # Red channel
+                    colored_rgba[:, :, 1] = blue_color[1]  # Green channel
+                    colored_rgba[:, :, 2] = blue_color[2]  # Blue channel
+                    colored_rgba[:, :, 3] = normalized * hazard_opacity  # Alpha channel (0 to hazard_opacity)
                 
-                # Convert to uint8
-                colored_uint8 = (colored_rgba * 255).astype(np.uint8)
+                    # Convert to uint8
+                    colored_uint8 = (colored_rgba * 255).astype(np.uint8)
                 
-                # Plot hazard raster with RGBA (includes alpha channel)
-                im = ax.imshow(colored_uint8, extent=extent, 
-                              interpolation='bilinear', 
-                              aspect='auto', origin='upper', zorder=1)
+                    # Plot hazard raster with RGBA (includes alpha channel)
+                    im = ax.imshow(colored_uint8, extent=extent, 
+                                  interpolation='bilinear', 
+                                  aspect='auto', origin='upper', zorder=1)
                 
-                # Create a ScalarMappable for the colorbar. FuncNorm carries a true
-                # inverse, so the bar's ticks stay inside [vmin, vmax] on the sqrt
-                # scale the raster is drawn with (a hand-rolled Normalize without
-                # one drew ticks past both ends, which overprinted the end labels).
-                from matplotlib.colors import FuncNorm, Normalize
-                from matplotlib.cm import ScalarMappable
+                    # Create a ScalarMappable for the colorbar. FuncNorm carries a true
+                    # inverse, so the bar's ticks stay inside [vmin, vmax] on the sqrt
+                    # scale the raster is drawn with (a hand-rolled Normalize without
+                    # one drew ticks past both ends, which overprinted the end labels).
+                    from matplotlib.colors import FuncNorm, Normalize
+                    from matplotlib.cm import ScalarMappable
                 
-                # Create ScalarMappable for colorbar with blue colormap
-                from matplotlib.colors import LinearSegmentedColormap
-                # Create a blue colormap (light to dark blue) for the colorbar
-                blue_colors = ['#dbeafe', '#1e40af']  # Light blue to dark blue
-                blue_cmap = LinearSegmentedColormap.from_list('blue_hazard', blue_colors, N=256)
+                    # Create ScalarMappable for colorbar with blue colormap
+                    from matplotlib.colors import LinearSegmentedColormap
+                    # Create a blue colormap (light to dark blue) for the colorbar
+                    blue_colors = ['#dbeafe', '#1e40af']  # Light blue to dark blue
+                    blue_cmap = LinearSegmentedColormap.from_list('blue_hazard', blue_colors, N=256)
                 
-                norm = (FuncNorm((np.sqrt, np.square), vmin=vmin, vmax=vmax) if vmax > vmin
-                        else Normalize(vmin=vmin, vmax=vmax))  # a constant window has no scale
-                sm = ScalarMappable(norm=norm, cmap=blue_cmap)
-                sm.set_array([])
+                    norm = (FuncNorm((np.sqrt, np.square), vmin=vmin, vmax=vmax) if vmax > vmin
+                            else Normalize(vmin=vmin, vmax=vmax))  # a constant window has no scale
+                    sm = ScalarMappable(norm=norm, cmap=blue_cmap)
+                    sm.set_array([])
                 
                 # Add colorbar - vulnerability mode defers to after tight_layout
-                if is_vulnerability_mode:
+                if sm is None:
+                    pass
+                elif is_vulnerability_mode:
                     hazard_sm = sm
                 else:
                     cbar = fig.colorbar(sm, ax=ax, orientation='vertical', 
-                                       pad=0.02, shrink=0.6, aspect=20)
+                                       pad=0.02, shrink=0.6, aspect=20, ticks=hazard_ticks)
                     cbar.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
                     cbar.ax.tick_params(labelsize=9)
     except Exception as e:
@@ -741,7 +809,7 @@ def generate_map_png(
         cbar_height = (pos.height - gap) / 2
         if hazard_sm is not None:
             cax_h = fig.add_axes([cbar_x, pos.y0, cbar_width, cbar_height])
-            cb_h = fig.colorbar(hazard_sm, cax=cax_h, orientation='vertical')
+            cb_h = fig.colorbar(hazard_sm, cax=cax_h, orientation='vertical', ticks=hazard_ticks)
             cb_h.set_label(hazard_cbar_label, rotation=270, labelpad=15, fontsize=10)
             cb_h.ax.tick_params(labelsize=9)
         cax_v = fig.add_axes([cbar_x, pos.y0 + cbar_height + gap, cbar_width, cbar_height])

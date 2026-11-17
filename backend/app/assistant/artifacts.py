@@ -53,6 +53,8 @@ class Artifact:
 
     @property
     def mime(self) -> str:
+        if self.path.suffix.lower() in (".jpg", ".jpeg") and self.kind in ("png", "chart", "map"):
+            return "image/jpeg"  # a report map is a JPEG; its kind stays "map"
         return KINDS.get(self.kind, KINDS["file"])[0]
 
     @property
