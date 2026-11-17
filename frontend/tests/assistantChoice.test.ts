@@ -26,7 +26,7 @@ const {
 } = await import('../src/lib/assistantChoice.ts')
 
 const five = ['low', 'medium', 'high', 'xhigh', 'max']
-// 3.8 Flash and 3.1 Pro answer `minimal` with a 400; only Flash-Lite takes it
+// Hydrogen, 3.8 Flash and 3.1 Pro answer `minimal` with a 400; only Flash-Lite takes it
 const three = ['low', 'medium', 'high']
 const provider = (id: string, label: string, available: boolean, models: string[], def: string,
   efforts: Record<string, string[]>, tiers: string[]) => ({
@@ -43,8 +43,9 @@ const meta = (keyed: string[] = ['anthropic', 'gemini', 'openai']) => ({
       { 'claude-opus-5-5': five, 'claude-fable-5-1': five, 'claude-sonnet-5-5': five, 'claude-haiku-4-5': [] },
       ['standard']),
     provider('gemini', 'Gemini', keyed.includes('gemini'),
-      ['gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.5-flash-lite'], 'gemini-3.8-flash',
-      { 'gemini-3.8-flash': three, 'gemini-3.1-pro-preview': three,
+      ['gemini-4-hydrogen', 'gemini-3.8-flash', 'gemini-3.1-pro-preview', 'gemini-3.5-flash-lite'],
+      'gemini-4-hydrogen',
+      { 'gemini-4-hydrogen': three, 'gemini-3.8-flash': three, 'gemini-3.1-pro-preview': three,
         'gemini-3.5-flash-lite': ['minimal', ...three] },
       ['standard', 'flex']),
     provider('openai', 'OpenAI', keyed.includes('openai'),
@@ -80,7 +81,7 @@ test('resolveChoice: default, saved, and anything no longer on offer', () => {
     { provider: 'anthropic', model: 'claude-haiku-4-5', effort: null, tier: 'standard' })
   // an unkeyed provider falls back to the default provider
   assert.deepEqual(resolveChoice(meta(['gemini']), saved),
-    { provider: 'gemini', model: 'gemini-3.8-flash', effort: null, tier: 'standard' })
+    { provider: 'gemini', model: 'gemini-4-hydrogen', effort: null, tier: 'standard' })
   // a missing provider likewise: nothing carried over
   assert.deepEqual(resolveChoice(m, { model: 'gpt-6.1-sol', effort: 'max', tier: 'flex' }),
     { provider: 'anthropic', model: 'claude-sonnet-5-5', effort: null, tier: 'standard' })
@@ -89,9 +90,11 @@ test('resolveChoice: default, saved, and anything no longer on offer', () => {
     { provider: 'anthropic', model: 'claude-opus-5-5', effort: 'high', tier: 'standard' })
   // an unlisted saved model: the provider's default model and Default effort (flex is the provider's, kept)
   assert.deepEqual(resolveChoice(m, { provider: 'gemini', model: 'gemini-3-flash-preview', effort: 'low', tier: 'flex' }),
-    { provider: 'gemini', model: 'gemini-3.8-flash', effort: null, tier: 'flex' })
+    { provider: 'gemini', model: 'gemini-4-hydrogen', effort: null, tier: 'flex' })
   // `minimal` saved under the old table is not a 3.8 Flash level; 3.1 Pro's medium now is
   assert.equal(resolveChoice(m, { provider: 'gemini', model: 'gemini-3.8-flash', effort: 'minimal', tier: 'standard' }).effort, null)
+  assert.equal(resolveChoice(m, { provider: 'gemini', model: 'gemini-4-hydrogen', effort: 'minimal', tier: 'standard' }).effort, null)
+  assert.equal(resolveChoice(m, { provider: 'gemini', model: 'gemini-4-hydrogen', effort: 'low', tier: 'standard' }).effort, 'low')
   assert.equal(resolveChoice(m, { provider: 'gemini', model: 'gemini-3.1-pro-preview', effort: 'medium', tier: 'standard' }).effort, 'medium')
 })
 
@@ -105,7 +108,7 @@ test('changing provider and model', () => {
   const m = meta()
   const cur = { provider: 'openai', model: 'gpt-6.1-sol', effort: 'max', tier: 'flex' } as const
   assert.deepEqual(withProvider(m, cur, 'gemini'),
-    { provider: 'gemini', model: 'gemini-3.8-flash', effort: null, tier: 'flex' })
+    { provider: 'gemini', model: 'gemini-4-hydrogen', effort: null, tier: 'flex' })
   assert.deepEqual(withProvider(m, cur, 'anthropic'),
     { provider: 'anthropic', model: 'claude-sonnet-5-5', effort: null, tier: 'standard' })
   assert.deepEqual(withModel(m, cur, 'gpt-6-astra'), { ...cur, model: 'gpt-6-astra' })
@@ -115,6 +118,7 @@ test('changing provider and model', () => {
   const lite = { ...gem, model: 'gemini-3.5-flash-lite', effort: 'minimal' } as const
   assert.equal(withModel(m, lite, 'gemini-3.8-flash').effort, null) // only Flash-Lite takes minimal
   assert.equal(withModel(m, lite, 'gemini-3.1-pro-preview').effort, null)
+  assert.equal(withModel(m, lite, 'gemini-4-hydrogen').effort, null)
 })
 
 test('handoff is a complete setting: saved effort and tier never survive', () => {
@@ -139,13 +143,13 @@ test('handoff is a complete setting: saved effort and tier never survive', () =>
     { provider: 'anthropic', model: 'claude-haiku-4-5', effort: null, tier: 'standard' })
   // a provider alone: its default model
   assert.deepEqual(applyHandoff(m, { ...none, provider: 'gemini' }, current),
-    { provider: 'gemini', model: 'gemini-3.8-flash', effort: null, tier: 'standard' })
+    { provider: 'gemini', model: 'gemini-4-hydrogen', effort: null, tier: 'standard' })
   // a model alone names its provider
   assert.deepEqual(applyHandoff(m, { ...none, model: 'gpt-6-astra' }, current),
     { provider: 'openai', model: 'gpt-6-astra', effort: null, tier: 'standard' })
   // a model of another provider than the one named: the model is dropped for that provider's default
   assert.deepEqual(applyHandoff(m, { ...none, provider: 'gemini', model: 'gpt-6-luna' }, current),
-    { provider: 'gemini', model: 'gemini-3.8-flash', effort: null, tier: 'standard' })
+    { provider: 'gemini', model: 'gemini-4-hydrogen', effort: null, tier: 'standard' })
 })
 
 test('handoff: an unkeyed provider or unknown model is ignored', () => {

@@ -236,7 +236,8 @@ Gemini is offered in the model picker when its backend has what it needs: `VERTE
 `VERTEX_API_KEY` on `vertex`, `GEMINI_API_KEY` on `developer`. `backend/.env.example` shows the
 `vertex` setup. The code is `make_client` and `_flex_options` in
 `backend/app/assistant/providers/gemini.py`, and `gemini_configured` in `backend/app/config.py`; it
-needs `google-genai` 1.74 or later, the first release with `Client(enterprise=...)`.
+needs `google-genai` 2.15 or later, the first release that takes `api_key` together with `project`
+and `location`.
 
 **Authentication on Vertex**, one of two:
 
@@ -249,17 +250,19 @@ needs `google-genai` 1.74 or later, the first release with `Client(enterprise=..
    path. The server
    removes secret-named variables from its environment at startup (`app/redact.py`), so
    `config.py` reads that path first and the adapter loads the key file for the client itself.
-2. *`VERTEX_API_KEY`.* A Google Cloud API key: requests go to the global endpoint with no project in
-   the path, and the key's own project is billed. `VERTEX_PROJECT` and `VERTEX_LOCATION` are then
-   unused. Google documents this form for express mode, whose model list (checked 2026-10-13) has
-   `gemini-3.1-pro-preview` but not `gemini-3.8-flash` or `gemini-3.5-flash-lite`; try each model
-   before relying on a key.
+2. *`VERTEX_API_KEY`.* A Google Cloud API key. With `VERTEX_PROJECT` set, the client sends the key
+   together with the project and `VERTEX_LOCATION` (`global` by default): the key alone routes to
+   `us-central1`, where `gemini-4-hydrogen` is not served (404, checked 2026-11-17). With no
+   `VERTEX_PROJECT`, requests go to the global endpoint with no project in the path and the key's
+   own project is billed. Google documents the key-only form for express mode, whose model list
+   (checked 2026-10-13) has `gemini-3.1-pro-preview` but not `gemini-3.8-flash` or
+   `gemini-3.5-flash-lite`; try each model before relying on a key alone.
 
 **Flex.** On Vertex, flex is [Flex PayGo](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/flex-paygo),
 asked for with the header `X-Vertex-AI-LLM-Shared-Request-Type: flex` instead of `service_tier`. It
-runs only at the `global` location and only for the models in `VERTEX_FLEX_MODELS`, which holds all
-three models of the table; any other model or location logs a warning and runs at the standard
-tier. The 15-minute timeout and the back-off-then-standard fallback are unchanged, and the fallback
+runs only at the `global` location and only for the models in `VERTEX_FLEX_MODELS`, which holds
+three of the table's four Gemini models (Vertex refused flex for `gemini-4-hydrogen`, 400, checked
+2026-11-17); any other model or location logs a warning and runs at the standard tier. The 15-minute timeout and the back-off-then-standard fallback are unchanged, and the fallback
 drops the header.
 
 **Docker.** `docker-compose.yml` passes no assistant settings to the container today, so the
