@@ -48,6 +48,7 @@ _sleep = time.sleep  # a seam for the tests
 # generative-ai/docs/flex-paygo, read 2026-10-13). With no Provisioned Throughput, which the
 # header would use first, the request runs at flex.
 VERTEX_FLEX_HEADERS = {"X-Vertex-AI-LLM-Shared-Request-Type": "flex"}
+# Vertex refused flex for gemini-4-hydrogen (400 "Flex API is not supported", checked 2026-11-17).
 VERTEX_FLEX_MODELS = frozenset({
     "gemini-3.8-flash-cyber", "gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash",
     "gemini-3.5-flash-lite", "gemini-3.1-flash-lite-image", "gemini-3-pro-image",
@@ -65,8 +66,13 @@ def make_client() -> genai.Client:
     http_options = types.HttpOptions(timeout=int(config.ASSISTANT_PROVIDER_TIMEOUT * 1000))
     if config.GEMINI_BACKEND == "vertex":
         if config.VERTEX_API_KEY:
-            # Google documents the key without project and location (global endpoint, the
-            # key's project billed); SDK >= 2.15 would take all three, older ones refuse
+            # The key alone routes to locations/us-central1, where gemini-4-hydrogen is not
+            # served (404), so with a project the key goes with it and the location (SDK >= 2.15
+            # takes all three). Without a project: Google's documented key-only form.
+            if config.VERTEX_PROJECT:
+                return genai.Client(enterprise=True, api_key=config.VERTEX_API_KEY,
+                                    project=config.VERTEX_PROJECT,
+                                    location=config.VERTEX_LOCATION, http_options=http_options)
             return genai.Client(enterprise=True, api_key=config.VERTEX_API_KEY,
                                 http_options=http_options)
         if not config.VERTEX_PROJECT:   # else the SDK would look for one in ADC / the env
@@ -98,7 +104,8 @@ def _flex_options(model: str) -> dict[str, Any] | None:
         log.warning("gemini flex: %s has no Flex PayGo on Vertex AI; sending the request at "
                     "the standard tier", model)
         return None
-    if config.VERTEX_LOCATION != "global" and not config.VERTEX_API_KEY:   # a key: global
+    if config.VERTEX_LOCATION != "global" and (config.VERTEX_PROJECT or not config.VERTEX_API_KEY):
+        # (a key with no project goes to global whatever VERTEX_LOCATION says)
         log.warning("gemini flex: Flex PayGo needs VERTEX_LOCATION=global, not %s; sending "
                     "the request at the standard tier", config.VERTEX_LOCATION)
         return None

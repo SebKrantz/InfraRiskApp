@@ -27,7 +27,8 @@ from app.assistant import models, schema  # noqa: E402
 from app.assistant.providers import gemini as adapter  # noqa: E402
 
 FLEX_HEADER = "X-Vertex-AI-LLM-Shared-Request-Type"
-MODEL = "gemini-3.8-flash"
+MODEL = "gemini-3.8-flash"       # a model with Flex PayGo, which the flex tests need
+HYDROGEN = "gemini-4-hydrogen"   # none: Vertex refused flex for it (400, 2026-11-17)
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
 VERTEX_URL = "https://aiplatform.googleapis.com/v1beta1/"
 STREAM = f"{MODEL}:streamGenerateContent?alt=sse"
@@ -104,9 +105,8 @@ class MakeClient(unittest.TestCase):
          {"enterprise": True, "project": "p", "location": "global"}),
         ("vertex", {"VERTEX_PROJECT": "p", "VERTEX_LOCATION": "europe-west4"},
          {"enterprise": True, "project": "p", "location": "europe-west4"}),
-        # Google documents the key without project and location; a project set beside it is unused
-        ("vertex", {"VERTEX_PROJECT": "p", "VERTEX_API_KEY": "vx-key"},
-         {"enterprise": True, "api_key": "vx-key"}),
+        # Google documents the key without project and location: with no project, that is it
+        ("vertex", {"VERTEX_API_KEY": "vx-key"}, {"enterprise": True, "api_key": "vx-key"}),
     ]
 
     def test_the_client_is_built_explicitly_for_each_backend(self):
@@ -124,11 +124,32 @@ class MakeClient(unittest.TestCase):
                 self.assertEqual(kwargs.pop("http_options").timeout, 120_000)
                 self.assertEqual(kwargs, expected)
 
+    def test_a_vertex_key_goes_with_the_project_and_location_when_there_is_a_project(self):
+        """The key alone routes to us-central1, where gemini-4-hydrogen is not served (404,
+        checked 2026-11-17); with a project the client gets api_key, project and location
+        together."""
+        for given, expected in [
+            ({"VERTEX_PROJECT": "p", "VERTEX_API_KEY": "vx-key"},
+             {"enterprise": True, "api_key": "vx-key", "project": "p", "location": "global"}),
+            ({"VERTEX_PROJECT": "p", "VERTEX_API_KEY": "vx-key", "VERTEX_LOCATION": "europe-west4"},
+             {"enterprise": True, "api_key": "vx-key", "project": "p",
+              "location": "europe-west4"}),
+            ({"VERTEX_API_KEY": "vx-key"}, {"enterprise": True, "api_key": "vx-key"}),
+        ]:
+            with self.subTest(given=sorted(given)):
+                built: list[dict] = []
+                with settings("vertex", **given), \
+                        mock.patch.object(adapter.genai, "Client", lambda **kw: built.append(kw)):
+                    adapter.make_client()
+                built[0].pop("http_options")
+                self.assertEqual(built, [expected])
+
     def test_the_client_ignores_the_sdks_environment_variables(self):
         for backend, given, key, place in [
             ("developer", {"GEMINI_API_KEY": "dev-key"}, "dev-key", None),
             ("vertex", {"VERTEX_PROJECT": "p"}, None, ("p", "global")),
             ("vertex", {"VERTEX_API_KEY": "vx-key"}, "vx-key", (None, None)),
+            ("vertex", {"VERTEX_API_KEY": "vx-key", "VERTEX_PROJECT": "p"}, "vx-key", ("p", "global")),
         ]:
             with self.subTest(backend=backend, given=sorted(given)):
                 with settings(backend, **given), no_adc(), \
@@ -192,6 +213,7 @@ class Availability(unittest.TestCase):
         ("developer", {"VERTEX_PROJECT": "p", "VERTEX_API_KEY": "vx-key"}, False),
         ("vertex", {"VERTEX_PROJECT": "p"}, True),   # ADC: not checkable without a call
         ("vertex", {"VERTEX_API_KEY": "vx-key"}, True),
+        ("vertex", {"VERTEX_PROJECT": "p", "VERTEX_API_KEY": "vx-key"}, True),
         ("vertex", {"GEMINI_API_KEY": "dev-key"}, False),
         ("vertex", {}, False),
         ("vertexai", {"VERTEX_PROJECT": "p", "GEMINI_API_KEY": "dev-key"}, False),
@@ -249,6 +271,8 @@ class Endpoints(unittest.TestCase):
          f"europe-west4/publishers/google/models/{STREAM}", None),
         ("vertex", {"VERTEX_API_KEY": "vx-key"},
          VERTEX_URL + f"publishers/google/models/{STREAM}", "vx-key"),
+        ("vertex", {"VERTEX_API_KEY": "vx-key", "VERTEX_PROJECT": "p"},
+         VERTEX_URL + f"projects/p/locations/global/publishers/google/models/{STREAM}", "vx-key"),
     ]
 
     def test_each_backend_streams_from_its_endpoint_at_the_standard_tier(self):
@@ -283,10 +307,15 @@ class Flex(unittest.TestCase):
                 self.assertEqual(request.headers["X-Server-Timeout"], "900")   # FLEX_TIMEOUT_MS
 
     def test_vertex_flex_that_cannot_be_had_runs_at_standard(self):
-        for model, location in [("gemini-2.5-flash", "global"),         # not on the Flex PayGo list
-                                (MODEL, "europe-west4")]:               # Flex PayGo is global only
-            with self.subTest(model=model, location=location):
-                with settings("vertex", VERTEX_PROJECT="p", VERTEX_LOCATION=location):
+        for model, given in [
+            ("gemini-2.5-flash", {}),                                   # not on the Flex PayGo list
+            (HYDROGEN, {}),                                             # refused by Vertex (400)
+            (MODEL, {"VERTEX_LOCATION": "europe-west4"}),               # Flex PayGo is global only
+            (MODEL, {"VERTEX_LOCATION": "europe-west4",                 # a key with a project goes
+                     "VERTEX_API_KEY": "k"}),                           # to that location too
+        ]:
+            with self.subTest(model=model, given=sorted(given)):
+                with settings("vertex", VERTEX_PROJECT="p", **given):
                     wire = Wire(self)
                     with self.assertLogs("infrarisk.assistant", "WARNING") as logged:
                         wire.turn(model, service_tier="flex")
@@ -295,8 +324,9 @@ class Flex(unittest.TestCase):
                 self.assertEqual(request.headers["X-Server-Timeout"], "300")
                 self.assertIn("standard tier", logged.output[0])
 
-    def test_every_gemini_model_of_the_table_has_flex_paygo(self):
-        self.assertLessEqual(set(models.PROVIDERS["gemini"]["models"]), adapter.VERTEX_FLEX_MODELS)
+    def test_every_gemini_model_of_the_table_has_flex_paygo_except_hydrogen(self):
+        self.assertEqual(set(models.PROVIDERS["gemini"]["models"]) - adapter.VERTEX_FLEX_MODELS,
+                         {HYDROGEN})
 
     def test_a_standard_request_after_a_flex_one_carries_nothing_of_it(self):
         for backend, given in [("developer", {"GEMINI_API_KEY": "k"}),

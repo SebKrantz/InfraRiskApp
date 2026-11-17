@@ -53,8 +53,9 @@ class ModelTable(unittest.TestCase):
         )
         self.assertEqual(
             table["gemini"],
-            (["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"],
-             "gemini-3.8-flash"),
+            (["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-pro-preview",
+              "gemini-3.5-flash-lite"],
+             "gemini-4-hydrogen"),
         )
         self.assertEqual(
             table["openai"], (["gpt-6-luna", "gpt-6.1-sol", "gpt-6-astra"], "gpt-6-luna")
@@ -64,12 +65,14 @@ class ModelTable(unittest.TestCase):
 
     def test_effort_levels_and_defaults(self):
         five = ["low", "medium", "high", "xhigh", "max"]
-        three = ["low", "medium", "high"]  # 3.8 Flash and 3.1 Pro answer `minimal` with a 400
+        # Hydrogen (checked live 2026-11-17), 3.8 Flash and 3.1 Pro answer `minimal` with a 400
+        three = ["low", "medium", "high"]
         cases = {
             ("anthropic", "claude-opus-5-5"): (five, "medium"),
             ("anthropic", "claude-fable-5-1"): (five, "high"),
             ("anthropic", "claude-sonnet-5-5"): (five, "high"),
             ("anthropic", "claude-haiku-4-5"): ([], None),
+            ("gemini", "gemini-4-hydrogen"): (three, "high"),
             ("gemini", "gemini-3.8-flash"): (three, "high"),
             ("gemini", "gemini-3.5-flash-lite"): (["minimal", *three], "high"),
             ("gemini", "gemini-3.1-pro-preview"): (three, "high"),
@@ -119,12 +122,12 @@ class ModelTable(unittest.TestCase):
         with mock.patch.object(config, "ASSISTANT_MODEL_ENV", env):
             with self.assertLogs("infrarisk.assistant", level="WARNING") as cm:
                 for _ in range(3):  # /meta asks on every request: still one line
-                    self.assertEqual(models.default_model("gemini"), "gemini-3.8-flash")
+                    self.assertEqual(models.default_model("gemini"), "gemini-4-hydrogen")
             self.assertEqual(len(cm.records), 1)
             msg = cm.records[0].getMessage()
             self.assertIn("GEMINI_MODEL='gemini-3-flash-preview' is not one of Gemini's models", msg)
-            self.assertIn("gemini-3.8-flash, gemini-3.1-pro-preview", msg)
-            self.assertTrue(msg.endswith("using gemini-3.8-flash"))
+            self.assertIn("gemini-4-hydrogen, gemini-3.8-flash, gemini-3.1-pro-preview", msg)
+            self.assertTrue(msg.endswith("using gemini-4-hydrogen"))
             # another value is another line; a valid or empty override is silent
             env["gemini"] = "gemini-2.5-pro"
             with self.assertLogs("infrarisk.assistant", level="WARNING") as cm:
@@ -149,9 +152,18 @@ class ModelTable(unittest.TestCase):
                 models.choose("gemini", "gemini-3.1-pro-preview", "medium", "flex"),
                 ("gemini", "gemini-3.1-pro-preview", "medium", "flex"),  # 3.1 Pro takes medium
             )
-            self.assertEqual(  # `minimal` is a 400 on 3.8 Flash and 3.1 Pro: dropped
+            self.assertEqual(  # `minimal` is a 400 on Hydrogen, 3.8 Flash and 3.1 Pro: dropped
                 models.choose("gemini", "gemini-3.8-flash", "minimal", "flex"),
                 ("gemini", "gemini-3.8-flash", None, "flex"),
+            )
+            self.assertEqual(
+                models.choose("gemini", "gemini-4-hydrogen", "minimal"),
+                ("gemini", "gemini-4-hydrogen", None, "standard"),
+            )
+            self.assertEqual(  # low, medium and high go as chosen; there is no xhigh
+                [models.choose("gemini", "gemini-4-hydrogen", e)[2]
+                 for e in ("low", "medium", "high", "xhigh")],
+                ["low", "medium", "high", None],
             )
             self.assertEqual(
                 models.choose("gemini", "gemini-3.1-pro-preview", "minimal"),
@@ -168,7 +180,7 @@ class ModelTable(unittest.TestCase):
             # a model the provider does not offer runs at the provider's default
             self.assertEqual(
                 models.choose("gemini", "claude-opus-5-5"),
-                ("gemini", "gemini-3.8-flash", None, "standard"),
+                ("gemini", "gemini-4-hydrogen", None, "standard"),
             )
             self.assertEqual(
                 models.choose("anthropic", "claude-sonnet-5"),
@@ -193,7 +205,7 @@ class ModelTable(unittest.TestCase):
             self.assertEqual(
                 [r.getMessage() for r in cm.records],
                 ["chat: model 'gemini-3-flash-preview' is not offered for gemini; "
-                 "using gemini-3.8-flash"],
+                 "using gemini-4-hydrogen"],
             )
             # ... and none when no model was named, or a listed one
             with self.assertNoLogs("infrarisk.assistant", level="WARNING"):
@@ -239,6 +251,8 @@ class MetaEndpoint(unittest.TestCase):
         self.assertEqual(by_id["anthropic"]["effort_default"]["claude-opus-5-5"], "medium")
         self.assertEqual(by_id["gemini"]["efforts"]["gemini-3.1-pro-preview"], ["low", "medium", "high"])
         self.assertEqual(by_id["gemini"]["efforts"]["gemini-3.8-flash"], ["low", "medium", "high"])
+        self.assertEqual(by_id["gemini"]["efforts"]["gemini-4-hydrogen"], ["low", "medium", "high"])
+        self.assertEqual(by_id["gemini"]["default_model"], "gemini-4-hydrogen")
         self.assertEqual(
             by_id["gemini"]["efforts"]["gemini-3.5-flash-lite"], ["minimal", "low", "medium", "high"]
         )
@@ -520,6 +534,21 @@ class GeminiAdapter(unittest.TestCase):
         self.assertIsNone(cfgs[0].http_options)
         self._run(generate)
         self.assertIsNone(cfgs[1].thinking_config)
+
+    def test_hydrogen_thinks_only_at_the_level_chosen_and_never_returns_thoughts(self):
+        cfgs = []
+
+        def generate(model, contents, config):
+            cfgs.append(config)
+            return iter([self._chunk()])
+
+        prov = self._provider(generate)
+        with mock.patch.object(config, "GEMINI_BACKEND", "developer"):
+            list(prov.stream_turn("gemini-4-hydrogen", "sys", [], []))
+            list(prov.stream_turn("gemini-4-hydrogen", "sys", [], [], effort="medium"))
+        self.assertIsNone(cfgs[0].thinking_config)   # the model's own default: high
+        self.assertEqual(cfgs[1].thinking_config.thinking_level, types.ThinkingLevel.MEDIUM)
+        self.assertIsNone(cfgs[1].thinking_config.include_thoughts)
 
     def test_flex_config(self):
         cfgs = []

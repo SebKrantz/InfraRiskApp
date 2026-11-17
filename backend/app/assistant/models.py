@@ -27,8 +27,9 @@ PROVIDERS: dict[str, dict[str, Any]] = {
     },
     "gemini": {
         "label": "Gemini",
-        "models": ["gemini-3.8-flash", "gemini-3.1-pro-preview", "gemini-3.5-flash-lite"],
-        "default": "gemini-3.8-flash",
+        "models": ["gemini-4-hydrogen", "gemini-3.8-flash", "gemini-3.1-pro-preview",
+                   "gemini-3.5-flash-lite"],
+        "default": "gemini-4-hydrogen",
     },
     "openai": {
         "label": "OpenAI",
@@ -40,7 +41,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
 # The reasoning levels a request may pick, by provider ("*") with per-model exceptions; an
 # empty list means the model has no effort control. Claude takes `output_config.effort`,
 # GPT-6 `reasoning.effort`, Gemini 3 `thinking_level`. Haiku 4.5 does not take the
-# parameter; Gemini 3.8 Flash and 3.1 Pro answer `minimal` with a 400, only Flash-Lite takes it.
+# parameter; Gemini 4 Hydrogen (checked live 2026-11-17), 3.8 Flash and 3.1 Pro answer
+# `minimal` with a 400, only Flash-Lite takes it.
 EFFORT_LEVELS: dict[str, dict[str, list[str]]] = {
     "anthropic": {"*": ["low", "medium", "high", "xhigh", "max"], "claude-haiku-4-5": []},
     "gemini": {
